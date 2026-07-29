@@ -6,8 +6,8 @@ agent/trust.json
 agent/sessions/
 agent/run-history.jsonl
 
-# Reinstallable packages and generated caches
-agent/npm/
+# Reinstallable package contents and generated caches
+agent/npm/node_modules/
 agent/git/
 agent/models-store.json
 **/node_modules/
