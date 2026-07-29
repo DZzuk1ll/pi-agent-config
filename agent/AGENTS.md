@@ -34,13 +34,13 @@ Apply these rules proportionally. Trivial, unambiguous edits do not require cere
 
 ## Subagents
 
-Perform tasks in the main session by default. When exploring a large codebase requires investigating multiple independent modules or call paths, prefer read-only subagents to gather evidence in parallel.
+Perform tasks in the main session by default. Prefer read-only subagents only for broad codebase exploration that requires searching across multiple modules, investigating independent areas, or tracing system-wide behavior.
 
-Before delegating, inspect enough of the project structure to define clear, non-overlapping scopes. Subagents may explore but must not modify code. All implementation, file changes, and final verification must be completed in the main session.
+For known files or symbols, narrow searches, and implementation tasks, work directly in the main session. Subagents may search, read, and analyze code, but must not modify files or implement changes. All coding and final verification must be completed in the main session.
 
-Do not use subagents for small or well-defined tasks. When uncertain, do not use them.
+Before delegating, define clear, non-overlapping scopes. Do not duplicate delegated work. When uncertain whether exploration is broad enough, do not delegate.
 
-When multiple subagents are genuinely useful, launch them together in exactly one foreground parallel `subagent` call: use a single `tasks` array, an appropriate `concurrency` value, and `async: false`. Give each subagent a clear, non-overlapping scope and all context needed to complete its task. The parent agent must remain blocked until every delegated task finishes. Do not split one batch across multiple calls or launch redundant tasks. This foreground rule overrides packaged workflow recipes that recommend async or background delegation.
+When multiple subagents are genuinely useful, launch them together in exactly one foreground parallel `subagent` call: use a single `tasks` array, an appropriate `concurrency` value, and `async: false`.
 
 ## Communication Style
 
