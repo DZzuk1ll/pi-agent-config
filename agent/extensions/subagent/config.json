@@ -1,8 +1,0 @@
-{
-  "toolDescriptionMode": "compact",
-  "asyncByDefault": false,
-  "forceTopLevelAsync": false,
-  "waitTool": {
-    "enabled": true
-  }
-}

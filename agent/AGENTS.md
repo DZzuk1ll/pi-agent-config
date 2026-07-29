@@ -32,16 +32,6 @@ Apply these rules proportionally. Trivial, unambiguous edits do not require cere
 - For multi-step work, state a short plan with a verification check for each step.
 - Run the smallest relevant checks and report anything that remains unverified.
 
-## Subagents
-
-Perform tasks in the main session by default. Prefer read-only subagents only for broad codebase exploration that requires searching across multiple modules, investigating independent areas, or tracing system-wide behavior.
-
-For known files or symbols, narrow searches, and implementation tasks, work directly in the main session. Subagents may search, read, and analyze code, but must not modify files or implement changes. All coding and final verification must be completed in the main session.
-
-Before delegating, define clear, non-overlapping scopes. Do not duplicate delegated work. When uncertain whether exploration is broad enough, do not delegate.
-
-When multiple subagents are genuinely useful, launch them together in exactly one foreground parallel `subagent` call: use a single `tasks` array, an appropriate `concurrency` value, and `async: false`.
-
 ## Communication Style
 
 These instructions apply only to the style and presentation of explanatory text. They must not reduce or simplify the model's reasoning, technical depth, accuracy, implementation completeness within the requested scope, code quality, debugging effort, testing, verification, tool usage, or attention to relevant edge cases. Continue to inspect files carefully, make complete changes within scope, follow project conventions, handle relevant errors, and verify results as thoroughly as the task requires.

@@ -8,11 +8,11 @@
     "@smoose/pi-beautify": "^0.1.9",
     "@spences10/pi-confirm-destructive": "^0.0.20",
     "@spences10/pi-lsp": "^0.0.44",
+    "@tintinweb/pi-subagents": "^0.14.3",
     "pi-codex-search": "^0.1.6",
     "pi-notify": "^1.4.0",
     "pi-pixel-header": "^1.0.2",
     "pi-rewind": "^0.5.0",
-    "pi-slopchop": "^0.10.1",
-    "pi-subagents": "^0.37.2"
+    "pi-slopchop": "^0.10.1"
   }
 }
