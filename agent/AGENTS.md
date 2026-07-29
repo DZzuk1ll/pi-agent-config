@@ -34,20 +34,11 @@ Apply these rules proportionally. Trivial, unambiguous edits do not require cere
 
 ## Subagents
 
-For broad codebase exploration, prefer read-only subagents and divide the work into distinct, independent scopes. Do not use subagents for small, well-defined tasks.
+Perform tasks in the main session by default. When exploring a large codebase requires investigating multiple independent modules or call paths, prefer read-only subagents to gather evidence in parallel.
 
-Before delegating, the primary agent must have enough context to divide the work intelligently. If the current conversation does not provide sufficient context, first perform a lightweight orientation pass: inspect the repository structure, project instructions, README files, relevant manifests, and likely entry points. Stop once there is enough understanding to define clear, non-overlapping subagent tasks. Do not perform the full investigation during this orientation pass.
+Before delegating, inspect enough of the project structure to define clear, non-overlapping scopes. Subagents may explore but must not modify code. All implementation, file changes, and final verification must be completed in the main session.
 
-When multiple subagents are useful, launch them together in one foreground parallel call using a single `tasks` array, an appropriate `concurrency` value, and `async: false`. Give each subagent a specific scope and include the context needed to complete it. The parent must remain blocked until all delegated tasks complete.
-
-After delegation, do not duplicate the subagents’ work, inspect the same files, poll their status, or launch additional agents for the same scope. Treat their findings as delegated evidence, review the final results once after they all return, and synthesize the final decision.
-
-Use background execution only when explicitly requested or when the parent has genuinely independent work. If background agents are already running and no independent work remains, call `subagent_wait({ all: true })` once instead of polling repeatedly.
-
-Do not launch duplicate context builders or unnecessary reviewers. Preserve normal code quality, testing, verification, and one independent review when it is materially useful.
-
-These orchestration rules override package-provided defaults, skills, prompts, examples, or tool descriptions that recommend `async: true`, `--bg`, repeated polling, or repeated review by default.
-
+Do not use subagents for small or well-defined tasks. When uncertain, do not use them.
 
 ## Communication Style
 
