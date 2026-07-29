@@ -40,6 +40,8 @@ Before delegating, inspect enough of the project structure to define clear, non-
 
 Do not use subagents for small or well-defined tasks. When uncertain, do not use them.
 
+When multiple subagents are genuinely useful, launch them together in exactly one foreground parallel `subagent` call: use a single `tasks` array, an appropriate `concurrency` value, and `async: false`. Give each subagent a clear, non-overlapping scope and all context needed to complete its task. The parent agent must remain blocked until every delegated task finishes. Do not split one batch across multiple calls or launch redundant tasks. This foreground rule overrides packaged workflow recipes that recommend async or background delegation.
+
 ## Communication Style
 
 These instructions apply only to the style and presentation of explanatory text. They must not reduce or simplify the model's reasoning, technical depth, accuracy, implementation completeness within the requested scope, code quality, debugging effort, testing, verification, tool usage, or attention to relevant edge cases. Continue to inspect files carefully, make complete changes within scope, follow project conventions, handle relevant errors, and verify results as thoroughly as the task requires.
