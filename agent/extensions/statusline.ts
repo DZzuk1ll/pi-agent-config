@@ -29,6 +29,8 @@ type StatuslineConfig = {
 	showCacheHitRate: boolean;
 	showCost: boolean;
 	showExtensionStatuses: boolean;
+	hiddenExtensionStatuses: string[];
+	hideSubscriptionAccount: boolean;
 	labels: Labels;
 };
 
@@ -42,6 +44,7 @@ type UsageLike = {
 
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const CONFIG_PATH = join(AGENT_DIR, "extensions", "statusline.json");
+const WIDGET_KEY = "custom-statusline";
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/g;
 
@@ -54,6 +57,8 @@ const DEFAULT_CONFIG: StatuslineConfig = {
 	showCacheHitRate: true,
 	showCost: true,
 	showExtensionStatuses: true,
+	hiddenExtensionStatuses: [],
+	hideSubscriptionAccount: false,
 	labels: {
 		path: "PROJECT",
 		branch: "GIT",
@@ -102,6 +107,10 @@ function readConfig(): StatuslineConfig {
 				Math.min(48, Number.isFinite(raw.contextBarWidth) ? Math.floor(raw.contextBarWidth!) : 24),
 			),
 			separator: cleanSeparator(raw.separator),
+			hiddenExtensionStatuses: Array.isArray(raw.hiddenExtensionStatuses)
+				? raw.hiddenExtensionStatuses.map((key) => cleanText(key)).filter(Boolean)
+				: [],
+			hideSubscriptionAccount: raw.hideSubscriptionAccount === true,
 			labels,
 		};
 	} catch {
@@ -213,24 +222,26 @@ export default function statusline(pi: ExtensionAPI): void {
 	pi.on("session_start", (_event, ctx) => {
 		if (ctx.mode !== "tui") return;
 		const config = readConfig();
+		const hiddenExtensionStatuses = new Set(config.hiddenExtensionStatuses);
 
-		ctx.ui.setFooter((tui, theme, footerData) => {
-			const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
-			const label = (text: string): string => theme.bold(theme.fg("accent", text));
-			const section = (
-				name: string,
-				value: string,
-				color: "text" | "muted" | "success" | "warning" | "error" = "text",
-			): string => `${label(name)} ${theme.fg(color, value)}`;
-			const fit = (sections: string[], width: number): string =>
-				truncateToWidth(sections.join(theme.fg("dim", config.separator)), width, theme.fg("dim", "…"));
-			const fits = (sections: string[], width: number): boolean =>
-				visibleWidth(sections.join(config.separator)) <= width;
+		ctx.ui.setFooter((_footerTui, _footerTheme, footerData) => {
+			ctx.ui.setWidget(WIDGET_KEY, (tui, theme) => {
+				const unsubscribe = footerData.onBranchChange(() => tui.requestRender());
+				const label = (text: string): string => theme.bold(theme.fg("accent", text));
+				const section = (
+					name: string,
+					value: string,
+					color: "text" | "muted" | "success" | "warning" | "error" = "text",
+				): string => `${label(name)} ${theme.fg(color, value)}`;
+				const fit = (sections: string[], width: number): string =>
+					truncateToWidth(sections.join(theme.fg("dim", config.separator)), width, theme.fg("dim", "…"));
+				const fits = (sections: string[], width: number): boolean =>
+					visibleWidth(sections.join(config.separator)) <= width;
 
-			return {
-				dispose: unsubscribe,
-				invalidate() {},
-				render(width: number): string[] {
+				return {
+					dispose: unsubscribe,
+					invalidate() {},
+					render(width: number): string[] {
 					const usage = collectUsage(ctx.sessionManager.getEntries());
 					const context = ctx.getContextUsage();
 					const contextWindow = context?.contextWindow ?? ctx.model?.contextWindow ?? 0;
@@ -298,7 +309,11 @@ export default function statusline(pi: ExtensionAPI): void {
 									|| left.localeCompare(right);
 							});
 						for (const [key, rawValue] of statuses) {
-							const value = cleanText(rawValue).replace(/^◆\s*/, "");
+							if (hiddenExtensionStatuses.has(key)) continue;
+							let value = cleanText(rawValue).replace(/^◆\s*/, "");
+							if (key === "pi-sub" && config.hideSubscriptionAccount) {
+								value = value.replace(/\s*\([^()@\s]+@[^()\s]+\)\s*/g, " ").replace(/\s+/g, " ").trim();
+							}
 							if (!value) continue;
 							statusLine.push(section(statusLabel(key, config.labels), value, statusColor(key, value)));
 						}
@@ -315,6 +330,14 @@ export default function statusline(pi: ExtensionAPI): void {
 						fit(modelLine, width),
 						...(detailLine.length || statusLine.length ? [fit([...detailLine, ...statusLine], width)] : []),
 					];
+					},
+				};
+			}, { placement: "belowEditor" });
+
+			return {
+				invalidate() {},
+				render(): string[] {
+					return [];
 				},
 			};
 		});

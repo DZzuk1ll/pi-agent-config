@@ -5,8 +5,13 @@
   "showGitBranch": true,
   "showTokens": true,
   "showCacheHitRate": true,
-  "showCost": true,
+  "showCost": false,
   "showExtensionStatuses": true,
+  "hiddenExtensionStatuses": [
+    "pi-beautify",
+    "rewind"
+  ],
+  "hideSubscriptionAccount": true,
   "labels": {
     "path": "PROJECT",
     "branch": "GIT",
