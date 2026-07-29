@@ -1,0 +1,25 @@
+{
+  "toolBackground": "transparent",
+  "readOutputMode": "preview",
+  "searchOutputMode": "preview",
+  "mcpOutputMode": "preview",
+  "bashOutputMode": "preview",
+  "previewLines": 3,
+  "bashCollapsedLines": 3,
+  "bashStackConsecutive": false,
+  "bashSemanticDisplay": false,
+  "toolGrouping": "consecutive-same-type",
+  "readOnlyToolGrouping": false,
+  "themeAdaptive": true,
+  "diffTheme": "github-dark",
+  "messageStyle": "claude",
+  "messageSpacing": "compact",
+  "spinnerVerbs": [
+    "Working"
+  ],
+  "spinnerVerbMode": "replace",
+  "workedVerbs": [
+    "Done"
+  ],
+  "workedVerbMode": "replace"
+}

@@ -1,0 +1,24 @@
+{
+  "contextBarWidth": 24,
+  "separator": "  │  ",
+  "showPath": true,
+  "showGitBranch": true,
+  "showTokens": true,
+  "showCacheHitRate": true,
+  "showCost": true,
+  "showExtensionStatuses": true,
+  "labels": {
+    "path": "PROJECT",
+    "branch": "GIT",
+    "context": "CTX",
+    "model": "MODEL",
+    "thinking": "THINK",
+    "tokens": "TOKENS",
+    "cache": "CACHE",
+    "cost": "COST",
+    "subscription": "SUB",
+    "history": "HISTORY",
+    "plan": "PLAN",
+    "fast": "FAST"
+  }
+}

@@ -1,0 +1,27 @@
+{
+  "packages": [
+    "npm:pi-codex-search@0.1.6",
+    "npm:@spences10/pi-lsp@0.0.44",
+    "npm:@spences10/pi-confirm-destructive@0.0.20",
+    "npm:pi-slopchop@0.10.1",
+    "npm:pi-notify@1.4.0",
+    "npm:@bacnh85/pi-sub@0.1.21",
+    "npm:pi-rewind@0.5.0",
+    "npm:@narumitw/pi-plan-mode@0.34.0",
+    "npm:@owlburtoe/pi-cc-tools@1.5.0",
+    "npm:pi-subagents@0.37.2",
+    "npm:pi-pixel-header@1.0.2",
+    "npm:@smoose/pi-beautify@0.1.9"
+  ],
+  "lastChangelogVersion": "0.82.1",
+  "theme": "dark",
+  "quietStartup": true,
+  "defaultProvider": "openai-codex",
+  "defaultModel": "gpt-5.6-sol",
+  "defaultThinkingLevel": "xhigh",
+  "hideThinkingBlock": true,
+  "enabledModels": [
+    "openai-codex/gpt-5.6-*"
+  ],
+  "doubleEscapeAction": "tree"
+}

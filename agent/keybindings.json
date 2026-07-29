@@ -1,0 +1,11 @@
+{
+  "app.interrupt": ["ctrl+c", "escape"],
+  "app.clear": "ctrl+l",
+
+  "app.model.select": "alt+p",
+  "app.model.cycleForward": "alt+]",
+  "app.model.cycleBackward": "alt+[",
+
+  "tui.editor.cursorUp": ["up", "ctrl+p"],
+  "tui.editor.cursorDown": ["down", "ctrl+n"]
+}

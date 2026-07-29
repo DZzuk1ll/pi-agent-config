@@ -1,0 +1,18 @@
+# Credentials and machine-local trust
+agent/auth.json
+agent/trust.json
+
+# Sessions and runtime history
+agent/sessions/
+agent/run-history.jsonl
+
+# Reinstallable packages and generated caches
+agent/npm/
+agent/git/
+agent/models-store.json
+**/node_modules/
+
+# Runtime files
+agent/*.lock
+agent/*.lock.*
+.DS_Store

@@ -1,0 +1,18 @@
+{
+  "thinkingLevel": "inherit",
+  "defaultPlanTools": [
+    "read",
+    "bash",
+    "grep",
+    "find",
+    "ls",
+    "codex_search",
+    "lsp_diagnostics",
+    "lsp_diagnostics_many",
+    "lsp_find_symbol",
+    "lsp_hover",
+    "lsp_definition",
+    "lsp_references",
+    "lsp_document_symbols"
+  ]
+}
