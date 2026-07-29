@@ -45,6 +45,7 @@ type UsageLike = {
 const AGENT_DIR = process.env.PI_CODING_AGENT_DIR ?? join(homedir(), ".pi", "agent");
 const CONFIG_PATH = join(AGENT_DIR, "extensions", "statusline.json");
 const WIDGET_KEY = "custom-statusline";
+const PADDING_X = 2;
 const ANSI_RE = /\x1b\[[0-?]*[ -/]*[@-~]/g;
 const CONTROL_RE = /[\u0000-\u001f\u007f]/g;
 
@@ -242,6 +243,7 @@ export default function statusline(pi: ExtensionAPI): void {
 					dispose: unsubscribe,
 					invalidate() {},
 					render(width: number): string[] {
+					const contentWidth = Math.max(1, width - PADDING_X);
 					const usage = collectUsage(ctx.sessionManager.getEntries());
 					const context = ctx.getContextUsage();
 					const contextWindow = context?.contextWindow ?? ctx.model?.contextWindow ?? 0;
@@ -250,7 +252,7 @@ export default function statusline(pi: ExtensionAPI): void {
 					const percentText = contextPercent === null || contextPercent === undefined
 						? "?"
 						: `${contextPercent.toFixed(1)}%`;
-					const barWidth = width < 100
+					const barWidth = contentWidth < 100
 						? Math.min(config.contextBarWidth, 12)
 						: config.contextBarWidth;
 					const contextText = [
@@ -321,15 +323,16 @@ export default function statusline(pi: ExtensionAPI): void {
 
 					const compactTop = [...projectLine, ...statusLine];
 					const compactBottom = [...modelLine, ...detailLine];
-					if (fits(compactTop, width) && fits(compactBottom, width)) {
-						return [fit(compactTop, width), fit(compactBottom, width)];
+					if (fits(compactTop, contentWidth) && fits(compactBottom, contentWidth)) {
+						return [fit(compactTop, contentWidth), fit(compactBottom, contentWidth)]
+							.map((line) => `${" ".repeat(PADDING_X)}${line}`);
 					}
 
 					return [
-						...(projectLine.length ? [fit(projectLine, width)] : []),
-						fit(modelLine, width),
-						...(detailLine.length || statusLine.length ? [fit([...detailLine, ...statusLine], width)] : []),
-					];
+						...(projectLine.length ? [fit(projectLine, contentWidth)] : []),
+						fit(modelLine, contentWidth),
+						...(detailLine.length || statusLine.length ? [fit([...detailLine, ...statusLine], contentWidth)] : []),
+					].map((line) => `${" ".repeat(PADDING_X)}${line}`);
 					},
 				};
 			}, { placement: "belowEditor" });
