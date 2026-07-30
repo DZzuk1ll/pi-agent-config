@@ -5,6 +5,7 @@ import {
 	formatDoneLineSpacing,
 	planToolGroups,
 	renderPlannedChildren,
+	resolveTodoGrouping,
 	resolveToolGrouping,
 	type ToolComponentLike,
 } from "../lib/tool-grouping.ts";
@@ -27,7 +28,9 @@ function tool(
 				? args.pattern ?? args.path ?? ""
 				: toolName === "bash"
 					? args.command ?? ""
-					: args.path ?? args.pattern ?? "";
+					: toolName === "todo"
+						? args.subject ?? args.action ?? ""
+						: args.path ?? args.pattern ?? "";
 			return [`⏺ ${toolName}(${target})`, `  ⎿ ${isError ? "ERROR: " : ""}${text}`];
 		},
 	};
@@ -117,6 +120,39 @@ test("Ctrl+O expansion restores every real call argument and result", () => {
 	assert.match(expanded, /read\(b\.py\)[\s\S]*beta/);
 });
 
+test("consecutive Todo calls collapse to one action summary", () => {
+	const children = [
+		tool("todo", "t1", { action: "create", subject: "Design API" }, "Created #1"),
+		tool("todo", "t2", { action: "create", subject: "Build API" }, "Created #2"),
+		tool("todo", "t3", { action: "list" }, "Two tasks"),
+	];
+	const collapsed = renderPlannedChildren(children, "off", 120, () => false, true).join("\n");
+	assert.match(collapsed, /Todo 3 calls/);
+	assert.match(collapsed, /2 created · 1 listed/);
+	assert.doesNotMatch(collapsed, /Design API|Build API/);
+
+	for (const child of children) child.expanded = true;
+	const expanded = renderPlannedChildren(children, "off", 120, () => false, true).join("\n");
+	assert.doesNotMatch(expanded, /Todo 3 calls/);
+	assert.match(expanded, /todo\(Design API\)[\s\S]*Created #1/);
+	assert.match(expanded, /todo\(Build API\)[\s\S]*Created #2/);
+});
+
+test("failed Todo calls remain visible outside successful Todo groups", () => {
+	const failed = tool("todo", "t3", { action: "update" }, "Error: cycle detected");
+	failed.result!.details = { error: "cycle detected" };
+	const children = [
+		tool("todo", "t1", { action: "create", subject: "One" }, "Created #1"),
+		tool("todo", "t2", { action: "create", subject: "Two" }, "Created #2"),
+		failed,
+	];
+	const plan = planToolGroups(children, "off", () => false, true);
+	assert.deepEqual(plan.map((item) => item.kind), ["group", "single"]);
+	const rendered = renderPlannedChildren(children, "off", 120, () => false, true).join("\n");
+	assert.match(rendered, /Todo 2 calls/);
+	assert.match(rendered, /todo\(update\)[\s\S]*Error: cycle detected/);
+});
+
 test("planning and rendering do not alter original tool events", () => {
 	const children = [
 		tool("grep", "g1", { pattern: "one", path: "src" }, "a.py:1"),
@@ -182,6 +218,8 @@ test("empty assistant tool rounds do not split an otherwise consecutive group", 
 });
 
 test("new mode defaults and legacy booleans remain compatible", () => {
+	assert.equal(resolveTodoGrouping({}), false);
+	assert.equal(resolveTodoGrouping({ todoGrouping: true }), true);
 	assert.equal(resolveToolGrouping({}), "consecutive-same-type");
 	assert.equal(resolveToolGrouping({ readOnlyToolGrouping: false }), "off");
 	assert.equal(resolveToolGrouping({ readOnlyToolGrouping: true }), "all-read-only");

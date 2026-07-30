@@ -10,6 +10,7 @@
   "bashSemanticDisplay": false,
   "toolGrouping": "consecutive-same-type",
   "readOnlyToolGrouping": false,
+  "todoGrouping": true,
   "themeAdaptive": true,
   "diffTheme": "github-dark",
   "messageStyle": "claude",

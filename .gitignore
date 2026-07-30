@@ -5,6 +5,10 @@ agent/trust.json
 # Sessions and runtime history
 agent/sessions/
 agent/run-history.jsonl
+agent/.cache/
+agent/.pi-subagents/
+agent/compact-backups/
+agent/workflows/
 
 # Reinstallable package contents and generated caches
 agent/npm/node_modules/

@@ -12,11 +12,15 @@
     "npm:pi-pixel-header@1.0.2",
     "npm:@smoose/pi-beautify@0.1.9",
     {
-      "source": "npm:pi-subagents",
+      "source": "npm:pi-subagents@0.37.2",
       "extensions": [],
       "skills": [],
       "prompts": []
-    }
+    },
+    "npm:pi-mermaid",
+    "npm:@juicesharp/rpiv-todo",
+    "npm:pi-condense",
+    "npm:pi-smart-compact"
   ],
   "lastChangelogVersion": "0.83.0",
   "theme": "dark",
@@ -31,5 +35,20 @@
   "doubleEscapeAction": "tree",
   "subagents": {
     "disableBuiltins": true
+  },
+  "smartCompact": {
+    "profile": "balanced",
+    "summaryModel": null,
+    "summaryThinkingLevel": null,
+    "autoTrigger": true,
+    "maxLlmCalls": 20,
+    "maxLatencyMs": 0,
+    "minContextPercent": 0,
+    "backupEnabled": true,
+    "scrubSecrets": false,
+    "scrubPii": false
+  },
+  "contextPrune": {
+    "enabled": false
   }
 }

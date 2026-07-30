@@ -1,7 +1,7 @@
 ---
 name: Explore
 description: Read-only agent for bounded repository search and scoped analysis after the parent has established the initial context. Do not use it for unframed architecture audits, open-ended project understanding, or work the parent can complete with a direct lookup.
-tools: read, bash, grep, find, ls, codex_search, codex_standalone_web
+tools: read, bash, grep, find, ls, codex_search
 model: openai-codex/gpt-5.6-luna
 thinking: xhigh
 systemPromptMode: replace
@@ -9,6 +9,7 @@ inheritProjectContext: false
 inheritSkills: true
 defaultContext: fresh
 async: false
+toolBudget: {"soft":50,"hard":70,"block":["bash"]}
 acceptance: {"level":"none","reason":"Read-only exploration returns its findings directly."}
 acceptanceRole: read-only
 completionGuard: false

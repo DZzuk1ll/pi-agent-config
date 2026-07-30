@@ -11,6 +11,7 @@ import {
 	formatDoneLineSpacing,
 	isToolComponent,
 	renderPlannedChildren,
+	resolveTodoGrouping,
 	resolveToolGrouping,
 } from "../lib/tool-grouping.ts";
 
@@ -18,7 +19,7 @@ const USER_RENDER_PATCH = Symbol.for("compact-transcript:user-render:v3");
 const ASSISTANT_RENDER_PATCH = Symbol.for("compact-transcript:assistant-render:v4");
 const WORKING_MESSAGE_PATCH = Symbol.for("compact-transcript:working-message");
 const TOOL_PREVIEW_PATCH = Symbol.for("compact-transcript:tool-preview");
-const TOOL_GROUPING_PATCH = Symbol.for("compact-transcript:tool-grouping:v3");
+const TOOL_GROUPING_PATCH = Symbol.for("compact-transcript:tool-grouping:v4");
 const OSC133_ZONE_RE = /\x1b\]133;[ABC](?:\x07|\x1b\\)/g;
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
 
@@ -99,11 +100,13 @@ function patchToolGrouping(): void {
 		if (isToolComponent(this) || !children.some(isToolComponent)) {
 			return render.call(this, width);
 		}
+		const settings = readUiSettings();
 		return renderPlannedChildren(
 			children,
-			resolveToolGrouping(readUiSettings()),
+			resolveToolGrouping(settings),
 			width,
 			isEmptyToolRoundAssistant,
+			resolveTodoGrouping(settings),
 		);
 	};
 	prototype[TOOL_GROUPING_PATCH] = true;
