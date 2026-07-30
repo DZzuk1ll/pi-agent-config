@@ -13,6 +13,7 @@ agent/models-store.json
 **/node_modules/
 
 # Runtime files
+agent/*.log
 agent/*.lock
 agent/*.lock.*
 .DS_Store
