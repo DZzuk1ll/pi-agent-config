@@ -7,7 +7,6 @@ inheritProjectContext: false
 inheritSkills: true
 defaultContext: fresh
 async: false
-turnBudget: {"maxTurns":20,"graceTurns":2}
 acceptance: {"level":"none","reason":"Read-only planning returns its findings directly."}
 acceptanceRole: read-only
 completionGuard: false

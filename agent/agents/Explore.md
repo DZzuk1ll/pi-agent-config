@@ -9,7 +9,6 @@ inheritProjectContext: false
 inheritSkills: true
 defaultContext: fresh
 async: false
-turnBudget: {"maxTurns":20,"graceTurns":2}
 acceptance: {"level":"none","reason":"Read-only exploration returns its findings directly."}
 acceptanceRole: read-only
 completionGuard: false
