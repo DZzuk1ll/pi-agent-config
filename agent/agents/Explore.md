@@ -1,6 +1,6 @@
 ---
 name: Explore
-description: Default read-only agent for repository search, code analysis, architecture audits, and implementation scoping. For broad work, split it into multiple non-overlapping Explore tasks. Do not pair it with Plan for the same goal.
+description: Read-only agent for bounded repository search and scoped analysis after the parent has established the initial context. Do not use it for unframed architecture audits, open-ended project understanding, or work the parent can complete with a direct lookup.
 tools: read, bash, grep, find, ls, codex_search, codex_standalone_web
 model: openai-codex/gpt-5.6-luna
 thinking: xhigh
