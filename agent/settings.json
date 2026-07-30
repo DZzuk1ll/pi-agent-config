@@ -23,12 +23,12 @@
     "npm:@firstpick/pi-themes-bundle"
   ],
   "lastChangelogVersion": "0.83.0",
-  "theme": "nord",
+  "theme": "github-dark-default",
   "quietStartup": true,
   "defaultProvider": "openai-codex",
   "defaultModel": "gpt-5.6-sol",
   "defaultThinkingLevel": "xhigh",
-  "hideThinkingBlock": true,
+  "hideThinkingBlock": false,
   "enabledModels": [
     "openai-codex/gpt-5.6-*"
   ],
