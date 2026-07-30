@@ -20,4 +20,5 @@ agent/models-store.json
 agent/*.log
 agent/*.lock
 agent/*.lock.*
+agent/context.db*
 .DS_Store

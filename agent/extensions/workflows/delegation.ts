@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { abortError } from "../shared/lifecycle.ts";
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay, truncateUtf8, utf8ByteLength } from "../shared/text.ts";
 
 const VERSION = 2 as const;
 const REQUEST_EVENT = "prompt-template:subagent:request";
@@ -10,6 +10,11 @@ const RESPONSE_EVENT = "prompt-template:subagent:response";
 const CANCEL_EVENT = "prompt-template:subagent:cancel";
 const BRIDGE_START_TIMEOUT_MS = 1_000;
 const CANCEL_SETTLE_TIMEOUT_MS = 2_000;
+const MAX_AGENT_OUTPUT_BYTES = 256 * 1024;
+const MAX_AGENT_ERROR_BYTES = 16 * 1024;
+const MAX_PROGRESS_BYTES = 16 * 1024;
+const MAX_STRUCTURED_RAW_BYTES = 48 * 1024;
+const MAX_STRUCTURED_NODES = 4_096;
 
 export type WorkflowThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -87,12 +92,73 @@ function stringField(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
 }
 
+function requireBoundedString(value: string, maxBytes: number, label: string): string {
+	if (value.length > maxBytes || utf8ByteLength(value) > maxBytes) {
+		throw new Error(`${label} exceeded ${maxBytes} bytes`);
+	}
+	return value;
+}
+
+function boundedDisplay(value: string, maxBytes: number): string {
+	const prefix = value.length > maxBytes ? value.slice(0, maxBytes) : value;
+	return truncateUtf8(sanitizeForDisplay(truncateUtf8(prefix, maxBytes)), maxBytes);
+}
+
 function cleanAgentOutput(value: string): string {
-	const lines = sanitizeForDisplay(value).trimEnd().split("\n");
+	requireBoundedString(value, MAX_AGENT_OUTPUT_BYTES, "Subagent text output");
+	const sanitized = sanitizeForDisplay(value);
+	requireBoundedString(sanitized, MAX_AGENT_OUTPUT_BYTES, "Sanitized subagent text output");
+	const lines = sanitized.trimEnd().split("\n");
 	while (lines.length > 0 && (!lines.at(-1)?.trim() || /^[✻*]\s+(?:Done|Worked)\s+(?:for|in)\s+\d/i.test(lines.at(-1)!.trim()))) {
 		lines.pop();
 	}
 	return lines.join("\n").trimEnd();
+}
+
+function stringifyStructured(value: unknown): string {
+	const pending: unknown[] = [value];
+	const seen = new WeakSet<object>();
+	let nodes = 0;
+	let rawBytes = 0;
+	while (pending.length > 0) {
+		const item = pending.pop();
+		if (++nodes > MAX_STRUCTURED_NODES) throw new Error("Subagent structured result exceeded its node limit");
+		if (typeof item === "string") {
+			rawBytes += utf8ByteLength(item);
+		} else if (item === null || typeof item === "boolean") {
+			rawBytes += 5;
+		} else if (typeof item === "number") {
+			if (!Number.isFinite(item)) throw new Error("Subagent structured result contains a non-finite number");
+			rawBytes += 32;
+		} else if (typeof item === "object") {
+			if (seen.has(item)) throw new Error("Subagent structured result contains a cycle");
+			seen.add(item);
+			if (Array.isArray(item)) {
+				rawBytes += item.length + 2;
+				if (rawBytes > MAX_STRUCTURED_RAW_BYTES || item.length + nodes + pending.length > MAX_STRUCTURED_NODES) {
+					throw new Error("Subagent structured result exceeded its collection limit");
+				}
+				for (const child of item) pending.push(child);
+			} else {
+				const prototype = Object.getPrototypeOf(item);
+				if (prototype !== Object.prototype && prototype !== null) throw new Error("Subagent structured result is not plain JSON");
+				rawBytes += 2;
+				for (const key in item) {
+					if (!Object.hasOwn(item, key)) continue;
+					if (nodes + pending.length >= MAX_STRUCTURED_NODES) throw new Error("Subagent structured result exceeded its collection limit");
+					rawBytes += utf8ByteLength(key) + 2;
+					if (rawBytes > MAX_STRUCTURED_RAW_BYTES) throw new Error("Subagent structured result exceeded its raw byte limit");
+					pending.push((item as Record<string, unknown>)[key]);
+				}
+			}
+		} else {
+			throw new Error(`Subagent structured result contains unsupported ${typeof item}`);
+		}
+		if (rawBytes > MAX_STRUCTURED_RAW_BYTES) throw new Error("Subagent structured result exceeded its raw byte limit");
+	}
+	const json = JSON.stringify(value);
+	requireBoundedString(json, MAX_AGENT_OUTPUT_BYTES, "Subagent structured result");
+	return json;
 }
 
 function usageField(value: unknown): AgentUsage | undefined {
@@ -103,17 +169,19 @@ function usageField(value: unknown): AgentUsage | undefined {
 }
 
 function terminalResult(value: Record<string, unknown>): AgentCallResult {
-	const status = stringField(value.status) ?? "failed";
+	const rawStatus = stringField(value.status);
+	const status = rawStatus ? boundedDisplay(rawStatus, 128) : "failed";
 	if (status === "invalid_request" || status === "unavailable_context" || status === "duplicate_node") {
-		throw new Error(stringField(value.error) ?? `Subagent delegation protocol failed: ${status}`);
+		throw new Error(boundedDisplay(stringField(value.error) ?? `Subagent delegation protocol failed: ${status}`, MAX_AGENT_ERROR_BYTES));
 	}
-	const runId = stringField(value.runId);
+	const rawRunId = stringField(value.runId);
+	const runId = rawRunId ? boundedDisplay(rawRunId, 256) : undefined;
 	const usage = usageField(value.usage);
 	if (status !== "completed") {
 		return {
 			ok: false,
 			output: "",
-			error: sanitizeForDisplay(stringField(value.error) ?? `Subagent ended with status ${status}`),
+			error: boundedDisplay(stringField(value.error) ?? `Subagent ended with status ${status}`, MAX_AGENT_ERROR_BYTES),
 			...(usage ? { usage } : {}),
 			...(runId ? { runId } : {}),
 		};
@@ -123,7 +191,7 @@ function terminalResult(value: Record<string, unknown>): AgentCallResult {
 		return { ok: true, output: cleanAgentOutput(value.result.text), ...(usage ? { usage } : {}), ...(runId ? { runId } : {}) };
 	}
 	if (value.result.kind === "structured" && Object.hasOwn(value.result, "value")) {
-		return { ok: true, output: JSON.stringify(value.result.value), structured: value.result.value, ...(usage ? { usage } : {}), ...(runId ? { runId } : {}) };
+		return { ok: true, output: stringifyStructured(value.result.value), structured: value.result.value, ...(usage ? { usage } : {}), ...(runId ? { runId } : {}) };
 	}
 	throw new Error("Subagent delegation returned a malformed result envelope");
 }
@@ -202,10 +270,13 @@ export class DelegationClient {
 			});
 			subscribe(UPDATE_EVENT, (value) => {
 				if (!matches(value, request) || settled || !options.onProgress) return;
+				const runId = stringField(value.runId);
+				const currentTool = stringField(value.currentTool);
+				const recentOutput = stringField(value.recentOutput);
 				options.onProgress({
-					...(stringField(value.runId) ? { runId: stringField(value.runId) } : {}),
-					...(stringField(value.currentTool) ? { currentTool: stringField(value.currentTool) } : {}),
-					...(stringField(value.recentOutput) ? { recentOutput: sanitizeForDisplay(stringField(value.recentOutput)!) } : {}),
+					...(runId ? { runId: boundedDisplay(runId, 256) } : {}),
+					...(currentTool ? { currentTool: boundedDisplay(currentTool, 512) } : {}),
+					...(recentOutput ? { recentOutput: boundedDisplay(recentOutput, MAX_PROGRESS_BYTES) } : {}),
 					...(typeof value.toolCount === "number" ? { toolCount: value.toolCount } : {}),
 					...(typeof value.durationMs === "number" ? { durationMs: value.durationMs } : {}),
 					...(typeof value.tokens === "number" ? { tokens: value.tokens } : {}),

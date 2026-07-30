@@ -27,6 +27,14 @@ const BOOTSTRAP = String.raw`
 	let phaseCount = 0;
 	const untouched = new Set();
 	const active = new Set();
+	const safeApply = Reflect.apply;
+	const safeThen = Promise.prototype.then;
+	const safeResolve = Promise.resolve.bind(Promise);
+	const safeString = String;
+
+	function promiseThen(promise, onFulfilled, onRejected) {
+		return safeApply(safeThen, promise, [onFulfilled, onRejected]);
+	}
 
 	function freezeDeep(value, depth = 0) {
 		if (!value || typeof value !== "object" || depth > 32 || Object.isFrozen(value)) return value;
@@ -113,13 +121,41 @@ const BOOTSTRAP = String.raw`
 		});
 	}
 
+	function errorText(error) {
+		try {
+			return (error && typeof error.message === "string" ? error.message : safeString(error)).slice(0, 16 * 1024);
+		} catch {
+			return "Workflow failed with an unreadable error";
+		}
+	}
+
+	function invokeWorkflow(body) {
+		let operation;
+		try {
+			operation = safeResolve(body(agent, parallel, phase, args));
+		} catch (error) {
+			dispatch("error", errorText(error));
+			return;
+		}
+		const checked = promiseThen(operation, async (value) => {
+			await safeResolve();
+			if (untouched.size > 0) throw new Error("Workflow created " + untouched.size + " unawaited agent() call(s)");
+			if (active.size > 0) throw new Error("Workflow returned before " + active.size + " agent call(s) settled");
+			return serialize(value);
+		});
+		promiseThen(
+			checked,
+			(resultJson) => dispatch("result", resultJson),
+			(error) => dispatch("error", errorText(error)),
+		);
+	}
+
 	Object.defineProperties(globalThis, {
 		args: { value: argsEnvelope.defined ? freezeDeep(argsEnvelope.value) : undefined, writable: false, configurable: false },
 		agent: { value: agent, writable: false, configurable: false },
 		parallel: { value: parallel, writable: false, configurable: false },
 		phase: { value: phase, writable: false, configurable: false },
-		__workflowState: { value: () => ({ untouched: untouched.size, active: active.size }), writable: false, configurable: false },
-		__serializeWorkflowResult: { value: serialize, writable: false, configurable: false },
+		__invokeWorkflow: { value: invokeWorkflow, writable: false, configurable: true },
 	});
 })();
 `;
@@ -150,6 +186,22 @@ function execute(source, argsJson) {
 		const sandbox = Object.create(null);
 		sandbox.__hostDispatch = (kind, payloadJson, settle) => {
 			try {
+			if (kind === "result") {
+				if (typeof payloadJson !== "string" || byteLength(payloadJson) > MAX_RESULT_BYTES) {
+					fail(new Error("Workflow result exceeded the child-process IPC limit"));
+					return false;
+				}
+				send({ kind: "result", resultJson: payloadJson });
+				return true;
+			}
+			if (kind === "error") {
+				if (typeof payloadJson !== "string" || byteLength(payloadJson) > 16 * 1024) {
+					fail(new Error("Workflow sent an invalid error"));
+					return false;
+				}
+				send({ kind: "error", error: payloadJson });
+				return true;
+			}
 			if (kind === "phase") {
 				if (typeof payloadJson !== "string" || byteLength(payloadJson) > MAX_PHASE_BYTES || ++phaseCount > MAX_PHASE_UPDATES) {
 					fail(new Error("Workflow phase update exceeded its IPC limit"));
@@ -199,23 +251,12 @@ function execute(source, argsJson) {
 		new vm.Script(`
 			(() => {
 				const body = globalThis.__workflowBody;
+				const invoke = globalThis.__invokeWorkflow;
 				delete globalThis.__workflowBody;
-				globalThis.__workflowPromise = Promise.resolve(body(agent, parallel, phase, args)).then(async (value) => {
-					await Promise.resolve();
-					const state = __workflowState();
-					if (state.untouched > 0) throw new Error("Workflow created " + state.untouched + " unawaited agent() call(s)");
-					if (state.active > 0) throw new Error("Workflow returned before " + state.active + " agent call(s) settled");
-					return __serializeWorkflowResult(value);
-				});
+				delete globalThis.__invokeWorkflow;
+				invoke(body);
 			})();
 		`, { filename: "workflow-invoke.js" }).runInContext(context, { timeout: 1_000 });
-		Promise.resolve(context.__workflowPromise)
-			.then((resultJson) => {
-				if (typeof resultJson !== "string") throw new Error("Workflow result is not JSON serializable");
-				if (byteLength(resultJson) > MAX_RESULT_BYTES) throw new Error("Workflow result exceeded the child-process IPC limit");
-				send({ kind: "result", resultJson });
-			})
-			.catch(fail);
 	} catch (error) {
 		fail(error);
 	}

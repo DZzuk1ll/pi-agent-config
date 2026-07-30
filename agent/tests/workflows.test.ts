@@ -83,6 +83,23 @@ test("agent promises stay in the VM realm and cannot expose host process", async
 	`), /code generation|EvalError/i);
 });
 
+test("host never assimilates a VM promise with host-realm callbacks", async () => {
+	const result = await sandbox(`
+		const originalThen = Promise.prototype.then;
+		Promise.prototype.then = function (resolve, reject) {
+			try {
+				resolve.constructor.constructor("return process")();
+				throw new Error("HOST_PROMISE_ASSIMILATION_ESCAPE");
+			} catch (error) {
+				if (error && error.message === "HOST_PROMISE_ASSIMILATION_ESCAPE") throw error;
+			}
+			return originalThen.call(this, resolve, reject);
+		};
+		return "vm-only";
+	`);
+	assert.equal(result, "vm-only");
+});
+
 test("sandbox caps phase updates before they can grow host artifacts", async () => {
 	await assert.rejects(sandbox(`
 		for (let index = 0; index < 65; index++) phase("phase-" + index);
@@ -153,6 +170,46 @@ test("delegation client correlates the full V2 tuple and releases listeners", as
 	assert.equal(result.output, "right");
 	assert.equal(result.runId, "child-1");
 	assert.equal(bus.listenerCount(), baseline);
+});
+
+test("delegation rejects oversized terminal text before workflow IPC serialization", async () => {
+	const bus = new EventBus();
+	bus.on("prompt-template:subagent:request", (raw) => {
+		const request = raw as Record<string, unknown>;
+		bus.emit("prompt-template:subagent:started", request);
+		bus.emit("prompt-template:subagent:response", {
+			...request,
+			status: "completed",
+			result: { kind: "text", text: "x".repeat(300 * 1024) },
+		});
+	});
+	await assert.rejects(new DelegationClient(bus, process.cwd()).run({
+		ownerRunId: "wf-large-text",
+		nodeId: "agent-1",
+		prompt: "work",
+		call: {},
+		signal: new AbortController().signal,
+	}), /text output exceeded/);
+});
+
+test("delegation rejects oversized structured collections before stringify", async () => {
+	const bus = new EventBus();
+	bus.on("prompt-template:subagent:request", (raw) => {
+		const request = raw as Record<string, unknown>;
+		bus.emit("prompt-template:subagent:started", request);
+		bus.emit("prompt-template:subagent:response", {
+			...request,
+			status: "completed",
+			result: { kind: "structured", value: Array.from({ length: 5_000 }, (_, index) => index) },
+		});
+	});
+	await assert.rejects(new DelegationClient(bus, process.cwd()).run({
+		ownerRunId: "wf-large-structured",
+		nodeId: "agent-1",
+		prompt: "work",
+		call: { schema: { type: "array" } },
+		signal: new AbortController().signal,
+	}), /collection limit/);
 });
 
 test("delegation cancellation uses the same tuple and returns a typed failure", async () => {

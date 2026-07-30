@@ -15,7 +15,7 @@
 
 当前验证环境：
 
-- Pi `0.82.1`
+- Pi `0.83.0`
 - Node.js `22.19.0+`
 - macOS
 
@@ -32,7 +32,7 @@ npm install -g --ignore-scripts @earendil-works/pi-coding-agent
 如果新版 Pi 与本配置不兼容，可以安装已验证版本：
 
 ```bash
-npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.82.1
+npm install -g --ignore-scripts @earendil-works/pi-coding-agent@0.83.0
 ```
 
 ### 2. 安装配置
@@ -148,6 +148,7 @@ git push
 - `agent/trust.json`：本机信任记录
 - `agent/sessions/`：会话内容
 - `agent/run-history.jsonl`：运行历史
+- `agent/context.db*`：本机上下文索引
 - `node_modules/`：可重建依赖
 - 运行锁、缓存和 Git 包检出目录
 

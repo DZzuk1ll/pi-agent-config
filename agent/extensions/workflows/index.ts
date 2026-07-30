@@ -1,12 +1,12 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
-import { boundToolText, sanitizeForDisplay } from "../shared/text.ts";
+import { boundToolText, sanitizeForDisplay, utf8ByteLength } from "../shared/text.ts";
 import { settleWithin } from "../shared/lifecycle.ts";
 import { WorkflowArtifacts, aggregateUsage, loadWorkflowHistory, prepareWorkflowStorage } from "./artifacts.ts";
 import { WorkflowAdmission, WorkflowController, WORKFLOW_SHUTDOWN_MS, type WorkflowDetails } from "./controller.ts";
 import { DelegationClient } from "./delegation.ts";
-import { runWorkflowSandbox } from "./sandbox.ts";
+import { MAX_WORKFLOW_ARGS_BYTES, MAX_WORKFLOW_SOURCE_BYTES, runWorkflowSandbox } from "./sandbox.ts";
 
 const WIDGET_KEY = "workflows";
 const MAX_ACTIVE_WORKFLOWS = 4;
@@ -113,6 +113,12 @@ export default function workflows(pi: ExtensionAPI): void {
 		}),
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (shuttingDown) throw new Error("Workflow runtime is shutting down");
+			if (utf8ByteLength(params.script) > MAX_WORKFLOW_SOURCE_BYTES) {
+				throw new Error(`Workflow source exceeds ${MAX_WORKFLOW_SOURCE_BYTES} UTF-8 bytes`);
+			}
+			if (params.argsJson !== undefined && utf8ByteLength(params.argsJson) > MAX_WORKFLOW_ARGS_BYTES) {
+				throw new Error(`Workflow args exceed ${MAX_WORKFLOW_ARGS_BYTES} UTF-8 bytes`);
+			}
 			let args: unknown;
 			if (params.argsJson !== undefined) {
 				try { args = JSON.parse(params.argsJson); } catch (error) {

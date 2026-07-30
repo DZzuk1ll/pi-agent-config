@@ -2,6 +2,7 @@ import assert from "node:assert/strict";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { spawnSync } from "node:child_process";
 import test from "node:test";
 import { backgroundEnvironment } from "../extensions/background-terminals/environment.ts";
 import { BackgroundTerminalManager, MAX_RUNNING_TERMINALS, SPILL_BYTES_PER_STREAM, resolveProjectCwd } from "../extensions/background-terminals/manager.ts";
@@ -84,6 +85,27 @@ test("manager startup scavenges private spill sessions owned by dead processes",
 	const stale = fs.mkdtempSync(path.join(base, "session-stale-test-"));
 	fs.writeFileSync(path.join(stale, "owner.json"), JSON.stringify({ pid: 2_147_000_000 }), { mode: 0o600 });
 	fs.writeFileSync(path.join(stale, "output.log"), "private", { mode: 0o600 });
+	const root = project();
+	const manager = new BackgroundTerminalManager(root);
+	try {
+		assert.equal(fs.existsSync(stale), false);
+	} finally {
+		await manager.dispose();
+		fs.rmSync(root, { recursive: true, force: true });
+		fs.rmSync(stale, { recursive: true, force: true });
+	}
+});
+
+test("stale scavenging rejects a reused live PID with a different process identity", { skip: process.platform === "win32" }, async () => {
+	const base = path.join(os.tmpdir(), "pi-background-terminals");
+	fs.mkdirSync(base, { recursive: true, mode: 0o700 });
+	const stale = fs.mkdtempSync(path.join(base, "session-reused-pid-test-"));
+	fs.writeFileSync(path.join(stale, "owner.json"), JSON.stringify({
+		pid: process.pid,
+		createdAt: Date.now(),
+		heartbeatAt: Date.now(),
+		processIdentity: "definitely-not-the-current-process",
+	}), { mode: 0o600 });
 	const root = project();
 	const manager = new BackgroundTerminalManager(root);
 	try {
@@ -190,7 +212,31 @@ test("natural shell exit cleans a background descendant with redirected stdio", 
 		childPid = Number(done.stdout.text.match(/\d+/)?.[0]);
 		assert.ok(Number.isSafeInteger(childPid) && childPid! > 1);
 		assert.equal(done.state, "done");
-		assert.equal(done.residualTreeTerminated, true);
+		assert.equal(processExists(childPid!), false);
+	} finally {
+		if (childPid && processExists(childPid)) {
+			try { process.kill(childPid, "SIGKILL"); } catch {}
+		}
+		await manager.dispose();
+		fs.rmSync(root, { recursive: true, force: true });
+	}
+});
+
+test("shell supervision cleans a background job that creates its own session", {
+	skip: process.platform === "win32" || spawnSync("python3", ["-c", "import os; assert hasattr(os, 'setsid')"], { stdio: "ignore" }).status !== 0,
+}, async () => {
+	const root = project();
+	const manager = new BackgroundTerminalManager(root);
+	let childPid: number | undefined;
+	try {
+		const pidFile = path.join(root, "detached.pid");
+		const quotedPidFile = JSON.stringify(pidFile);
+		const command = `python3 -c 'import os,time; os.setsid(); print(os.getpid(), flush=True); time.sleep(60)' > ${quotedPidFile} & while [ ! -s ${quotedPidFile} ]; do /bin/sleep 0.01; done; cat ${quotedPidFile}`;
+		const started = await manager.start({ command, title: "detached-session" });
+		const done = await waitForTerminal(manager, started.id, 8_000);
+		childPid = Number(done.stdout.text.match(/\d+/)?.[0]);
+		assert.ok(Number.isSafeInteger(childPid) && childPid! > 1);
+		assert.equal(done.state, "done");
 		assert.equal(processExists(childPid!), false);
 	} finally {
 		if (childPid && processExists(childPid)) {

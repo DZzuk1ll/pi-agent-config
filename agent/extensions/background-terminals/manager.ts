@@ -1,4 +1,4 @@
-import { spawn, type ChildProcess } from "node:child_process";
+import { execFileSync, spawn, type ChildProcess } from "node:child_process";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
@@ -16,6 +16,7 @@ export const SPILL_BYTES_PER_STREAM = 32 * 1024 * 1024;
 export const MAX_SETTLED_RECORDS = 50;
 export const MAX_SESSION_SPILL_BYTES = 512 * 1024 * 1024;
 const STALE_SESSION_AGE_MS = 24 * 60 * 60 * 1_000;
+const OWNER_HEARTBEAT_MS = 60 * 1_000;
 const TERM_GRACE_MS = 2_500;
 const KILL_GRACE_MS = 500;
 const STDIO_SETTLE_MS = 1_000;
@@ -32,10 +33,26 @@ export function resolveProjectCwd(projectRoot: string, requested?: string): stri
 }
 
 function shellInvocation(command: string): { shell: string; args: string[] } {
-	if (process.platform === "win32") {
-		return { shell: process.env.ComSpec ?? "cmd.exe", args: ["/d", "/s", "/c", command] };
-	}
-	return { shell: "/bin/sh", args: ["-c", command] };
+	const supervisor = [
+		"__pi_cleanup() {",
+		"  __pi_status=$?",
+		"  trap - EXIT HUP INT TERM",
+		"  __pi_jobs=$(jobs -pr 2>/dev/null)",
+		"  for __pi_pid in $__pi_jobs; do",
+		"    /bin/kill -TERM -- \"-$__pi_pid\" 2>/dev/null || /bin/kill -TERM \"$__pi_pid\" 2>/dev/null || true",
+		"  done",
+		"  if [ -n \"$__pi_jobs\" ]; then /bin/sleep 0.05; fi",
+		"  for __pi_pid in $__pi_jobs; do",
+		"    /bin/kill -KILL -- \"-$__pi_pid\" 2>/dev/null || /bin/kill -KILL \"$__pi_pid\" 2>/dev/null || true",
+		"  done",
+		"  exit \"$__pi_status\"",
+		"}",
+		"trap '__pi_cleanup' EXIT",
+		"trap 'exit 129' HUP",
+		"trap 'exit 130' INT",
+		"trap 'exit 143' TERM",
+	].join("\n");
+	return { shell: "/bin/sh", args: ["-c", `${supervisor}\n${command}`] };
 }
 
 export function killProcessTree(child: ChildProcess, signal: NodeJS.Signals): void {
@@ -78,16 +95,47 @@ function pidExists(pid: number): boolean {
 	}
 }
 
+function processIdentity(pid: number): string | undefined {
+	if (process.platform === "win32") return undefined;
+	try {
+		const value = execFileSync("/bin/ps", ["-p", String(pid), "-o", "lstart="], {
+			encoding: "utf8",
+			stdio: ["ignore", "pipe", "ignore"],
+			timeout: 1_000,
+			maxBuffer: 4 * 1024,
+		}).trim();
+		return value || undefined;
+	} catch {
+		return undefined;
+	}
+}
+
+interface SpillOwner {
+	pid?: number;
+	createdAt?: number;
+	heartbeatAt?: number;
+	processIdentity?: string;
+}
+
 function scavengeStaleSessions(base: string): void {
 	for (const entry of fs.readdirSync(base, { withFileTypes: true })) {
 		if (!entry.isDirectory() || !entry.name.startsWith("session-")) continue;
 		const directory = path.join(base, entry.name);
-		let ownerPid: number | undefined;
-		try {
-			const owner = JSON.parse(fs.readFileSync(path.join(directory, "owner.json"), "utf8"));
-			if (Number.isSafeInteger(owner?.pid) && owner.pid > 1) ownerPid = owner.pid;
-		} catch {}
-		if (ownerPid && pidExists(ownerPid)) continue;
+		let owner: SpillOwner | undefined;
+		try { owner = JSON.parse(fs.readFileSync(path.join(directory, "owner.json"), "utf8")) as SpillOwner; } catch {}
+		const ownerPid = Number.isSafeInteger(owner?.pid) && owner!.pid! > 1 ? owner!.pid : undefined;
+		if (ownerPid && pidExists(ownerPid)) {
+			if (owner?.processIdentity) {
+				const currentIdentity = processIdentity(ownerPid);
+				if (currentIdentity === owner.processIdentity) continue;
+				if (currentIdentity) {
+					try { fs.rmSync(directory, { recursive: true, force: true }); } catch {}
+					continue;
+				}
+			}
+			const heartbeatAt = Number.isFinite(owner?.heartbeatAt) ? owner!.heartbeatAt! : owner?.createdAt;
+			if (heartbeatAt && Date.now() - heartbeatAt < STALE_SESSION_AGE_MS) continue;
+		}
 		if (!ownerPid) {
 			try {
 				if (Date.now() - fs.statSync(directory).mtimeMs < STALE_SESSION_AGE_MS) continue;
@@ -206,6 +254,9 @@ export class BackgroundTerminalManager {
 	private readonly entries = new Map<string, TerminalRecord>();
 	private readonly listeners = new Set<() => void>();
 	private readonly logDir: string;
+	private readonly ownerPath: string;
+	private readonly ownerIdentity: string | undefined;
+	private ownerHeartbeat: ReturnType<typeof setInterval> | undefined;
 	private counter = 0;
 	private reserved = 0;
 	private disposed = false;
@@ -218,7 +269,13 @@ export class BackgroundTerminalManager {
 		scavengeStaleSessions(base);
 		this.logDir = fs.mkdtempSync(path.join(base, "session-"));
 		fs.chmodSync(this.logDir, 0o700);
-		writeJsonAtomic(path.join(this.logDir, "owner.json"), { pid: process.pid, createdAt: Date.now() });
+		this.ownerPath = path.join(this.logDir, "owner.json");
+		this.ownerIdentity = processIdentity(process.pid);
+		this.writeOwnerHeartbeat(Date.now());
+		this.ownerHeartbeat = setInterval(() => {
+			try { this.writeOwnerHeartbeat(Date.now()); } catch {}
+		}, OWNER_HEARTBEAT_MS);
+		this.ownerHeartbeat.unref?.();
 	}
 
 	subscribe(listener: () => void): () => void {
@@ -244,6 +301,7 @@ export class BackgroundTerminalManager {
 
 	async start(options: { command: string; title?: string; cwd?: string }): Promise<TerminalSnapshot> {
 		if (this.disposed) throw new Error("Background terminal manager is shutting down");
+		if (process.platform === "win32") throw new Error("Background terminals require POSIX process-group containment");
 		if (!options.command.trim()) throw new Error("command must not be empty");
 		if (utf8ByteLength(options.command) > MAX_COMMAND_BYTES) throw new Error(`command exceeds ${MAX_COMMAND_BYTES} bytes`);
 		const title = sanitizeForDisplay(options.title?.trim() || options.command.trim().split("\n", 1)[0] || "background task")
@@ -260,7 +318,7 @@ export class BackgroundTerminalManager {
 				cwd,
 				env: backgroundEnvironment(),
 				stdio: ["ignore", "pipe", "pipe"],
-				detached: process.platform !== "win32",
+				detached: true,
 				windowsHide: true,
 			});
 			const id = `bt-${++this.counter}`;
@@ -328,12 +386,23 @@ export class BackgroundTerminalManager {
 	async dispose(): Promise<void> {
 		if (this.disposed) return;
 		this.disposed = true;
+		if (this.ownerHeartbeat) clearInterval(this.ownerHeartbeat);
+		this.ownerHeartbeat = undefined;
 		this.settledHook = undefined;
 		const active = [...this.entries.values()].filter((record) => record.state === "starting" || record.state === "running");
 		for (const record of active) record.abortRequested = true;
 		await Promise.allSettled(active.map((record) => this.terminate(record)));
 		this.listeners.clear();
 		try { fs.rmSync(this.logDir, { recursive: true, force: true }); } catch {}
+	}
+
+	private writeOwnerHeartbeat(now: number): void {
+		writeJsonAtomic(this.ownerPath, {
+			pid: process.pid,
+			createdAt: now - process.uptime() * 1_000,
+			heartbeatAt: now,
+			...(this.ownerIdentity ? { processIdentity: this.ownerIdentity } : {}),
+		});
 	}
 
 	private attach(record: TerminalRecord): void {
