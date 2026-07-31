@@ -552,7 +552,11 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 	});
 };
 
-async function requestSlashRun(
+export function isSlashSubagentCancelInput(input: string): boolean {
+	return matchesKey(input, Key.escape) || matchesKey(input, Key.ctrl("c"));
+}
+
+export async function requestSlashRun(
 	pi: ExtensionAPI,
 	ctx: ExtensionContext,
 	requestId: string,
@@ -599,7 +603,7 @@ async function requestSlashRun(
 
 		const onTerminalInput = ctx.hasUI
 			? ctx.ui.onTerminalInput((input) => {
-				if (!matchesKey(input, Key.escape)) return undefined;
+				if (!isSlashSubagentCancelInput(input)) return undefined;
 				pi.events.emit(SLASH_SUBAGENT_CANCEL_EVENT, { requestId });
 				finish(() => reject(new Error("Cancelled")));
 				return { consume: true };

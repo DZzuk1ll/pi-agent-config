@@ -54,7 +54,7 @@ import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
-import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { attachPostExitStdioGuard, createEscalatingTermination, isChildProcessTreeAlive, trySignalChildTree } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { decodeSubagentCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -385,22 +385,46 @@ async function runSingleAttempt(
 		};
 		return result;
 	}
+	if (options.signal?.aborted) {
+		cleanupTempDir(tempDir);
+		const message = "Subagent cancelled before start.";
+		result.exitCode = 1;
+		result.stopped = true;
+		result.error = message;
+		result.finalOutput = message;
+		progress.status = "failed";
+		progress.error = message;
+		result.progressSummary = {
+			toolCount: progress.toolCount,
+			tokens: progress.tokens,
+			durationMs: progress.durationMs,
+		};
+		return result;
+	}
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 
 	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
+		const useProcessGroup = process.platform !== "win32";
 		const proc = spawn(spawnSpec.command, spawnSpec.args, {
 			cwd: options.cwd ?? runtimeCwd,
 			env: spawnEnv,
 			stdio: ["ignore", "pipe", "pipe"],
 			windowsHide: true,
+			detached: useProcessGroup,
 		});
+		// Foreground children own a process group on POSIX so every termination
+		// path also reaches descendant tools. Windows routes tree termination
+		// through taskkill while preserving direct SIGINT pause semantics.
+		const trySignalChild = (child: typeof proc, signal: NodeJS.Signals): boolean =>
+			trySignalChildTree(child, signal, { processGroup: useProcessGroup });
 		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
 		let processClosed = false;
 		let settled = false;
 		let detached = false;
+		let parentAbortRequested = false;
 		let intercomStarted = false;
 		let assistantError: string | undefined;
 		let removeAbortListener: (() => void) | undefined;
@@ -457,6 +481,13 @@ async function runSingleAttempt(
 		// give it a short grace period to flush naturally, then clean it up.
 		const FINAL_STOP_GRACE_MS = 1000;
 		const HARD_KILL_MS = 3000;
+		const abortTermination = createEscalatingTermination({
+			signal: (signal) => trySignalChild(proc, signal),
+			isInactive: () => detached || (useProcessGroup
+				? !isChildProcessTreeAlive(proc, { processGroup: true })
+				: processClosed || settled),
+			hardKillMs: HARD_KILL_MS,
+		});
 		let childExited = false;
 		let forcedTerminationSignal = false;
 		let cleanTerminalAssistantStopReceived = false;
@@ -546,6 +577,10 @@ async function runSingleAttempt(
 				if (typeof event.agent === "string" && event.agent !== agent.name) return;
 				if (typeof event.childIndex === "number" && event.childIndex !== (options.index ?? 0)) return;
 			} else if (!intercomStarted) return;
+			if (parentAbortRequested) {
+				options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: false, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
+				return;
+			}
 			options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
 			detachForIntercom();
 		});
@@ -556,6 +591,9 @@ async function runSingleAttempt(
 			clearFinalDrainTimers();
 			clearWatchdogTailTimer();
 			clearStdioGuard();
+			// A POSIX process group can outlive its leader. Keep an armed abort
+			// escalation alive long enough to reap stubborn descendants.
+			if (!useProcessGroup) abortTermination.dispose();
 			clearTimeoutTimers();
 			clearTurnBudgetTimers();
 			if (protocolHardKillTimer) {
@@ -1054,9 +1092,17 @@ async function runSingleAttempt(
 
 		if (options.signal) {
 			const kill = () => {
-				if (processClosed || detached) return;
-				proc.kill("SIGTERM");
-				setTimeout(() => !proc.killed && proc.kill("SIGKILL"), 3000);
+				if (processClosed || settled || detached || parentAbortRequested) return;
+				parentAbortRequested = true;
+				const message = "Subagent cancelled by parent.";
+				result.stopped = true;
+				result.error = message;
+				result.finalOutput = message;
+				progress.status = "failed";
+				progress.error = message;
+				progress.durationMs = Date.now() - startTime;
+				fireUpdate();
+				abortTermination.terminate();
 			};
 			if (options.signal.aborted) kill();
 			else {

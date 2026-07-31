@@ -2618,12 +2618,23 @@ function findDuplicateParallelOutputPath(input: {
 }
 
 async function runForegroundParallelTasks(input: ForegroundParallelRunInput): Promise<SingleResult[]> {
+	const cancelledResult = (agent: string): SingleResult => ({
+		agent,
+		task: "(cancelled before start)",
+		exitCode: -1,
+		messages: [],
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		error: "Cancelled before start",
+	});
+	if (input.signal.aborted) return input.tasks.map((task) => cancelledResult(task.agent));
 	// Pre-warm fork session files sequentially before concurrent dispatch to avoid
 	// races where multiple workers simultaneously try to branch the same parent session.
 	for (let i = 0; i < input.tasks.length; i++) {
+		if (input.signal.aborted) return input.tasks.map((task) => cancelledResult(task.agent));
 		input.sessionFileForTask(input.tasks[i]!.agent, i, input.modelOverrides[i]);
 	}
 	return mapConcurrent(input.tasks, input.concurrencyLimit, async (task, index) => {
+		if (input.signal.aborted) return cancelledResult(task.agent);
 		const behavior = input.behaviors[index];
 		const effectiveSkills = behavior?.skills;
 		const taskCwd = resolveParallelTaskCwd(task, input.paramsCwd, input.worktreeSetup, index);

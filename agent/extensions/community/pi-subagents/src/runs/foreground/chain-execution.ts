@@ -261,6 +261,15 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 	const concurrency = input.step.concurrency ?? MAX_CONCURRENCY;
 	const failFast = input.step.failFast ?? false;
 	let aborted = false;
+	const cancelledResult = (agent: string): SingleResult => ({
+		agent,
+		task: "(cancelled before start)",
+		exitCode: -1,
+		messages: [],
+		usage: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 0 },
+		error: "Cancelled before start",
+	});
+	if (input.signal?.aborted) return input.step.parallel.map((task) => cancelledResult(task.agent));
 	const effectiveModels = input.step.parallel.map((task) => {
 		const taskAgentConfig = input.agents.find((agent) => agent.name === task.agent);
 		return resolveEffectiveSubagentModel(
@@ -273,6 +282,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 		);
 	});
 	for (let taskIndex = 0; taskIndex < input.step.parallel.length; taskIndex++) {
+		if (input.signal?.aborted) return input.step.parallel.map((task) => cancelledResult(task.agent));
 		const task = input.step.parallel[taskIndex]!;
 		input.sessionFileForTask?.(task.agent, input.globalTaskIndex + taskIndex, effectiveModels[taskIndex]);
 	}
@@ -281,6 +291,7 @@ async function runParallelChainTasks(input: ParallelChainRunInput): Promise<Sing
 		input.step.parallel,
 		concurrency,
 		async (task, taskIndex) => {
+			if (input.signal?.aborted) return cancelledResult(task.agent);
 			if (aborted && failFast) {
 				return {
 					agent: task.agent,
@@ -556,6 +567,11 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 		...overrides,
 	});
 
+	const cancelledResult = (stepIndex: number, flatIndex: number): ChainExecutionResult => ({
+		content: [{ type: "text", text: "Chain cancelled" }],
+		details: buildChainExecutionDetails(makeDetailsInput({ currentStepIndex: stepIndex, currentFlatIndex: flatIndex })),
+	});
+
 	const firstStep = chainSteps[0]!;
 	const originalTask = params.task
 		?? (isParallelStep(firstStep)
@@ -677,6 +693,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 	let progressCreated = false;
 
 	for (let stepIndex = 0; stepIndex < chainSteps.length; stepIndex++) {
+		if (signal?.aborted) return cancelledResult(stepIndex, globalTaskIndex);
 		const step = chainSteps[stepIndex]!;
 		const stepTemplates = templates[stepIndex]!;
 
@@ -780,6 +797,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					if (result.progress) allProgress.push(result.progress);
 					if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
 				}
+				if (signal?.aborted) return cancelledResult(stepIndex, globalTaskIndex - step.parallel.length);
 				let worktreeSuffix = "";
 				if (worktreeSetup) {
 					worktreeFinalized = true;
@@ -1037,6 +1055,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				if (result.progress) allProgress.push(result.progress);
 				if (result.artifactPaths) allArtifactPaths.push(result.artifactPaths);
 			}
+			if (signal?.aborted) return cancelledResult(stepIndex, dynamicStartIndex);
 			const collected = collectDynamicResults(step, materialized.items, parallelResults);
 			const interruptedIndexInStep = parallelResults.findIndex((result) => result.interrupted);
 			const interrupted = interruptedIndexInStep >= 0 ? parallelResults[interruptedIndexInStep] : undefined;
@@ -1332,6 +1351,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 			results.push(r);
 			if (r.progress) allProgress.push(r.progress);
 			if (r.artifactPaths) allArtifactPaths.push(r.artifactPaths);
+			if (signal?.aborted) return cancelledResult(stepIndex, childIndex);
 
 			if (r.interrupted) {
 				return {

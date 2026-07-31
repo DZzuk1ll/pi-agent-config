@@ -1,4 +1,4 @@
-import type { ChildProcess } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 
 interface PostExitStdioGuardOptions {
 	idleMs: number;
@@ -12,6 +12,7 @@ interface ChildWithPipedStdio {
 }
 
 interface ChildWithKill {
+	pid?: number;
 	kill(signal?: NodeJS.Signals | number): boolean;
 }
 
@@ -21,6 +22,103 @@ export function trySignalChild(child: ChildWithKill, signal: NodeJS.Signals): bo
 	} catch {
 		return false;
 	}
+}
+
+export function isChildProcessTreeAlive(
+	child: ChildWithKill,
+	options: { processGroup?: boolean } = {},
+): boolean {
+	if (process.platform !== "win32" && options.processGroup && child.pid) {
+		try {
+			process.kill(-child.pid, 0);
+			return true;
+		} catch (error) {
+			return (error as NodeJS.ErrnoException).code === "EPERM";
+		}
+	}
+	try {
+		return child.kill(0);
+	} catch {
+		return false;
+	}
+}
+
+export interface EscalatingTermination {
+	terminate(): void;
+	dispose(): void;
+}
+
+export function createEscalatingTermination(options: {
+	signal: (signal: NodeJS.Signals) => boolean;
+	isInactive: () => boolean;
+	hardKillMs: number;
+}): EscalatingTermination {
+	let disposed = false;
+	let hardKillTimer: NodeJS.Timeout | undefined;
+
+	return {
+		terminate() {
+			if (disposed || hardKillTimer || options.isInactive()) return;
+			options.signal("SIGTERM");
+			hardKillTimer = setTimeout(() => {
+				hardKillTimer = undefined;
+				if (!disposed && !options.isInactive()) options.signal("SIGKILL");
+			}, options.hardKillMs);
+			hardKillTimer.unref?.();
+		},
+		dispose() {
+			disposed = true;
+			if (!hardKillTimer) return;
+			clearTimeout(hardKillTimer);
+			hardKillTimer = undefined;
+		},
+	};
+}
+
+export function trySignalChildTree(
+	child: ChildWithKill,
+	signal: NodeJS.Signals,
+	options: { processGroup?: boolean } = {},
+): boolean {
+	if (process.platform !== "win32" && options.processGroup && child.pid) {
+		try {
+			process.kill(-child.pid, signal);
+			return true;
+		} catch (error) {
+			if ((error as NodeJS.ErrnoException).code === "ESRCH") return false;
+			return trySignalChild(child, signal);
+		}
+	}
+
+	if (process.platform === "win32" && signal !== "SIGINT" && child.pid) {
+		try {
+			const killer = spawn("taskkill.exe", [
+				"/pid",
+				String(child.pid),
+				"/t",
+				...(signal === "SIGKILL" ? ["/f"] : []),
+			], {
+				stdio: "ignore",
+				windowsHide: true,
+			});
+			let fellBack = false;
+			const fallback = () => {
+				if (fellBack) return;
+				fellBack = true;
+				trySignalChild(child, signal);
+			};
+			killer.once("error", fallback);
+			killer.once("exit", (code) => {
+				if (code !== 0) fallback();
+			});
+			killer.unref();
+			return true;
+		} catch {
+			return trySignalChild(child, signal);
+		}
+	}
+
+	return trySignalChild(child, signal);
 }
 
 export function attachPostExitStdioGuard(
