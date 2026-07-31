@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
 
-import { createJiti } from "../npm/node_modules/jiti/lib/jiti.mjs";
+import { createJiti } from "../node_modules/jiti/lib/jiti.mjs";
 
 const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const piPackage = join(globalNodeModules, "@earendil-works/pi-coding-agent");
@@ -19,10 +19,10 @@ const jiti = createJiti(import.meta.url, {
 const renderModule = await jiti.import<{
 	buildWidgetLines: (jobs: unknown[], theme: unknown, width?: number, expanded?: boolean) => string[];
 	runningGlyph: (seed?: number, now?: number) => string;
-}>("../npm/vendor/pi-subagents/src/tui/render.ts");
+}>("../extensions/community/pi-subagents/src/tui/render.ts");
 const trackerModule = await jiti.import<{
 	collectSubagentWidgetJobs: (state: unknown) => Array<Record<string, unknown>>;
-}>("../npm/vendor/pi-subagents/src/runs/background/async-job-tracker.ts");
+}>("../extensions/community/pi-subagents/src/runs/background/async-job-tracker.ts");
 
 const theme = {
 	fg: (_color: string, text: string) => text,

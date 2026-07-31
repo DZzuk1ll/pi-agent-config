@@ -1,6 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import registerSubagents from "../npm/vendor/pi-subagents/src/extension/index.ts";
+import registerSubagents from "./community/pi-subagents/src/extension/index.ts";
 
 type DelegatedTask = { agent?: unknown };
 type DelegationInput = {

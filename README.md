@@ -56,13 +56,13 @@ git clone https://github.com/DZzuk1ll/pi-agent-config.git ~/.pi
 ### 3. 安装扩展依赖
 
 ```bash
-cd ~/.pi/agent/npm
+cd ~/.pi/agent
 npm ci
 ```
 
-`node_modules` 不进入 Git；它包含通用运行依赖，以及指向仓库内 Pi 辅助库源码的本地链接，可以随时通过 `package-lock.json` 重建。Pi 扩展和强耦合辅助库源码位于 `agent/npm/vendor/`，本地修改已经直接合并到源码，不需要安装后补丁。
+`agent/package.json` 同时是本地 Pi Package 清单和唯一的 npm 依赖清单。`node_modules` 不进入 Git；它只包含通用运行依赖和指向仓库内辅助库源码的本地链接，可以随时通过 `package-lock.json` 重建。
 
-`agent/settings.json` 只加载 `./npm` 这一个本地 Pi 包，不会再从 npm 下载社区 Pi 扩展。
+扩展、辅助库和主题分别位于 `agent/extensions/community/`、`agent/lib/community/` 和 `agent/themes/community/`。`agent/settings.json` 加载 agent 根目录 `.`，不会从 npm 下载社区 Pi 扩展。
 
 ### 4. 登录并启动
 
@@ -112,7 +112,7 @@ Fast mode：
 ```bash
 cd ~/.pi
 git pull --ff-only
-(cd agent/npm && npm ci)
+(cd agent && npm ci)
 ```
 
 保存自己的修改：
@@ -133,18 +133,22 @@ git push
 ├── settings.json                  # 紧凑界面与工具展示
 └── agent/
     ├── AGENTS.md                  # 全局编码指令
+    ├── package.json               # 本地 Pi Package 清单与通用运行依赖
+    ├── package-lock.json          # 可复现的依赖版本
     ├── settings.json              # Pi、模型与扩展配置
     ├── keybindings.json           # 快捷键
     ├── pi-plan-mode.json          # Plan mode 配置
-    ├── extensions/                # 自定义扩展及其配置
-    ├── lib/                       # 扩展共享逻辑
-    ├── tests/                     # 自定义逻辑测试
-    └── npm/
-        ├── package.json           # 本地 Pi 包清单与通用运行依赖
-        ├── package-lock.json      # 可复现的通用依赖版本
-        └── vendor/                # 统一维护的 Pi 扩展及强耦合辅助库源码
-            ├── upstream.json      # 初始版本、来源、许可证与本地修改
-            └── upstream-patches/  # 迁移前本地补丁，仅作来源记录
+    ├── extensions/
+    │   ├── community/             # 纳入维护的社区 Pi 扩展
+    │   └── ...                    # 自有扩展及其配置
+    ├── lib/
+    │   ├── community/             # Pi 强耦合但不注册入口的辅助库
+    │   └── ...                    # 自有共享逻辑
+    ├── themes/community/          # 纳入维护的社区主题
+    ├── third-party/
+    │   ├── upstream.json          # 版本、来源、许可证、本地路径与修改
+    │   └── patches/               # 迁移前补丁，仅作来源记录
+    └── tests/                     # 自定义逻辑测试
 ```
 
 ## 不会同步的内容
@@ -166,8 +170,9 @@ git push
 Pi 扩展拥有本机代码执行权限。使用前请检查：
 
 - `agent/settings.json` 中启用的扩展
-- `agent/npm/package.json` 中的通用运行依赖
-- `agent/npm/vendor/` 中纳入维护的扩展源码
+- `agent/package.json` 中的通用运行依赖和 Pi 资源入口
+- `agent/extensions/community/` 中纳入维护的社区扩展源码
+- `agent/lib/community/` 中纳入维护的 Pi 辅助库
 - `agent/extensions/` 中的自定义扩展
 
 本配置适合个人使用和学习；在工作设备或敏感仓库中使用前，请根据自己的安全要求进行审查。

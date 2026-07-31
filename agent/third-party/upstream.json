@@ -1,47 +1,61 @@
 {
   "schemaVersion": 1,
   "importedAt": "2026-07-31T07:47:41Z",
-  "source": "Installed npm artifacts from agent/npm/node_modules",
+  "source": "Imported community Pi packages; executable sources are organized by resource type under agent/",
   "packages": [
     {
       "name": "@bacnh85/pi-sub",
       "version": "0.1.21",
       "repository": "https://github.com/bacnh85/pi-extensions.git#pi-sub",
       "license": "MIT",
-      "notes": ["The published artifact declares MIT but does not include a LICENSE file."]
+      "notes": [
+        "The published artifact declares MIT but does not include a LICENSE file."
+      ],
+      "path": "agent/extensions/community/@bacnh85/pi-sub"
     },
     {
       "name": "@firstpick/pi-themes-bundle",
       "version": "0.1.5",
       "repository": "https://github.com/Firstp1ck/pi-coding-agent-forge.git#pi-package-themes-bundle",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/themes/community/@firstpick/pi-themes-bundle"
     },
     {
       "name": "@juicesharp/rpiv-todo",
       "version": "2.2.0",
       "repository": "https://github.com/juicesharp/rpiv-mono.git#packages/rpiv-todo",
       "license": "MIT",
-      "notes": ["The local complex-task guidance patch was applied to todo.ts during import."]
+      "notes": [
+        "The local complex-task guidance patch was applied to todo.ts during import."
+      ],
+      "path": "agent/extensions/community/@juicesharp/rpiv-todo"
     },
     {
       "name": "@narumitw/pi-plan-mode",
       "version": "0.34.0",
       "repository": "https://github.com/narumiruna/pi-extensions#extensions/pi-plan-mode",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/extensions/community/@narumitw/pi-plan-mode"
     },
     {
       "name": "@owlburtoe/pi-claudify",
       "version": "2.5.1",
       "repository": "https://forgejo.owlburtoe.dev/owlburtoe/pi-claudify.git",
       "license": "MIT",
-      "notes": ["The local footer patch was already applied before this source import."]
+      "notes": [
+        "The local footer patch was already applied before this source import."
+      ],
+      "path": "agent/extensions/community/@owlburtoe/pi-claudify"
     },
     {
       "name": "@smoose/pi-beautify",
       "version": "0.1.9",
       "repository": "https://github.com/smoosex/pi-beautify.git",
       "license": "MIT",
-      "notes": ["The published artifact declares MIT but does not include a LICENSE file."]
+      "notes": [
+        "The published artifact declares MIT but does not include a LICENSE file."
+      ],
+      "path": "agent/extensions/community/@smoose/pi-beautify"
     },
     {
       "name": "@spences10/pi-child-env",
@@ -50,7 +64,10 @@
       "upstreamTag": "@spences10/pi-child-env@0.1.10",
       "upstreamCommit": "4d7e1f998c9d56d0be09bb9ea9d0ab3378ad8754",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/lib/community/@spences10/pi-child-env"
     },
     {
       "name": "@spences10/pi-confirm-destructive",
@@ -59,7 +76,10 @@
       "upstreamTag": "@spences10/pi-confirm-destructive@0.0.20",
       "upstreamCommit": "547565ba8afb68e25bdc270f4257dfbdfd07096e",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/extensions/community/@spences10/pi-confirm-destructive"
     },
     {
       "name": "@spences10/pi-context",
@@ -68,7 +88,10 @@
       "upstreamTag": "@spences10/pi-context@0.1.14",
       "upstreamCommit": "2460cc206cfd76c037621bc2354a09e330deee06",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/extensions/community/@spences10/pi-context"
     },
     {
       "name": "@spences10/pi-lsp",
@@ -77,7 +100,10 @@
       "upstreamTag": "@spences10/pi-lsp@0.0.44",
       "upstreamCommit": "2460cc206cfd76c037621bc2354a09e330deee06",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/extensions/community/@spences10/pi-lsp"
     },
     {
       "name": "@spences10/pi-project-trust",
@@ -86,7 +112,10 @@
       "upstreamTag": "@spences10/pi-project-trust@0.0.19",
       "upstreamCommit": "cfc13c7ae447e576214c5e9a91e0a0d0322d4567",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/lib/community/@spences10/pi-project-trust"
     },
     {
       "name": "@spences10/pi-redact",
@@ -95,7 +124,10 @@
       "upstreamTag": "@spences10/pi-redact@0.0.14",
       "upstreamCommit": "547565ba8afb68e25bdc270f4257dfbdfd07096e",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/lib/community/@spences10/pi-redact"
     },
     {
       "name": "@spences10/pi-settings",
@@ -104,7 +136,10 @@
       "upstreamTag": "@spences10/pi-settings@0.0.3",
       "upstreamCommit": "cfc13c7ae447e576214c5e9a91e0a0d0322d4567",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/lib/community/@spences10/pi-settings"
     },
     {
       "name": "@spences10/pi-tui-modal",
@@ -113,45 +148,58 @@
       "upstreamTag": "@spences10/pi-tui-modal@0.0.24",
       "upstreamCommit": "a5737d631e9cb68d8f8fb4a6ce92b25a97345250",
       "license": "MIT",
-      "notes": ["Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."]
+      "notes": [
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+      ],
+      "path": "agent/lib/community/@spences10/pi-tui-modal"
     },
     {
       "name": "pi-codex-search",
       "version": "0.1.6",
       "repository": "https://github.com/Leechael/pi-codex-search",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/extensions/community/pi-codex-search"
     },
     {
       "name": "pi-mermaid",
       "version": "0.3.0",
       "repository": "https://github.com/Gurpartap/pi-mermaid.git",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/extensions/community/pi-mermaid"
     },
     {
       "name": "pi-notify",
       "version": "1.4.0",
       "repository": "https://github.com/ferologics/pi-notify.git",
       "license": "MIT",
-      "notes": ["Gallery-only demo.gif and demo.mp4 were excluded from the import."]
+      "notes": [
+        "Gallery-only demo.gif and demo.mp4 were excluded from the import."
+      ],
+      "path": "agent/extensions/community/pi-notify"
     },
     {
       "name": "pi-rewind",
       "version": "0.5.0",
       "repository": "https://github.com/arpagon/pi-rewind.git",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/extensions/community/pi-rewind"
     },
     {
       "name": "pi-slopchop",
       "version": "0.10.1",
       "repository": "https://github.com/robzolkos/pi-slopchop.git",
-      "license": "MIT"
+      "license": "MIT",
+      "path": "agent/extensions/community/pi-slopchop"
     },
     {
       "name": "pi-subagents",
       "version": "0.38.0",
       "repository": "https://github.com/nicobailon/pi-subagents.git",
       "license": "MIT",
-      "notes": ["The local subagent UI patch was already applied before this source import."]
+      "notes": [
+        "The local subagent UI patch was already applied before this source import."
+      ],
+      "path": "agent/extensions/community/pi-subagents"
     }
   ]
 }

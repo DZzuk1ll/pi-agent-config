@@ -11,7 +11,7 @@ agent/compact-backups/
 agent/workflows/
 
 # Reinstallable package contents and generated caches
-agent/npm/node_modules/
+agent/node_modules/
 agent/git/
 agent/models-store.json
 **/node_modules/

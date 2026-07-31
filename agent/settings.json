@@ -1,6 +1,6 @@
 {
   "packages": [
-    "./npm"
+    "."
   ],
   "lastChangelogVersion": "0.83.0",
   "theme": "one-dark",
