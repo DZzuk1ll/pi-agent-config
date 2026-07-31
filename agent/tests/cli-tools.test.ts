@@ -7,7 +7,6 @@ import test from "node:test";
 import { CLI_TOOL_CATALOG } from "../extensions/cli-tools/catalog.ts";
 import { queryCliTools } from "../extensions/cli-tools/query.ts";
 import {
-	extractCliToolVersion,
 	scanAvailableCliTools,
 	type AvailableCliTool,
 } from "../extensions/cli-tools/inventory.ts";
@@ -18,13 +17,12 @@ function catalogEntry(name: string) {
 	return entry;
 }
 
-function available(name: string, versionOutput?: string): AvailableCliTool {
+function available(name: string): AvailableCliTool {
 	const entry = catalogEntry(name);
 	return {
 		entry,
 		command: entry.commands[0],
 		path: `/tools/${entry.commands[0]}`,
-		...(versionOutput ? { versionOutput } : {}),
 	};
 }
 
@@ -61,13 +59,13 @@ test("inventory exposes only executable catalog entries and verifies Universal C
 
 		const withSystemCtags = scanAvailableCliTools({
 			path: directory,
-			readVersionOutput: (_toolPath, entry) => entry.name === "universal-ctags" ? "Exuberant Ctags 5.8" : undefined,
+			readProbeOutput: (_toolPath, entry) => entry.name === "universal-ctags" ? "Exuberant Ctags 5.8" : undefined,
 		});
 		assert.deepEqual(withSystemCtags.map((tool) => tool.entry.name), ["rg"]);
 
 		const withUniversalCtags = scanAvailableCliTools({
 			path: directory,
-			readVersionOutput: (_toolPath, entry) => entry.name === "universal-ctags" ? "Universal Ctags 6.2.1" : undefined,
+			readProbeOutput: (_toolPath, entry) => entry.name === "universal-ctags" ? "Universal Ctags 6.2.1" : undefined,
 		});
 		assert.deepEqual(withUniversalCtags.map((tool) => tool.entry.name), ["rg", "universal-ctags"]);
 	} finally {
@@ -75,58 +73,45 @@ test("inventory exposes only executable catalog entries and verifies Universal C
 	}
 });
 
-test("overview expands defaults and discloses only counts for additional categories", () => {
+test("overview returns ordered names and folded category ids only", () => {
 	const response = queryCliTools({ action: "overview" }, [
 		available("rg"),
+		available("fd"),
 		available("just"),
 		available("uv"),
 	]);
 
-	assert.match(response.text, /Default/);
-	assert.match(response.text, /rg/);
-	assert.match(response.text, /Task automation \(task-automation\): 1 available/);
-	assert.match(response.text, /Python development \(python-development\): 1 available/);
-	assert.doesNotMatch(response.text, /\/tools\/just/);
-	assert.doesNotMatch(response.text, /\/tools\/uv/);
-	assert.deepEqual(response.tools.map((tool) => tool.name), ["rg"]);
-	assert.deepEqual(response.categories.map((category) => category.id), ["task-automation", "python-development"]);
+	assert.equal(response.text, [
+		"Default",
+		"rg",
+		"fd",
+		"",
+		"Additional categories",
+		"task-automation",
+		"python-development",
+	].join("\n"));
+	assert.deepEqual(response.tools, ["rg", "fd"]);
+	assert.deepEqual(response.categories, ["task-automation", "python-development"]);
+	assert.doesNotMatch(response.text, /\/tools\/|—|Recursive|Command runner/);
 });
 
-test("category and search queries never disclose unavailable catalog entries", () => {
-	const tools = [available("rg"), available("just"), available("uv")];
-	const category = queryCliTools({ action: "category", category: "task-automation" }, tools);
-	assert.deepEqual(category.tools.map((tool) => tool.name), ["just"]);
-	assert.doesNotMatch(category.text, /uv/);
+test("category and search return ordered available names only", () => {
+	const tools = [available("rg"), available("shellcheck"), available("shfmt"), available("just")];
+	const category = queryCliTools({ action: "category", category: "shell-development" }, tools);
+	assert.equal(category.text, "shellcheck\nshfmt");
+	assert.deepEqual(category.tools, ["shellcheck", "shfmt"]);
 
-	const search = queryCliTools({ action: "search", query: "python" }, tools);
-	assert.deepEqual(search.tools.map((tool) => tool.name), ["uv"]);
+	const search = queryCliTools({ action: "search", query: "search" }, tools);
+	assert.equal(search.text, "rg");
+	assert.deepEqual(search.tools, ["rg"]);
 
-	const missing = queryCliTools({ action: "search", query: "shell" }, tools);
+	const missing = queryCliTools({ action: "search", query: "python" }, tools);
+	assert.equal(missing.text, "No available CLI tools.");
 	assert.deepEqual(missing.tools, []);
-	assert.doesNotMatch(missing.text, /not installed|unavailable/i);
-	assert.doesNotMatch(missing.text, /shellcheck|shfmt/);
-});
-
-test("details reports facts for available tools and stays neutral otherwise", () => {
-	const tools = [available("universal-ctags", "Universal Ctags 6.2.1, Copyright")];
-	const details = queryCliTools({ action: "details", name: "ctags" }, tools);
-	assert.match(details.text, /name: universal-ctags/);
-	assert.match(details.text, /version: 6\.2\.1/);
-	assert.match(details.text, /path: \/tools\/ctags/);
-
-	const missing = queryCliTools({ action: "details", name: "tokei" }, tools);
-	assert.deepEqual(missing.tools, []);
-	assert.doesNotMatch(missing.text, /not installed|unavailable/i);
-});
-
-test("version extraction uses catalog-specific output patterns", () => {
-	const shellcheck = available("shellcheck");
-	const version = extractCliToolVersion(shellcheck, () => "ShellCheck - shell script analysis tool\nversion: 0.11.0");
-	assert.equal(version, "0.11.0");
+	assert.doesNotMatch(missing.text, /uv|not installed|unavailable/i);
 });
 
 test("query actions require their corresponding selector", () => {
 	assert.throws(() => queryCliTools({ action: "category" }, []), /category is required/);
 	assert.throws(() => queryCliTools({ action: "search" }, []), /query is required/);
-	assert.throws(() => queryCliTools({ action: "details" }, []), /name is required/);
 });

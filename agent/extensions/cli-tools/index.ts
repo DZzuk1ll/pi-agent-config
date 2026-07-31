@@ -10,11 +10,9 @@ const CliToolsParams = Type.Object({
 		Type.Literal("overview"),
 		Type.Literal("category"),
 		Type.Literal("search"),
-		Type.Literal("details"),
 	], { default: "overview", description: "Inventory view to return. Omit for the progressively disclosed overview." })),
 	category: Type.Optional(Type.String({ maxLength: 120, description: "Category id or label returned by overview." })),
 	query: Type.Optional(Type.String({ maxLength: 240, description: "Name, category, capability, or keyword to filter available catalog entries." })),
-	name: Type.Optional(Type.String({ maxLength: 120, description: "Catalog name or detected command name for one available tool." })),
 });
 
 function safeInline(value: string): string {
@@ -36,7 +34,7 @@ export default function cliTools(pi: ExtensionAPI): void {
 		},
 		renderCall(args, theme) {
 			const action = args.action ?? "overview";
-			const target = args.category ?? args.query ?? args.name;
+			const target = args.category ?? args.query;
 			const suffix = target ? ` ${safeInline(target)}` : "";
 			return new Text(`${theme.fg("toolTitle", theme.bold("cli_tools "))}${theme.fg("accent", `${action}${suffix}`)}`, 0, 0);
 		},

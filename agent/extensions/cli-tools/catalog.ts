@@ -20,8 +20,7 @@ export interface CliToolCatalogEntry {
 	description: string;
 	keywords: readonly string[];
 	defaultDisclosure?: boolean;
-	versionArgs: readonly string[];
-	versionPattern: RegExp;
+	probeArgs?: readonly string[];
 	identityPattern?: RegExp;
 }
 
@@ -71,8 +70,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "Recursive line-oriented text search command.",
 		keywords: ["text", "content", "regex", "search", "files"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /^ripgrep\s+(\S+)/mi,
 	},
 	{
 		name: "fd",
@@ -81,8 +78,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "Filesystem entry search command with name, path, type, and extension filters.",
 		keywords: ["file", "directory", "path", "name", "extension", "search"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /^fd\s+(\S+)/mi,
 	},
 	{
 		name: "ast-grep",
@@ -91,8 +86,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "Syntax-tree pattern search and rewrite command for source code.",
 		keywords: ["ast", "syntax", "structural", "code", "search", "rewrite"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /^ast-grep\s+(\S+)/mi,
 	},
 	{
 		name: "yq",
@@ -101,8 +94,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "YAML, JSON, XML, CSV, and properties query and transformation command.",
 		keywords: ["yaml", "json", "xml", "csv", "properties", "query", "transform"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /\bversion\s+v?(\S+)/i,
 	},
 	{
 		name: "shellcheck",
@@ -111,8 +102,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "Static analysis command for shell scripts.",
 		keywords: ["shell", "bash", "static", "analysis", "lint"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /^version:\s*(\S+)/mi,
 	},
 	{
 		name: "shfmt",
@@ -121,8 +110,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		description: "Parser and formatter command for shell programs.",
 		keywords: ["shell", "bash", "format", "parser"],
 		defaultDisclosure: true,
-		versionArgs: ["--version"],
-		versionPattern: /^v?(\d+\.\d+\.\d+(?:\S*)?)/mi,
 	},
 	{
 		name: "just",
@@ -130,8 +117,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "task-automation",
 		description: "Command runner backed by project Justfiles.",
 		keywords: ["task", "runner", "justfile", "automation", "project"],
-		versionArgs: ["--version"],
-		versionPattern: /^just\s+(\S+)/mi,
 	},
 	{
 		name: "uv",
@@ -139,8 +124,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "python-development",
 		description: "Python project, package, and environment management command.",
 		keywords: ["python", "project", "package", "environment", "dependency"],
-		versionArgs: ["--version"],
-		versionPattern: /^uv\s+(\S+)/mi,
 	},
 	{
 		name: "universal-ctags",
@@ -148,8 +131,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "code-navigation",
 		description: "Source-code symbol tag generation command.",
 		keywords: ["ctags", "symbol", "tags", "index", "navigation", "source"],
-		versionArgs: ["--version"],
-		versionPattern: /^Universal Ctags\s+([^,\s]+)/mi,
+		probeArgs: ["--version"],
 		identityPattern: /^Universal Ctags\b/mi,
 	},
 	{
@@ -158,7 +140,5 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "code-metrics",
 		description: "Source code statistics command grouped by language.",
 		keywords: ["statistics", "lines", "language", "codebase", "metrics"],
-		versionArgs: ["--version"],
-		versionPattern: /^tokei\s+(\S+)/mi,
 	},
 ];

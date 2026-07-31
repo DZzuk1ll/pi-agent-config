@@ -10,25 +10,20 @@ import {
 	type CliToolCategory,
 } from "./catalog.ts";
 
-const VERSION_TIMEOUT_MS = 1_500;
-const VERSION_MAX_BYTES = 64 * 1024;
+const PROBE_TIMEOUT_MS = 1_500;
+const PROBE_MAX_BYTES = 64 * 1024;
 
 export interface AvailableCliTool {
 	entry: CliToolCatalogEntry;
 	command: string;
 	path: string;
-	versionOutput?: string;
 }
 
 export interface ScanCliToolsOptions {
 	path?: string;
 	pathExt?: string;
 	platform?: NodeJS.Platform;
-	readVersionOutput?: (path: string, entry: CliToolCatalogEntry) => string | undefined;
-}
-
-function safeInline(value: string): string {
-	return sanitizeForDisplay(value).replace(/[\r\n\t]+/g, " ").trim();
+	readProbeOutput?: (path: string, entry: CliToolCatalogEntry) => string | undefined;
 }
 
 function commandVariants(command: string, platform: NodeJS.Platform, pathExt: string): string[] {
@@ -62,13 +57,14 @@ function resolveCommand(
 	return undefined;
 }
 
-export function readCliToolVersionOutput(path: string, entry: CliToolCatalogEntry): string | undefined {
-	const result = spawnSync(path, entry.versionArgs, {
+export function readCliToolProbeOutput(path: string, entry: CliToolCatalogEntry): string | undefined {
+	if (!entry.probeArgs) return undefined;
+	const result = spawnSync(path, entry.probeArgs, {
 		encoding: "utf8",
 		env: { ...process.env, NO_COLOR: "1" },
-		maxBuffer: VERSION_MAX_BYTES,
+		maxBuffer: PROBE_MAX_BYTES,
 		stdio: ["ignore", "pipe", "pipe"],
-		timeout: VERSION_TIMEOUT_MS,
+		timeout: PROBE_TIMEOUT_MS,
 	});
 	if (result.error) return undefined;
 	const output = `${result.stdout ?? ""}\n${result.stderr ?? ""}`.trim();
@@ -79,31 +75,23 @@ export function scanAvailableCliTools(options: ScanCliToolsOptions = {}): Availa
 	const pathValue = options.path ?? process.env.PATH ?? "";
 	const platform = options.platform ?? process.platform;
 	const pathExt = options.pathExt ?? process.env.PATHEXT ?? ".COM;.EXE;.BAT;.CMD";
-	const readVersion = options.readVersionOutput ?? readCliToolVersionOutput;
+	const readProbe = options.readProbeOutput ?? readCliToolProbeOutput;
 	const available: AvailableCliTool[] = [];
 
 	for (const entry of CLI_TOOL_CATALOG) {
 		for (const command of entry.commands) {
 			const path = resolveCommand(command, pathValue, platform, pathExt);
 			if (!path) continue;
-			const versionOutput = entry.identityPattern ? readVersion(path, entry) : undefined;
-			if (entry.identityPattern && (!versionOutput || !entry.identityPattern.test(versionOutput))) continue;
-			available.push({ entry, command, path, versionOutput });
+			if (entry.identityPattern) {
+				const probeOutput = readProbe(path, entry);
+				if (!probeOutput || !entry.identityPattern.test(probeOutput)) continue;
+			}
+			available.push({ entry, command, path });
 			break;
 		}
 	}
 
 	return available;
-}
-
-export function extractCliToolVersion(
-	tool: AvailableCliTool,
-	readVersionOutput: (path: string, entry: CliToolCatalogEntry) => string | undefined = readCliToolVersionOutput,
-): string | undefined {
-	const output = tool.versionOutput ?? readVersionOutput(tool.path, tool.entry);
-	if (!output) return undefined;
-	const match = output.match(tool.entry.versionPattern);
-	return match?.[1] ? safeInline(match[1]) : undefined;
 }
 
 export function findCliToolCategory(value: string): CliToolCategory | undefined {
@@ -134,16 +122,4 @@ export function searchAvailableCliTools(tools: readonly AvailableCliTool[], quer
 		].join(" ").toLocaleLowerCase();
 		return terms.every((term) => haystack.includes(term));
 	});
-}
-
-export function findAvailableCliTool(
-	tools: readonly AvailableCliTool[],
-	value: string,
-): AvailableCliTool | undefined {
-	const normalized = value.trim().toLocaleLowerCase();
-	return tools.find((tool) =>
-		tool.entry.name.toLocaleLowerCase() === normalized
-		|| tool.command.toLocaleLowerCase() === normalized
-		|| tool.entry.commands.some((command) => command.toLocaleLowerCase() === normalized)
-	);
 }
