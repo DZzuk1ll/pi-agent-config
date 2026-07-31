@@ -311,8 +311,8 @@ const TOOL_OUTPUT_ROWS: readonly ImmediateRowDefinition[] = [
 	{
 		kind: "number",
 		key: "bashCollapsedLines",
-		label: "Collapsed Bash lines",
-		description: "Limits output lines shown by Bash preview mode before expansion.",
+		label: "Collapsed Bash visual lines",
+		description: "Limits wrapped visual output lines shown by Bash preview mode before expansion.",
 		defaultValue: 10,
 		min: 0,
 	},

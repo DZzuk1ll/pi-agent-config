@@ -65,6 +65,14 @@ import {
 	type MessageStyle,
 	type WorkedVerbMode,
 } from "./message-chrome.ts";
+import {
+	activateThemeOverrides,
+	deactivateThemeOverrides,
+	ensureThemeOverrides,
+	invalidateThemeOverrides,
+	themeOverrideIdentity,
+	type ThemeOverrideTarget,
+} from "./theme-sync.ts";
 
 const RESET = "\x1b[0m";
 const TRANSPARENT_BG = "\x1b[49m";
@@ -78,6 +86,7 @@ const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const ANSI_PRESENT_RE = /\x1b\[[0-9;]*m/;
 const PATCH_FLAG = Symbol.for("pi-claudify:patched-container-render");
 const TOOL_RENDER_CACHE = Symbol.for("pi-claudify:tool-render-cache");
+const TOOL_THEME_REVISION = Symbol.for("pi-claudify:tool-theme-revision");
 const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-claudify:patched-tool-cache-invalidation");
 const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for("pi-claudify:patched-read-image-expansion");
 const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claudify:patched-custom-message-render");
@@ -364,13 +373,14 @@ export function applyToolBackgroundMode(theme: unknown): void {
 	// user-message box (theme mode) paints with the theme's value even though
 	// pi's markdown background stays stripped in every mode.
 	if (theme && typeof theme === "object") {
+		const identity = themeOverrideIdentity(theme as ThemeOverrideTarget);
 		const current = getThemeBg(theme, "userMessageBg");
-		if (current && current !== TRANSPARENT_BG && !originalUserMessageBg.has(theme)) {
-			originalUserMessageBg.set(theme, current);
+		if (identity && current && current !== TRANSPARENT_BG && !originalUserMessageBg.has(identity)) {
+			originalUserMessageBg.set(identity, current);
 		}
 		// bgColors store ready-made ANSI escapes (same as fgColors); hex only
 		// appears in test fakes, so pass escapes through and convert hex.
-		const original = originalUserMessageBg.get(theme);
+		const original = identity ? originalUserMessageBg.get(identity) : undefined;
 		userBoxThemeBg = original ? (original.startsWith("\x1b") ? original : bgAnsiFromHex(original)) : null;
 		userBoxThemePrefixFg = safeFgAnsi(theme, "dim") ?? safeFgAnsi(theme, "muted");
 	}
@@ -380,6 +390,14 @@ export function applyToolBackgroundMode(theme: unknown): void {
 	setThemeBg(theme, "toolPendingBg", TRANSPARENT_BG);
 	setThemeBg(theme, "toolSuccessBg", TRANSPARENT_BG);
 	setThemeBg(theme, "toolErrorBg", TRANSPARENT_BG);
+}
+
+function applyRuntimeThemeOverrides(theme: ThemeOverrideTarget): void {
+	applyToolBackgroundMode(theme);
+	// ctx.ui.theme is a stable proxy whose color maps change when pi replaces the
+	// active Theme. Reset the module cache so adaptive colors follow the new maps.
+	_themePaletteCacheTheme = null;
+	applyThemePaletteIfNeeded(theme);
 }
 
 function stripAnsi(text: string): string {
@@ -788,25 +806,43 @@ function patchGlobalToolBorders(): void {
 
 	const originalRender = proto.render;
 	proto.render = function patchedContainerRender(width: number): string[] {
-		if (!isToolExecutionLike(this)) {
+		const themeSync = ensureThemeOverrides();
+		if (!themeSync.enabled) return originalRender.call(this, width);
+		syncToolBackgroundMode();
+
+		const toolExecution = isToolExecutionLike(this);
+		if (toolExecution && (this as any)[TOOL_THEME_REVISION] !== themeSync.revision) {
+			clearToolRenderCache(this);
+			if (typeof (this as any).updateDisplay === "function") (this as any).updateDisplay();
+			(this as any)[TOOL_THEME_REVISION] = themeSync.revision;
+		}
+
+		if (!toolExecution) {
 			const grouped = renderWithGroupedReadOnlyInspectionTools(this, width);
 			if (grouped) return grouped;
 			const stacked = renderWithStackedConsecutiveBash(this, width);
 			if (stacked) return stacked;
 		}
 
-		if (isToolExecutionLike(this)) {
+		if (toolExecution) {
 			const cached = (this as any)[TOOL_RENDER_CACHE];
-			if (cached?.width === width && cached?.mode === toolBackgroundMode) {
+			if (cached?.width === width
+				&& cached?.mode === toolBackgroundMode
+				&& cached?.themeRevision === themeSync.revision) {
 				return cached.lines;
 			}
 		}
 
 		const rendered = originalRender.call(this, width);
 		if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
-		if (!isToolExecutionLike(this)) return rendered;
+		if (!toolExecution) return rendered;
 		if (toolBackgroundMode === "default") {
-			(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: rendered };
+			(this as any)[TOOL_RENDER_CACHE] = {
+				width,
+				mode: toolBackgroundMode,
+				themeRevision: themeSync.revision,
+				lines: rendered,
+			};
 			return rendered;
 		}
 
@@ -818,7 +854,12 @@ function patchGlobalToolBorders(): void {
 
 		const { textLines, imageLines } = splitRenderedImageBlock(rendered.slice(start, end + 1));
 		if (imageLines.length > 0) {
-			(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: rendered };
+			(this as any)[TOOL_RENDER_CACHE] = {
+				width,
+				mode: toolBackgroundMode,
+				themeRevision: themeSync.revision,
+				lines: rendered,
+			};
 			return rendered;
 		}
 		const core = textLines.map((line) => clampLineWidth(normalizeLeadingCheckGlyph(line), width));
@@ -833,7 +874,12 @@ function patchGlobalToolBorders(): void {
 			result = [spacerLine, ...core, ...imageLines];
 		}
 
-		(this as any)[TOOL_RENDER_CACHE] = { width, mode: toolBackgroundMode, lines: result };
+		(this as any)[TOOL_RENDER_CACHE] = {
+			width,
+			mode: toolBackgroundMode,
+			themeRevision: themeSync.revision,
+			lines: result,
+		};
 		return result;
 	};
 
@@ -1824,6 +1870,103 @@ function wrapMarkedLine(line: string, width: number): string[] {
 	return wrapped.map((part, index) => (index === 0 ? `${prefix}${part}` : `${continuation}${part}`));
 }
 
+export interface VisualLinePreviewLayout {
+	visibleLines: string[];
+	omittedVisualLines: number;
+}
+
+export function layoutVisualLinePreview(
+	logicalLines: readonly string[],
+	width: number,
+	maxVisualLines: number,
+): VisualLinePreviewLayout {
+	const contentWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+	const limit = Number.isFinite(maxVisualLines) ? Math.max(0, Math.floor(maxVisualLines)) : 0;
+	const visualLines = logicalLines.flatMap((line) => wrapMarkedLine(line.replace(/\t/g, "   "), contentWidth));
+	return {
+		visibleLines: visualLines.slice(0, limit),
+		omittedVisualLines: Math.max(0, visualLines.length - limit),
+	};
+}
+
+export function formatVisualLineOmissionHint(count: number): string {
+	const normalized = Number.isFinite(count) ? Math.max(0, Math.floor(count)) : 0;
+	return `… +${normalized} visual line${normalized === 1 ? "" : "s"} (ctrl+o to expand)`;
+}
+
+export function renderBashPreviewRows(
+	statusText: string,
+	outputLines: readonly string[],
+	width: number,
+	maxVisualLines: number,
+	styleHint: (text: string) => string = (text) => text,
+): VisualLinePreviewLayout {
+	const contentWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+	const statusLines = wrapMarkedLine(branchLead(statusText), contentWidth);
+	const preview = layoutVisualLinePreview(
+		outputLines.map((line) => branchIndent(line)),
+		contentWidth,
+		maxVisualLines,
+	);
+	const visibleLines = [...statusLines, ...preview.visibleLines];
+	if (preview.omittedVisualLines > 0) {
+		const hint = styleHint(formatVisualLineOmissionHint(preview.omittedVisualLines));
+		visibleLines.push(...wrapMarkedLine(branchIndent(hint), contentWidth));
+	}
+	return {
+		visibleLines: visibleLines.map((line) => visibleWidth(line) > contentWidth
+			? truncateToWidth(line, contentWidth, "")
+			: line),
+		omittedVisualLines: preview.omittedVisualLines,
+	};
+}
+
+class BashPreviewText extends Text {
+	private statusText = "";
+	private outputLines: string[] = [];
+	private maxVisualLines = 0;
+	private theme?: Theme;
+	private previewKey = "";
+	private previewCachedWidth?: number;
+	private previewCachedLines?: string[];
+
+	constructor() {
+		super("", 0, 0);
+	}
+
+	setPreview(statusText: string, outputLines: readonly string[], maxVisualLines: number, theme: Theme): void {
+		const limit = Number.isFinite(maxVisualLines) ? Math.max(0, Math.floor(maxVisualLines)) : 0;
+		const key = `${statusText}\0${outputLines.join("\0")}\0${limit}`;
+		const changed = key !== this.previewKey || theme !== this.theme;
+		this.statusText = statusText;
+		this.outputLines = [...outputLines];
+		this.maxVisualLines = limit;
+		this.theme = theme;
+		this.previewKey = key;
+		if (changed) this.invalidate();
+	}
+
+	invalidate(): void {
+		this.previewCachedWidth = undefined;
+		this.previewCachedLines = undefined;
+	}
+
+	render(width: number): string[] {
+		if (this.previewCachedLines && this.previewCachedWidth === width) return this.previewCachedLines;
+		const contentWidth = Number.isFinite(width) ? Math.max(1, Math.floor(width)) : 1;
+		const preview = renderBashPreviewRows(
+			this.statusText,
+			this.outputLines,
+			contentWidth,
+			this.maxVisualLines,
+			(text) => this.theme?.fg("muted", text) ?? text,
+		);
+		this.previewCachedWidth = width;
+		this.previewCachedLines = preview.visibleLines.map((line) => padToWidth(line, contentWidth));
+		return this.previewCachedLines;
+	}
+}
+
 class ToolText extends Text {
 	private value = "";
 	private toolCachedValue?: string;
@@ -1868,6 +2011,18 @@ class ToolText extends Text {
 function makeText(last: unknown, text: string): Text {
 	const component = last instanceof ToolText ? last : new ToolText();
 	component.setText(text);
+	return component;
+}
+
+function makeBashPreviewText(
+	last: unknown,
+	statusText: string,
+	outputLines: readonly string[],
+	maxVisualLines: number,
+	theme: Theme,
+): Text {
+	const component = last instanceof BashPreviewText ? last : new BashPreviewText();
+	component.setPreview(statusText, outputLines, maxVisualLines, theme);
 	return component;
 }
 
@@ -2649,23 +2804,10 @@ function adaptiveWrapRows(tw?: number): number {
 
 function fit(value: string, width: number): string {
 	if (width <= 0) return "";
-	const plain = diffStrip(value);
-	if (plain.length <= width) return value + " ".repeat(width - plain.length);
-	const showWidth = width > 2 ? width - 1 : width;
-	let vis = 0;
-	let i = 0;
-	while (i < value.length && vis < showWidth) {
-		if (value[i] === "\x1b") {
-			const end = value.indexOf("m", i);
-			if (end !== -1) {
-				i = end + 1;
-				continue;
-			}
-		}
-		vis++;
-		i++;
-	}
-	return width > 2 ? `${value.slice(0, i)}${D_RST}${FG_DIM}›${D_RST}` : `${value.slice(0, i)}${D_RST}`;
+	const valueWidth = visibleWidth(value);
+	if (valueWidth <= width) return value + " ".repeat(width - valueWidth);
+	const marker = width > 2 ? `${FG_DIM}›${D_RST}` : "";
+	return truncateToWidth(value, width, marker);
 }
 
 function ansiState(text: string): string {
@@ -2700,49 +2842,69 @@ function normalizeShikiContrast(ansi: string): string {
 	});
 }
 
+const diffGraphemeSegmenter = new Intl.Segmenter(undefined, { granularity: "grapheme" });
+const sgrAtStartRegex = /^\x1b\[[0-9;]*m/;
+
+type AnsiWrapToken = { value: string; width: number };
+
+function tokenizeAnsiForWrap(text: string): AnsiWrapToken[] {
+	const tokens: AnsiWrapToken[] = [];
+	let i = 0;
+	while (i < text.length) {
+		if (text[i] === "\x1b") {
+			const sgr = sgrAtStartRegex.exec(text.slice(i))?.[0];
+			if (sgr) {
+				tokens.push({ value: sgr, width: 0 });
+				i += sgr.length;
+				continue;
+			}
+		}
+		if (text[i] === "\x1b") {
+			// Preserve unknown escape bytes without treating them as visible cells.
+			tokens.push({ value: text[i], width: 0 });
+			i++;
+			continue;
+		}
+		let end = i + 1;
+		while (end < text.length && text[end] !== "\x1b") end++;
+		for (const { segment } of diffGraphemeSegmenter.segment(text.slice(i, end))) {
+			tokens.push({ value: segment, width: visibleWidth(segment) });
+		}
+		i = end;
+	}
+	return tokens;
+}
+
 function wrapAnsi(text: string, width: number, maxRows = adaptiveWrapRows(), fillBg = ""): string[] {
 	if (width <= 0) return [""];
-	const plain = diffStrip(text);
-	if (plain.length <= width) {
-		const pad = width - plain.length;
+	const textWidth = visibleWidth(text);
+	if (textWidth <= width) {
+		const pad = width - textWidth;
 		return pad > 0 ? [text + fillBg + " ".repeat(pad) + (fillBg ? D_RST : "")] : [text];
 	}
 
+	const tokens = tokenizeAnsiForWrap(text);
 	const rows: string[] = [];
 	let row = "";
 	let vis = 0;
-	let i = 0;
+	let tokenIndex = 0;
 	let onLastRow = false;
 	let effectiveWidth = width;
 
-	while (i < text.length) {
+	while (tokenIndex < tokens.length) {
 		if (!onLastRow && rows.length >= maxRows - 1) {
 			onLastRow = true;
 			effectiveWidth = width > 2 ? width - 1 : width;
 		}
-		if (text[i] === "\x1b") {
-			const end = text.indexOf("m", i);
-			if (end !== -1) {
-				row += text.slice(i, end + 1);
-				i = end + 1;
-				continue;
-			}
+		const token = tokens[tokenIndex];
+		if (token.width === 0) {
+			row += token.value;
+			tokenIndex++;
+			continue;
 		}
-		if (vis >= effectiveWidth) {
+		if (vis > 0 && vis + token.width > effectiveWidth) {
 			if (onLastRow) {
-				let hasMore = false;
-				for (let j = i; j < text.length; j++) {
-					if (text[j] === "\x1b") {
-						const e2 = text.indexOf("m", j);
-						if (e2 !== -1) {
-							j = e2;
-							continue;
-						}
-					}
-					hasMore = true;
-					break;
-				}
-				if (hasMore && width > 2) row += `${D_RST}${FG_DIM}›${D_RST}`;
+				if (width > 2) row += `${D_RST}${FG_DIM}›${D_RST}`;
 				else row += fillBg + " ".repeat(Math.max(0, width - vis)) + D_RST;
 				rows.push(row);
 				return rows;
@@ -2751,14 +2913,11 @@ function wrapAnsi(text: string, width: number, maxRows = adaptiveWrapRows(), fil
 			rows.push(row + D_RST);
 			row = state + fillBg;
 			vis = 0;
-			if (rows.length >= maxRows - 1) {
-				onLastRow = true;
-				effectiveWidth = width > 2 ? width - 1 : width;
-			}
+			continue;
 		}
-		row += text[i];
-		vis++;
-		i++;
+		row += token.value;
+		vis += token.width;
+		tokenIndex++;
 	}
 
 	if (row.length > 0 || rows.length === 0) {
@@ -4725,6 +4884,7 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 // ===========================================================================
 
 export default function (pi: ExtensionAPI): void {
+	const themeSyncOwner = Symbol("pi-claudify:theme-sync-owner");
 	patchToolRenderCacheInvalidation();
 	patchReadImageExpansion();
 	patchGlobalToolBorders();
@@ -4750,9 +4910,8 @@ export default function (pi: ExtensionAPI): void {
 				(tui, theme, keybindings, done) => {
 					const refreshDiffPalette = (): void => {
 						applyDiffPalette();
-						_themePaletteCacheTheme = null;
 						autoDerivePending = !hasExplicitBgConfig;
-						applyThemePaletteIfNeeded(ctx.ui.theme);
+						invalidateThemeOverrides(themeSyncOwner);
 						clearHighlightCache();
 						tui.requestRender();
 					};
@@ -4762,13 +4921,11 @@ export default function (pi: ExtensionAPI): void {
 						keybindings,
 						() => done(undefined),
 						(key) => {
-							if (key === "toolBackground") {
-								toolBackgroundOverride = null;
-								applyToolBackgroundMode(ctx.ui.theme);
+							if (key === "toolBackground") toolBackgroundOverride = null;
+							if (key === "toolBackground" || key === "accentColor" || key === "userMessageBox") {
+								invalidateThemeOverrides(themeSyncOwner);
 							}
 							if (key === "hiddenThinkingLabel") applyHiddenThinkingLabel(ctx);
-							if (key === "accentColor") applyAccentOverride(ctx.ui.theme);
-							if (key === "userMessageBox") applyToolBackgroundMode(ctx.ui.theme);
 							if (key === "spinnerColor"
 								|| key === "spinnerStatusColor"
 								|| key === "spinnerShimmer"
@@ -4809,16 +4966,14 @@ export default function (pi: ExtensionAPI): void {
 
 	pi.on("session_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		applyToolBackgroundMode(ctx.ui.theme);
-		applyThemePaletteIfNeeded(ctx.ui.theme);
+		activateThemeOverrides(themeSyncOwner, ctx.ui.theme, applyRuntimeThemeOverrides);
 		applyHiddenThinkingLabel(ctx);
 		installClaudeFooter(ctx, pi);
 	});
 
 	pi.on("turn_start", async (_event, ctx) => {
 		if (!ctx.hasUI) return;
-		applyToolBackgroundMode(ctx.ui.theme);
-		applyThemePaletteIfNeeded(ctx.ui.theme);
+		invalidateThemeOverrides(themeSyncOwner);
 		applyHiddenThinkingLabel(ctx);
 	});
 
@@ -4924,7 +5079,9 @@ export default function (pi: ExtensionAPI): void {
 			if (mode === "summary") return makeText(ctx.lastComponent, withBranch(text, theme));
 			if (mode === "preview") {
 				if (nonEmpty.length === 0) return makeText(ctx.lastComponent, withBranch(text, theme));
-				const preview = buildPreviewText(nonEmpty.map((line) => theme.fg(isError ? "error" : "dim", line)), expanded, theme, bashCollapsedLimit());
+				const styledLines = nonEmpty.map((line) => theme.fg(isError ? "error" : "dim", line));
+				if (!expanded) return makeBashPreviewText(ctx.lastComponent, text, styledLines, bashCollapsedLimit(), theme);
+				const preview = buildPreviewText(styledLines, true, theme, bashCollapsedLimit());
 				return makeText(ctx.lastComponent, withBranch(`${text}\n${preview}`, theme));
 			}
 
@@ -5395,6 +5552,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 	pi.on("session_shutdown", async () => {
+		deactivateThemeOverrides(themeSyncOwner);
 		for (const entry of _blinkContexts.values()) {
 			entry.key._blinkActive = false;
 		}

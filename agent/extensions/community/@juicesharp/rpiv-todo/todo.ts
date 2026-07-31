@@ -70,7 +70,7 @@ export function registerTodoTool(pi: ExtensionAPI): void {
 		name: TOOL_NAME,
 		label: TOOL_LABEL,
 		description:
-			"Manage a task list only for genuinely complex work that benefits from persistent progress tracking (typically 3+ distinct steps), or when the user explicitly requests task tracking. Do not use it for simple or routine tasks, single edits, quick lookups, one- or two-step work, or conversational requests. Actions: create (new task), update (change status/fields/dependencies), list (all tasks, optionally filtered by status), get (single task details), delete (tombstone), clear (reset all). Status: pending → in_progress → completed, plus deleted tombstone.",
+			"Manage a persistent task list. Use this tool only for genuinely complex work that clearly requires progress tracking; do not use it for simple, routine, or short tasks. When all existing tasks are completed, immediately call clear so completed tasks do not remain in the list. Never clear unfinished tasks. Actions: create, update, list, get, delete, and clear. Statuses: pending, in_progress, completed, and deleted.",
 		promptSnippet: guidance.promptSnippet ?? DEFAULT_PROMPT_SNIPPET,
 		promptGuidelines: guidance.promptGuidelines ?? DEFAULT_PROMPT_GUIDELINES,
 		parameters: TodoParamsSchema,
