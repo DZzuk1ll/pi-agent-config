@@ -22,5 +22,6 @@
   "workedVerbs": [
     "Done"
   ],
-  "workedVerbMode": "replace"
+  "workedVerbMode": "replace",
+  "footerStyle": "pi"
 }

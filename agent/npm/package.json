@@ -1,22 +1,46 @@
 {
-  "name": "pi-extensions",
+  "name": "personal-pi-extensions",
   "private": true,
+  "keywords": [
+    "pi-package"
+  ],
+  "pi": {
+    "extensions": [
+      "./vendor/pi-codex-search/index.ts",
+      "./vendor/@spences10/pi-lsp/src/index.ts",
+      "./vendor/@spences10/pi-confirm-destructive/src/index.ts",
+      "./vendor/pi-slopchop/src/index.ts",
+      "./vendor/pi-notify/index.ts",
+      "./vendor/@bacnh85/pi-sub/extensions/index.ts",
+      "./vendor/pi-rewind/src/index.ts",
+      "./vendor/@narumitw/pi-plan-mode/src/index.ts",
+      "./vendor/@owlburtoe/pi-claudify/extensions/index.ts",
+      "./vendor/@owlburtoe/pi-claudify/extensions/spinner.ts",
+      "./vendor/@smoose/pi-beautify/src/index.ts",
+      "./vendor/pi-mermaid/index.ts",
+      "./vendor/@juicesharp/rpiv-todo/index.ts",
+      "./vendor/@spences10/pi-context/src/index.ts"
+    ],
+    "themes": [
+      "./vendor/@firstpick/pi-themes-bundle/themes"
+    ]
+  },
   "dependencies": {
-    "@bacnh85/pi-sub": "^0.1.21",
-    "@firstpick/pi-themes-bundle": "^0.1.5",
-    "@juicesharp/rpiv-todo": "^2.2.0",
-    "@narumitw/pi-plan-mode": "^0.34.0",
-    "@owlburtoe/pi-cc-tools": "^1.5.0",
-    "@smoose/pi-beautify": "^0.1.9",
-    "@spences10/pi-confirm-destructive": "^0.0.20",
-    "@spences10/pi-context": "^0.1.14",
-    "@spences10/pi-lsp": "^0.0.44",
-    "pi-codex-search": "^0.1.6",
-    "pi-mermaid": "^0.3.0",
-    "pi-notify": "^1.4.0",
-    "pi-rewind": "^0.5.0",
-    "pi-slopchop": "^0.10.1",
-    "pi-smart-compact": "^7.22.0",
-    "pi-subagents": "^0.37.2"
+    "@juicesharp/rpiv-config": "2.2.0",
+    "@pierre/diffs": "1.2.12",
+    "@shikijs/cli": "4.3.1",
+    "@spences10/pi-child-env": "file:vendor/@spences10/pi-child-env",
+    "@spences10/pi-project-trust": "file:vendor/@spences10/pi-project-trust",
+    "@spences10/pi-redact": "file:vendor/@spences10/pi-redact",
+    "@spences10/pi-settings": "file:vendor/@spences10/pi-settings",
+    "@spences10/pi-sqlite-core": "0.0.2",
+    "@spences10/pi-tui-modal": "file:vendor/@spences10/pi-tui-modal",
+    "beautiful-mermaid": "1.1.3",
+    "diff": "9.0.0",
+    "jiti": "2.7.0",
+    "mermaid": "11.16.0",
+    "shiki": "4.3.1",
+    "typebox": "1.1.38",
+    "yaml": "2.8.3"
   }
 }

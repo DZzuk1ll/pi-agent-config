@@ -1,0 +1,906 @@
+import { SqliteBusyError } from '@spences10/pi-sqlite-core';
+import { existsSync, readFileSync } from 'node:fs';
+import { DatabaseSync } from 'node:sqlite';
+import {
+	afterEach,
+	beforeEach,
+	describe,
+	expect,
+	it,
+	vi,
+} from 'vitest';
+import {
+	create_context_store,
+	temp_config,
+	temp_db,
+} from '../test/support.js';
+import {
+	ContextStore,
+	default_context_db_path,
+	escape_fts5_query,
+	get_context_store,
+	maybe_store_context_output,
+	parse_context_retention_policy,
+	set_context_sidecar_enabled,
+	should_index_text,
+} from './store.js';
+
+const busy_error = Object.assign(new Error('database is locked'), {
+	code: 'ERR_SQLITE_ERROR',
+	errcode: 5,
+	errstr: 'database is locked',
+});
+
+const original_retention_days =
+	process.env.MY_PI_CONTEXT_RETENTION_DAYS;
+const original_purge_on_shutdown =
+	process.env.MY_PI_CONTEXT_PURGE_ON_SHUTDOWN;
+const original_max_mb = process.env.MY_PI_CONTEXT_MAX_MB;
+const original_context_config = process.env.MY_PI_CONTEXT_CONFIG;
+function create_store(
+	options: ConstructorParameters<typeof ContextStore>[0] = {},
+): ContextStore {
+	return create_context_store(options);
+}
+
+function close_db(db: DatabaseSync): void {
+	try {
+		db.close();
+	} catch {
+		// best-effort cleanup for assertions that fail mid-test
+	}
+}
+
+beforeEach(() => {
+	process.env.MY_PI_CONTEXT_CONFIG = temp_config();
+});
+
+afterEach(() => {
+	set_context_sidecar_enabled(false);
+	if (original_retention_days === undefined)
+		delete process.env.MY_PI_CONTEXT_RETENTION_DAYS;
+	else
+		process.env.MY_PI_CONTEXT_RETENTION_DAYS =
+			original_retention_days;
+	if (original_purge_on_shutdown === undefined)
+		delete process.env.MY_PI_CONTEXT_PURGE_ON_SHUTDOWN;
+	else
+		process.env.MY_PI_CONTEXT_PURGE_ON_SHUTDOWN =
+			original_purge_on_shutdown;
+	if (original_max_mb === undefined)
+		delete process.env.MY_PI_CONTEXT_MAX_MB;
+	else process.env.MY_PI_CONTEXT_MAX_MB = original_max_mb;
+	if (original_context_config === undefined)
+		delete process.env.MY_PI_CONTEXT_CONFIG;
+	else process.env.MY_PI_CONTEXT_CONFIG = original_context_config;
+});
+
+describe('ContextStore', () => {
+	it('returns retryable busy errors for guaranteed writes', () => {
+		const store = create_store({ max_bytes: 10 });
+		const exec = vi.fn(() => {
+			throw busy_error;
+		});
+		(store as unknown as { db: { exec: typeof exec } }).db.exec =
+			exec;
+
+		expect(() =>
+			store.store({
+				tool_name: 'bash',
+				text: 'x'.repeat(100),
+			}),
+		).toThrow(SqliteBusyError);
+		expect(exec).toHaveBeenCalledTimes(3);
+	});
+
+	it('stores oversized output, searches it, and retrieves all and exact chunks', () => {
+		const store = create_store({ max_bytes: 10 });
+		const text = [
+			`alpha intro\n${'noise '.repeat(700)}`,
+			`middle haystack\n${'beta '.repeat(900)}`,
+			`tail needle-at-end\n${'omega '.repeat(900)}`,
+		].join('\n\n');
+		const stored = store.store({ text, tool_name: 'bash' });
+
+		expect(stored?.source_id).toMatch(/^ctx_/);
+		expect(stored?.receipt).toContain('context-sidecar');
+		expect(stored?.receipt).toContain('Project:');
+		expect(stored?.receipt).toContain('Session:');
+		expect(stored?.receipt).toContain('Captured:');
+		expect(stored?.receipt).toContain('exceeds 10 B');
+		expect(stored?.receipt).toContain('Next actions:');
+		expect(stored?.receipt).toContain(
+			`context_search query:"..." source_id:"${stored!.source_id}"`,
+		);
+		expect(stored?.receipt).toContain('before:1 after:1');
+		expect(stored?.receipt).toContain(
+			`context_export source_id:"${stored!.source_id}"`,
+		);
+		expect(stored?.receipt).toContain(
+			'Avoid full context_get without chunk_id',
+		);
+		expect(stored?.receipt).toContain(
+			`First chunk id: ${stored!.source_id}_0001`,
+		);
+		expect(stored?.first_chunk_id).toBe(`${stored!.source_id}_0001`);
+		expect(stored?.receipt).toContain('context_list');
+		expect(stored?.receipt).toContain('Preview:');
+		expect(stored?.chunk_count).toBeGreaterThan(1);
+
+		const results = store.search('needle', {
+			source_id: stored!.source_id,
+		});
+		expect(results.length).toBeGreaterThan(0);
+		expect(results[0]).toMatchObject({
+			source_id: stored!.source_id,
+			tool_name: 'bash',
+		});
+		expect(results[0].content).toContain('needle-at-end');
+		expect(results[0].snippet).toBe(true);
+
+		const full_results = store.search('needle', {
+			source_id: stored!.source_id,
+			full_content: true,
+		});
+		expect(full_results[0].snippet).toBe(false);
+		expect(full_results[0].content.length).toBeGreaterThanOrEqual(
+			results[0].content.length,
+		);
+
+		const chunks = store.get(stored!.source_id);
+		expect(chunks.map((chunk) => chunk.content).join('\n')).toContain(
+			'needle-at-end',
+		);
+		expect(chunks).toHaveLength(stored!.chunk_count);
+		expect(store.get(stored!.source_id, '1')[0]!.id).toBe(
+			chunks[0]!.id,
+		);
+		expect(store.get(stored!.source_id, '0001')[0]!.id).toBe(
+			chunks[0]!.id,
+		);
+		expect(
+			store.get(
+				stored!.source_id,
+				`${stored!.source_id}:chunk:000`,
+			)[0]!.id,
+		).toBe(chunks[0]!.id);
+		expect(
+			store.get(
+				stored!.source_id,
+				`${stored!.source_id}:chunk:001`,
+			)[0]!.id,
+		).toBe(chunks[0]!.id);
+
+		const exact = store.get(stored!.source_id, results[0].chunk_id);
+		expect(exact).toHaveLength(1);
+		expect(exact[0].id).toBe(results[0].chunk_id);
+		expect(exact[0].content).toContain('needle-at-end');
+
+		const surrounding = store.get(
+			stored!.source_id,
+			results[0].chunk_id,
+			{ before: 1, after: 1 },
+		);
+		expect(surrounding.length).toBeGreaterThanOrEqual(2);
+		expect(surrounding.map((chunk) => chunk.id)).toContain(
+			results[0].chunk_id,
+		);
+		expect(surrounding.map((chunk) => chunk.ordinal)).toEqual(
+			[...surrounding]
+				.map((chunk) => chunk.ordinal)
+				.sort((left, right) => left - right),
+		);
+
+		const stats = store.stats();
+		expect(stats.sources).toBe(1);
+		expect(stats.chunks).toBe(stored!.chunk_count);
+		expect(stats.bytes_stored).toBe(stored!.bytes);
+		expect(stats.bytes_returned).toBe(stored!.returned_bytes);
+		expect(stats.bytes_saved).toBe(
+			stored!.bytes - stored!.returned_bytes,
+		);
+		expect(stats.bytes_stored).toBeGreaterThan(stats.bytes_returned);
+		expect(stats.reduction_pct).toBeGreaterThan(0);
+		expect(stats.total_bytes).toBeGreaterThan(0);
+	});
+
+	it('exports full source content losslessly across chunk boundaries', () => {
+		const store = create_store({ max_bytes: 10 });
+		const text = JSON.stringify({
+			kind: 'context-export-smoke',
+			payload: 'x'.repeat(12_000),
+			markers: ['alpha', 'beta', 'omega'],
+		});
+		const stored = store.store({
+			text,
+			tool_name: 'mcp',
+			force: true,
+		});
+
+		const exported = store.export_content(stored!.source_id);
+
+		expect(exported.chunks.length).toBeGreaterThan(1);
+		expect(exported.content).toBe(text);
+		expect(exported.verified).toBe(true);
+		expect(JSON.parse(exported.content)).toMatchObject({
+			kind: 'context-export-smoke',
+			markers: ['alpha', 'beta', 'omega'],
+		});
+		expect(
+			store.export_content(stored!.source_id, '1').verified,
+		).toBeNull();
+		const ranged = store.export_content(stored!.source_id, '2', {
+			before: 1,
+			after: 1,
+		});
+		expect(ranged.chunks.map((chunk) => chunk.ordinal)).toEqual([
+			1, 2, 3,
+		]);
+		expect(ranged.verified).toBeNull();
+	});
+
+	it('splits long line-oriented output into searchable bounded chunks', () => {
+		const store = create_store({ max_bytes: 10 });
+		const text = Array.from({ length: 1400 }, (_value, index) => {
+			const line = index + 1;
+			return line === 1173
+				? `${line}: TARGET_VALUE=chunk-test-value`
+				: `${line}: noise ${'x'.repeat(90)}`;
+		}).join('\n');
+
+		const stored = store.store({ text, tool_name: 'bash' });
+		expect(stored?.chunk_count).toBeGreaterThan(20);
+
+		const chunks = store.get(stored!.source_id);
+		expect(
+			Math.max(...chunks.map((chunk) => chunk.byte_count)),
+		).toBeLessThanOrEqual(4096);
+
+		const results = store.search('TARGET_VALUE', {
+			source_id: stored!.source_id,
+		});
+		expect(results).toHaveLength(1);
+		expect(results[0].content).toContain(
+			'1173: TARGET_VALUE=chunk-test-value',
+		);
+		expect(
+			Buffer.byteLength(results[0].content, 'utf8'),
+		).toBeLessThanOrEqual(4096);
+
+		const clamped_range = store.get(
+			stored!.source_id,
+			results[0].chunk_id,
+			{ before: 99, after: 99 },
+		);
+		expect(clamped_range).toHaveLength(7);
+		expect(clamped_range.map((chunk) => chunk.id)).toContain(
+			results[0].chunk_id,
+		);
+	});
+
+	it('passes through small output unless forced and stores only redacted content', () => {
+		const store = create_store({ max_bytes: 1000 });
+		expect(
+			store.store({ text: 'small', tool_name: 'read' }),
+		).toBeNull();
+
+		const secret = 'SERVICE_PASSWORD=CanaryPassword-Redaction-001!';
+		const forced = store.store({
+			text: `small ${secret}`,
+			tool_name: 'read',
+			force: true,
+		});
+		expect(forced).not.toBeNull();
+		expect(forced!.receipt).toContain('[REDACTED:');
+		expect(forced!.receipt).not.toContain(secret);
+
+		const chunks = store.get(forced!.source_id);
+		expect(chunks[0].content).toContain('[REDACTED:');
+		expect(chunks[0].content).not.toContain(secret);
+
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			const row = db
+				.prepare(
+					'SELECT content FROM context_chunks WHERE source_id = ?',
+				)
+				.get(forced!.source_id) as { content: string };
+			expect(row.content).toContain('[REDACTED:');
+			expect(row.content).not.toContain(secret);
+		} finally {
+			close_db(db);
+		}
+	});
+
+	it('deduplicates identical redacted content only within the same default retrieval scope', () => {
+		const store = create_store({
+			max_bytes: 10,
+			project_path: '/repo',
+			session_id: 'session-a',
+		});
+		const text = `dedupe-token\n${'same '.repeat(100)}`;
+		const first = store.store({ text, tool_name: 'bash' });
+		const duplicate = store.store({ text, tool_name: 'bash' });
+		const other_session = store.store({
+			text,
+			tool_name: 'bash',
+			project_path: '/repo',
+			session_id: 'session-b',
+		});
+
+		expect(duplicate?.source_id).toBe(first?.source_id);
+		expect(duplicate?.deduped).toBe(true);
+		expect(duplicate?.receipt).toContain('reused existing');
+		expect(other_session?.source_id).not.toBe(first?.source_id);
+		expect(other_session?.deduped).toBeUndefined();
+		expect(store.list({ global: true })).toHaveLength(2);
+		expect(
+			store.get(other_session!.source_id, undefined, {
+				project_path: '/repo',
+				session_id: 'session-b',
+			}),
+		).toHaveLength(other_session!.chunk_count);
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			expect(
+				db
+					.prepare('SELECT COUNT(*) as count FROM context_chunks')
+					.get(),
+			).toMatchObject({ count: 2 });
+		} finally {
+			close_db(db);
+		}
+	});
+
+	it('lists recent sources with scope, filters, pagination, and compact metadata', () => {
+		const store = create_store({
+			max_bytes: 10,
+			project_path: '/repo',
+			session_id: 'session-a',
+		});
+		const first = store.store({
+			text: `list-token first-source\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+			input_summary: 'first command',
+		});
+		store.store({
+			text: `list-token second-source\n${'b '.repeat(100)}`,
+			tool_name: 'read',
+			input_summary: 'second command',
+		});
+		store.store({
+			text: `list-token other-session\n${'c '.repeat(100)}`,
+			tool_name: 'bash',
+			project_path: '/repo',
+			session_id: 'session-b',
+		});
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			db.prepare(
+				'UPDATE context_sources SET created_at = ? WHERE id = ?',
+			).run(Date.now() - 30 * 24 * 60 * 60 * 1000, first!.source_id);
+		} finally {
+			close_db(db);
+		}
+
+		const scoped = store.list();
+		expect(scoped).toHaveLength(2);
+		expect(scoped[0]).toMatchObject({
+			project_path: '/repo',
+			session_id: 'session-a',
+			chunk_count: 1,
+		});
+		expect(scoped.map((source) => source.input_summary)).toContain(
+			'first command',
+		);
+		expect(store.list({ tool_name: 'read' })).toHaveLength(1);
+		expect(store.list({ source_id: first!.source_id })).toHaveLength(
+			1,
+		);
+		expect(store.list({ limit: 1 })).toHaveLength(1);
+		expect(store.list({ limit: 1, offset: 1 })).toHaveLength(1);
+		expect(store.list({ newer_than_days: 1 })).toHaveLength(1);
+		expect(store.list({ older_than_days: 14 })).toHaveLength(1);
+		expect(store.list({ global: true })).toHaveLength(3);
+		expect(store.list({ session_id: 'missing' })).toEqual([]);
+	});
+
+	it('defaults search and get to the current session scope with global opt-in', () => {
+		const store = create_store({
+			max_bytes: 10,
+			project_path: '/repo',
+			session_id: 'session-a',
+		});
+		const current = store.store({
+			text: `shared-token current-session\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		const other = store.store({
+			text: `shared-token other-session\n${'b '.repeat(100)}`,
+			tool_name: 'bash',
+			session_id: 'session-b',
+			project_path: '/repo',
+		});
+
+		const scoped = store.search('shared-token');
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0].content).toContain('current-session');
+		expect(store.get(other!.source_id)).toEqual([]);
+		expect(
+			store.get(other!.source_id, undefined, { global: true }),
+		).toHaveLength(other!.chunk_count);
+
+		store.configure({ session_id: 'session-b' });
+		expect(store.search('shared-token')[0].content).toContain(
+			'other-session',
+		);
+		expect(
+			store.search('shared-token', { global: true }),
+		).toHaveLength(2);
+		const scoped_stats = store.stats({
+			project_path: '/repo',
+			session_id: 'session-b',
+		});
+		expect(scoped_stats).toMatchObject({
+			sources: 1,
+			global_sources: 2,
+			scope_project_path: '/repo',
+			scope_session_id: 'session-b',
+		});
+		expect(current).not.toBeNull();
+	});
+
+	it('falls back to project scope when session metadata is unavailable', () => {
+		const store = create_store({
+			max_bytes: 10,
+			project_path: '/repo-a',
+			session_id: null,
+		});
+		store.store({
+			text: `overlap-token project-a\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		store.store({
+			text: `overlap-token project-b\n${'b '.repeat(100)}`,
+			tool_name: 'bash',
+			project_path: '/repo-b',
+			session_id: null,
+		});
+
+		const scoped = store.search('overlap-token');
+		expect(scoped).toHaveLength(1);
+		expect(scoped[0].content).toContain('project-a');
+		expect(
+			store.search('overlap-token', { global: true }),
+		).toHaveLength(2);
+	});
+
+	it('filters search by source id and tool name and clamps large limits', () => {
+		const store = create_store({ max_bytes: 10 });
+		const bash = store.store({
+			text: `needle bash-only\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		const read = store.store({
+			text: `needle read-only\n${'b '.repeat(100)}`,
+			tool_name: 'read',
+		});
+
+		expect(
+			store.search('needle', { source_id: bash!.source_id }),
+		).toHaveLength(1);
+		expect(
+			store.search('needle', { source_id: read!.source_id })[0]
+				.content,
+		).toContain('read-only');
+		expect(
+			store.search('needle', { tool_name: 'bash' }),
+		).toHaveLength(1);
+		expect(
+			store.search('needle', { tool_name: 'bash' })[0].content,
+		).toContain('bash-only');
+
+		for (let index = 0; index < 30; index++) {
+			store.store({
+				text: `needle bulk-${index}\n${'x '.repeat(100)}`,
+				tool_name: 'bulk',
+			});
+		}
+		expect(store.search('needle', { limit: 100 })).toHaveLength(25);
+	});
+
+	it('escapes malformed and special-character FTS queries without throwing', () => {
+		const store = create_store({ max_bytes: 10 });
+		store.store({
+			text: 'error in src/routes/+page.server.ts caused auth-middleware failure needle',
+			tool_name: 'bash',
+		});
+
+		const queries = [
+			'src/routes/+page.server.ts',
+			'auth-middleware',
+			'path:C:\\tmp\\demo',
+			'foo -bar',
+			'(alpha OR beta)',
+			'"unterminated',
+			'needle*',
+			'',
+			'./-:+',
+		];
+		for (const query of queries)
+			expect(() => store.search(query)).not.toThrow();
+		expect(escape_fts5_query('src/routes/+page.server.ts')).toContain(
+			'"',
+		);
+		expect(escape_fts5_query('')).toBe('""');
+	});
+
+	it('purges by source id and cascades chunks plus FTS rows', () => {
+		const store = create_store({ max_bytes: 10 });
+		const stored = store.store({
+			text: `purge-token\n${'x '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+
+		expect(store.purge({ source_id: stored!.source_id })).toBe(1);
+		expect(store.get(stored!.source_id)).toEqual([]);
+		expect(store.search('purge-token')).toEqual([]);
+		expect(store.purge({ source_id: stored!.source_id })).toBe(0);
+	});
+
+	it('purges by project and session filters with details', () => {
+		const store = create_store({ max_bytes: 10 });
+		const project_a_session_a = store.store({
+			text: `project-session-token a-a\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+			project_path: '/repo-a',
+			session_id: 'session-a',
+		});
+		const project_a_session_b = store.store({
+			text: `project-session-token a-b\n${'b '.repeat(100)}`,
+			tool_name: 'bash',
+			project_path: '/repo-a',
+			session_id: 'session-b',
+		});
+		const project_b_session_a = store.store({
+			text: `project-session-token b-a\n${'c '.repeat(100)}`,
+			tool_name: 'bash',
+			project_path: '/repo-b',
+			session_id: 'session-a',
+		});
+
+		const session_purge = store.purge_with_details({
+			project_path: '/repo-a',
+			session_id: 'session-a',
+		});
+		expect(session_purge).toMatchObject({
+			deleted: 1,
+			project_path: '/repo-a',
+			session_id: 'session-a',
+		});
+		expect(
+			store.get(project_a_session_a!.source_id, undefined, {
+				global: true,
+			}),
+		).toEqual([]);
+		expect(
+			store.get(project_a_session_b!.source_id, undefined, {
+				global: true,
+			}),
+		).toHaveLength(project_a_session_b!.chunk_count);
+
+		const project_purge = store.purge_with_details({
+			project_path: '/repo-b',
+		});
+		expect(project_purge).toMatchObject({
+			deleted: 1,
+			project_path: '/repo-b',
+		});
+		expect(
+			store.get(project_b_session_a!.source_id, undefined, {
+				global: true,
+			}),
+		).toEqual([]);
+		expect(
+			store.search('project-session-token', { global: true }),
+		).toHaveLength(1);
+	});
+
+	it('purges old sources by age without deleting fresh sources', () => {
+		const store = create_store({ max_bytes: 10 });
+		const old_source = store.store({
+			text: `ancient-token\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		const fresh_source = store.store({
+			text: `fresh-token\n${'b '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			db.prepare(
+				'UPDATE context_sources SET created_at = ? WHERE id = ?',
+			).run(
+				Date.now() - 30 * 24 * 60 * 60 * 1000,
+				old_source!.source_id,
+			);
+		} finally {
+			close_db(db);
+		}
+
+		expect(store.purge({ older_than_days: 14 })).toBe(1);
+		expect(store.get(old_source!.source_id)).toEqual([]);
+		expect(store.get(fresh_source!.source_id)).toHaveLength(
+			fresh_source!.chunk_count,
+		);
+		expect(store.search('ancient-token')).toEqual([]);
+		expect(store.search('fresh-token')).toHaveLength(1);
+	});
+
+	it('runs retention cleanup by age and reports active policy in stats', () => {
+		process.env.MY_PI_CONTEXT_RETENTION_DAYS = '7';
+		process.env.MY_PI_CONTEXT_PURGE_ON_SHUTDOWN = 'true';
+		const store = create_store({ max_bytes: 10 });
+		const old_source = store.store({
+			text: `expired-token\n${'a '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		const fresh_source = store.store({
+			text: `retained-token\n${'b '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			db.prepare(
+				'UPDATE context_sources SET created_at = ? WHERE id = ?',
+			).run(
+				Date.now() - 10 * 24 * 60 * 60 * 1000,
+				old_source!.source_id,
+			);
+		} finally {
+			close_db(db);
+		}
+
+		const cleanup = store.cleanup();
+		expect(cleanup).toMatchObject({
+			deleted: 1,
+			age_deleted: 1,
+			size_deleted: 0,
+		});
+		expect(
+			store.get(old_source!.source_id, undefined, { global: true }),
+		).toEqual([]);
+		expect(
+			store.get(fresh_source!.source_id, undefined, { global: true }),
+		).toHaveLength(fresh_source!.chunk_count);
+		const stats = store.stats();
+		expect(stats).toMatchObject({
+			retention_days: 7,
+			purge_on_shutdown: true,
+			max_mb: null,
+		});
+		expect(stats.oldest_created_at).toBeGreaterThan(0);
+		expect(stats.newest_created_at).toBeGreaterThan(0);
+	});
+
+	it('can disable age cleanup with zero retention and cleanup by max stored bytes', () => {
+		process.env.MY_PI_CONTEXT_RETENTION_DAYS = '0';
+		process.env.MY_PI_CONTEXT_MAX_MB = '0.001';
+		const store = create_store({ max_bytes: 10 });
+		const old_source = store.store({
+			text: `old-size-token\n${'a '.repeat(900)}`,
+			tool_name: 'bash',
+		});
+		store.store({
+			text: `new-size-token\n${'b '.repeat(900)}`,
+			tool_name: 'bash',
+		});
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			db.prepare(
+				'UPDATE context_sources SET created_at = ? WHERE id = ?',
+			).run(
+				Date.now() - 30 * 24 * 60 * 60 * 1000,
+				old_source!.source_id,
+			);
+		} finally {
+			close_db(db);
+		}
+
+		const policy = parse_context_retention_policy();
+		expect(policy.retention_days).toBeNull();
+		const cleanup = store.cleanup(policy);
+		expect(cleanup.age_deleted).toBe(0);
+		expect(cleanup.size_deleted).toBeGreaterThan(0);
+		expect(store.list({ global: true }).length).toBeLessThan(2);
+	});
+
+	it('reports zero content stats for a new database', () => {
+		const store = create_store();
+		const stats = store.stats();
+		expect(stats).toMatchObject({
+			sources: 0,
+			chunks: 0,
+			bytes_stored: 0,
+			bytes_returned: 0,
+			bytes_saved: 0,
+			reduction_pct: 0,
+			retention_days: 7,
+			purge_on_shutdown: false,
+			max_mb: null,
+			oldest_created_at: null,
+			newest_created_at: null,
+			scope_project_path: null,
+			scope_session_id: null,
+			global_sources: 0,
+			global_chunks: 0,
+			global_bytes_stored: 0,
+			global_oldest_created_at: null,
+			global_newest_created_at: null,
+		});
+		expect(stats.total_bytes).toBeGreaterThan(0);
+	});
+
+	it('initializes expected schema objects and includes schema in package builds', () => {
+		const store = create_store();
+		const db = new DatabaseSync(store.db_path, {
+			enableForeignKeyConstraints: true,
+		});
+		try {
+			const objects = db
+				.prepare(
+					`SELECT type, name FROM sqlite_master ORDER BY type, name`,
+				)
+				.all() as Array<{ type: string; name: string }>;
+			const names = objects.map((object) => object.name);
+			expect(names).toContain('context_sources');
+			expect(names).toContain('context_chunks');
+			expect(names).toContain('context_chunks_fts');
+			expect(names).toContain('context_chunks_ai');
+			expect(names).toContain('context_chunks_ad');
+			expect(names).toContain('context_chunks_au');
+			expect(
+				objects.some(
+					(object) =>
+						object.type === 'index' &&
+						object.name === 'idx_context_chunks_source',
+				),
+			).toBe(true);
+			expect(db.prepare('PRAGMA user_version').get()).toMatchObject({
+				user_version: 1,
+			});
+		} finally {
+			close_db(db);
+		}
+
+		const built_schema = new URL(
+			'../dist/schema.sql',
+			import.meta.url,
+		);
+		expect(existsSync(built_schema)).toBe(true);
+		expect(readFileSync(built_schema, 'utf8')).toContain(
+			'CREATE TABLE IF NOT EXISTS context_sources',
+		);
+	});
+});
+
+describe('global context store helpers', () => {
+	it('respects enablement and reuses the configured db path', () => {
+		const db_path = temp_db();
+		expect(
+			maybe_store_context_output({
+				text: 'x '.repeat(100),
+				tool_name: 'bash',
+			}),
+		).toBeNull();
+
+		set_context_sidecar_enabled(true, { db_path, max_bytes: 10 });
+		const stored = maybe_store_context_output({
+			text: `global-token\n${'x '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+		expect(stored?.source_id).toMatch(/^ctx_/);
+		expect(get_context_store().db_path).toBe(db_path);
+		expect(get_context_store().search('global-token')).toHaveLength(
+			1,
+		);
+	});
+
+	it('reconfigures the reused store through the public helper', () => {
+		const db_path = temp_db();
+		set_context_sidecar_enabled(true, {
+			db_path,
+			max_bytes: 10,
+			project_path: '/project-a',
+			session_id: 'session-a',
+		});
+		maybe_store_context_output({
+			text: `alpha-scope\n${'x '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+
+		set_context_sidecar_enabled(true, {
+			db_path,
+			max_bytes: 10,
+			project_path: '/project-b',
+			session_id: 'session-b',
+		});
+		maybe_store_context_output({
+			text: `beta-scope\n${'x '.repeat(100)}`,
+			tool_name: 'bash',
+		});
+
+		const store = get_context_store();
+		expect(store.search('alpha-scope')).toHaveLength(0);
+		expect(store.search('beta-scope')).toHaveLength(1);
+		expect(
+			store.search('alpha-scope', {
+				project_path: '/project-a',
+				session_id: 'session-a',
+			}),
+		).toHaveLength(1);
+	});
+
+	it('builds the default db path from env overrides', () => {
+		const original_db = process.env.MY_PI_CONTEXT_DB;
+		const original_agent_dir = process.env.PI_CODING_AGENT_DIR;
+		try {
+			process.env.MY_PI_CONTEXT_DB = '/tmp/custom-context.db';
+			expect(default_context_db_path()).toBe(
+				'/tmp/custom-context.db',
+			);
+
+			delete process.env.MY_PI_CONTEXT_DB;
+			process.env.PI_CODING_AGENT_DIR = '/tmp/pi-agent-test';
+			expect(default_context_db_path()).toBe(
+				'/tmp/pi-agent-test/context.db',
+			);
+		} finally {
+			if (original_db === undefined)
+				delete process.env.MY_PI_CONTEXT_DB;
+			else process.env.MY_PI_CONTEXT_DB = original_db;
+			if (original_agent_dir === undefined)
+				delete process.env.PI_CODING_AGENT_DIR;
+			else process.env.PI_CODING_AGENT_DIR = original_agent_dir;
+		}
+	});
+});
+
+describe('should_index_text', () => {
+	it('uses byte and line thresholds strictly above the limit', () => {
+		expect(
+			should_index_text('tiny', { max_bytes: 10, max_lines: 10 }),
+		).toBe(false);
+		expect(
+			should_index_text('x'.repeat(10), {
+				max_bytes: 10,
+				max_lines: 10,
+			}),
+		).toBe(false);
+		expect(
+			should_index_text('x'.repeat(11), {
+				max_bytes: 10,
+				max_lines: 10,
+			}),
+		).toBe(true);
+		expect(
+			should_index_text('a\nb', { max_bytes: 100, max_lines: 2 }),
+		).toBe(false);
+		expect(
+			should_index_text('a\nb\nc', { max_bytes: 100, max_lines: 2 }),
+		).toBe(true);
+	});
+});

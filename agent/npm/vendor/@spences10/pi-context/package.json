@@ -1,0 +1,73 @@
+{
+	"name": "@spences10/pi-context",
+	"version": "0.1.14",
+	"description": "Searchable local SQLite sidecar that keeps oversized Pi tool output useful without flooding model context",
+	"keywords": [
+		"context",
+		"evals",
+		"fts5",
+		"pi",
+		"pi-package",
+		"sqlite"
+	],
+	"homepage": "https://github.com/spences10/my-pi/tree/main/packages/pi-context#readme",
+	"license": "MIT",
+	"author": "Scott Spence <me@scottspence.com>",
+	"repository": {
+		"type": "git",
+		"url": "git+https://github.com/spences10/my-pi.git",
+		"directory": "packages/pi-context"
+	},
+	"files": [
+		"dist",
+		"README.md"
+	],
+	"type": "module",
+	"main": "./dist/index.js",
+	"types": "./dist/index.d.ts",
+	"exports": {
+		".": {
+			"types": "./dist/index.d.ts",
+			"import": "./dist/index.js"
+		},
+		"./store": {
+			"types": "./dist/store.d.ts",
+			"import": "./dist/store.js"
+		}
+	},
+	"scripts": {
+		"build": "pnpm --filter \"$npm_package_name^...\" run build:self && pnpm run build:self",
+		"build:self": "vp exec tsc -p tsconfig.build.json && cp src/schema.sql dist/schema.sql",
+		"check": "pnpm --filter \"$npm_package_name^...\" run build:self && pnpm run check:self",
+		"check:self": "vp exec tsc --noEmit",
+		"test": "pnpm --filter \"$npm_package_name^...\" run build:self && pnpm run build:self && pnpm run test:self",
+		"test:self": "vp exec vitest run",
+		"coverage:self": "vp exec vitest run --coverage",
+		"coverage": "pnpm --filter \"$npm_package_name^...\" run build:self && pnpm run coverage:self"
+	},
+	"dependencies": {
+		"@spences10/pi-redact": "workspace:*",
+		"@spences10/pi-settings": "workspace:*",
+		"@spences10/pi-sqlite-core": "workspace:*",
+		"@spences10/pi-tui-modal": "workspace:*"
+	},
+	"devDependencies": {
+		"@earendil-works/pi-coding-agent": "catalog:",
+		"@types/node": "catalog:",
+		"typescript": "catalog:",
+		"vitest": "catalog:"
+	},
+	"peerDependencies": {
+		"@earendil-works/pi-coding-agent": "*",
+		"typebox": "*"
+	},
+	"engines": {
+		"node": ">=24.15.0"
+	},
+	"pi": {
+		"extensions": [
+			"./dist/index.js"
+		],
+		"image": "https://raw.githubusercontent.com/spences10/my-pi/main/assets/pi-package-preview.png"
+	}
+}

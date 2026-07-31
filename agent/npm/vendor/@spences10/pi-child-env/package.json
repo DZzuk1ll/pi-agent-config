@@ -1,0 +1,35 @@
+{
+  "name": "@spences10/pi-child-env",
+  "version": "0.1.10",
+  "description": "Safe environment builder for Pi child processes that passes needed variables while scrubbing secrets and noisy runtime state",
+  "keywords": [
+    "env",
+    "pi",
+    "security"
+  ],
+  "license": "MIT",
+  "author": "Scott Spence <me@scottspence.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/scottspence/my-pi.git",
+    "directory": "packages/pi-child-env"
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "private": true
+}

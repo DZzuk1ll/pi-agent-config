@@ -1,0 +1,47 @@
+{
+  "name": "@spences10/pi-redact",
+  "version": "0.0.14",
+  "description": "Tool-output redaction for Pi that replaces likely secrets before they reach the model context",
+  "keywords": [
+    "pi",
+    "pi-package",
+    "redaction",
+    "secrets"
+  ],
+  "homepage": "https://github.com/spences10/my-pi/tree/main/packages/pi-redact#readme",
+  "license": "MIT",
+  "author": "Scott Spence <me@scottspence.com>",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/spences10/my-pi.git",
+    "directory": "packages/pi-redact"
+  },
+  "files": [
+    "src",
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "main": "./src/index.ts",
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "default": "./src/index.ts"
+    }
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-ai": "*",
+    "@earendil-works/pi-coding-agent": "*"
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "pi": {
+    "extensions": [
+      "./src/index.ts"
+    ],
+    "image": "https://raw.githubusercontent.com/spences10/my-pi/main/assets/pi-package-preview.png"
+  },
+  "private": true
+}

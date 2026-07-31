@@ -1,0 +1,149 @@
+# @spences10/pi-confirm-destructive
+
+## 0.0.20
+
+### Patch Changes
+
+- c425095: Generate shared README maintenance blocks deterministically
+  and validate package documentation links without removing
+  package-specific guidance.
+
+## 0.0.19
+
+### Patch Changes
+
+- 907fc81: Harden secret redaction and destructive command detection
+  across chunked output, wrappers, aliases, and heredoc input.
+
+## 0.0.18
+
+### Patch Changes
+
+- df03901: Replace explicit any usages with precise shared, inferred,
+  and fixture types throughout the monorepo safely.
+
+## 0.0.17
+
+### Patch Changes
+
+- 822d6f7: Add force push detection to destructive confirmation guard,
+  covering force-with-lease and related Git push flags.
+
+## 0.0.16
+
+### Patch Changes
+
+- 63119f7: Split destructive confirmation internals into focused
+  modules while preserving extension behavior and public assessment
+  exports.
+
+## 0.0.15
+
+### Patch Changes
+
+- 96071d3: Add package preview image to package READMEs so npm pages
+  display consistent project branding.
+
+## 0.0.14
+
+### Patch Changes
+
+- 599b355: Improve package README openings and descriptions to
+  emphasize user benefits and clarify pi-skills/pi-recall positioning.
+
+## 0.0.13
+
+### Patch Changes
+
+- a040ea3: Standardize package scripts through Vite+ and refresh
+  README badges/development guidance across published packages.
+
+## 0.0.12
+
+### Patch Changes
+
+- ffea37e: Standardize shared dependency versions through pnpm catalog
+  and align package dev dependencies for CI.
+
+## 0.0.11
+
+### Patch Changes
+
+- 0a41f55: Track agent-created temp files and avoid confirmation
+  prompts when safely deleting session-owned temporary artifacts.
+
+## 0.0.10
+
+### Patch Changes
+
+- bea8707: Add package-specific homepage links so Pi gallery pages
+  point to each package README.
+- 3e91b90: Add shared package gallery preview image to all Pi package
+  manifests.
+
+## 0.0.9
+
+### Patch Changes
+
+- 8944bf8: Move Pi core runtime packages to peer dependencies for
+  safer external extension installs.
+
+## 0.0.8
+
+### Patch Changes
+
+- dacf04d: Simplify skills TUI navigation, split importable skill
+  actions, and clarify profile policy/rule wording.
+- 44136fe: Migrate Pi core dependencies from Mario Zechner scope to
+  Earendil Works package scope.
+
+## 0.0.7
+
+### Patch Changes
+
+- 9bbacf1: Improve pi-context chunk retrieval UX with first chunk
+  receipts, aliases, and helpful miss messages.
+
+## 0.0.6
+
+### Patch Changes
+
+- ca3d5e5: Harden redaction, document eval workflow, align Node
+  support, and clarify SQLite warning policy across packages.
+- d8c5c5b: Replace hand-coded workspace dependency builds with pnpm
+  graph-backed self tasks and script consistency tests.
+
+## 0.0.5
+
+### Patch Changes
+
+- 627f483: Standardize package READMEs with npm badges, Vite+/Vitest
+  messaging, installation, and development docs.
+
+## 0.0.4
+
+### Patch Changes
+
+- 5c37302: Align workspace Pi dependencies and group Renovate updates
+  to prevent duplicate extension API types.
+
+## 0.0.3
+
+### Patch Changes
+
+- 07b0470: Avoids unnecessary destructive confirmations when deleting
+  agent-created files or my-pi temp workspaces during cleanup tasks.
+
+## 0.0.2
+
+### Patch Changes
+
+- 3ef8d39: Add Omnisearch and SQLite prompt shims; refine destructive
+  confirmation for session-created files.
+
+## 0.0.1
+
+### Patch Changes
+
+- f3efc44: Extract confirm destructive guard into reusable package
+  consumed by my-pi as built-in extension.

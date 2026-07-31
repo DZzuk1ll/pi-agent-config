@@ -1,4 +1,7 @@
 *
 !.gitignore
+!.npmrc
 !package.json
 !package-lock.json
+!vendor/
+!vendor/**

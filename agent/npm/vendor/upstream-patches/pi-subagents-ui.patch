@@ -1,0 +1,422 @@
+--- a/src/shared/types.ts
++++ b/src/shared/types.ts
+@@ -1157,6 +1157,8 @@
+ export interface AsyncJobState {
+ 	asyncId: string;
+ 	asyncDir: string;
++	/** Execution source used by the unified foreground/background status widget. */
++	source?: "async" | "foreground";
+ 	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
+ 	cwd?: string;
+ 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
+--- a/src/runs/background/async-job-tracker.ts
++++ b/src/runs/background/async-job-tracker.ts
+@@ -42,6 +42,78 @@
+ 		.filter((candidate) => candidate.status === "complete" || candidate.status === "failed" || candidate.status === "paused" || candidate.status === "stopped")
+ 		.sort((left, right) => (right.updatedAt ?? right.startedAt ?? 0) - (left.updatedAt ?? left.startedAt ?? 0));
+ 	for (const stale of terminal.slice(MAX_RECENT_FLEET_JOBS)) state.fleetJobs.delete(stale.asyncId);
++}
++
++export function collectSubagentWidgetJobs(state: SubagentState): AsyncJobState[] {
++	const asyncJobs = [...state.asyncJobs.values()].map((job) => ({ ...job, source: job.source ?? "async" as const }));
++	const foregroundJobs = [...state.foregroundControls.values()]
++		.filter((control) => state.currentSessionId ? control.sessionId === state.currentSessionId : control.sessionId === undefined)
++		.map((control): AsyncJobState => {
++			const children = [...(control.activeChildren?.values() ?? [])].sort((left, right) => left.index - right.index);
++			const agents = children.length > 0
++				? children.map((child) => child.agent)
++				: control.currentAgent ? [control.currentAgent] : [];
++			const steps = children.map((child) => ({
++				agent: child.agent,
++				index: child.index,
++				status: "running" as const,
++				activityState: child.currentActivityState,
++				lastActivityAt: child.lastActivityAt,
++				currentTool: child.currentTool,
++				currentToolStartedAt: child.currentToolStartedAt,
++				currentPath: child.currentPath,
++				turnCount: child.turnCount,
++				toolCount: child.toolCount,
++				startedAt: child.startedAt,
++				durationMs: Math.max(0, Date.now() - child.startedAt),
++				model: child.model,
++				thinking: child.thinking,
++				...(child.tokens !== undefined ? {
++					tokens: {
++						input: child.inputTokens ?? 0,
++						output: child.outputTokens ?? 0,
++						total: child.tokens,
++					},
++				} : {}),
++			}));
++			return {
++				asyncId: `foreground:${control.runId}`,
++				asyncDir: "",
++				source: "foreground",
++				cwd: control.cwd,
++				sessionId: control.sessionId,
++				status: "running",
++				mode: control.mode,
++				description: control.description,
++				agents,
++				steps,
++				stepsTotal: steps.length || undefined,
++				runningSteps: steps.length,
++				completedSteps: 0,
++				hasParallelGroups: control.mode === "parallel",
++				activeParallelGroup: control.mode === "parallel",
++				currentStep: control.currentIndex,
++				startedAt: control.startedAt,
++				updatedAt: control.updatedAt,
++				activityState: control.currentActivityState,
++				lastActivityAt: control.lastActivityAt,
++				currentTool: control.currentTool,
++				currentToolStartedAt: control.currentToolStartedAt,
++				currentPath: control.currentPath,
++				turnCount: control.turnCount,
++				toolCount: control.toolCount,
++				...(control.tokens !== undefined ? {
++					totalTokens: {
++						input: control.inputTokens ?? 0,
++						output: control.outputTokens ?? 0,
++						total: control.tokens,
++					},
++				} : {}),
++				nestedRoute: control.nestedRoute,
++				nestedChildren: control.nestedChildren,
++			};
++		});
++	return [...asyncJobs, ...foregroundJobs];
+ }
+
+ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: SubagentState, asyncDirRoot: string, options: AsyncJobTrackerOptions = {}): {
+@@ -56,11 +128,11 @@
+ 	const pollIntervalMs = options.pollIntervalMs ?? POLL_INTERVAL_MS;
+ 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
+ 	const steeringNoticeSeen = new Map<string, number>();
+-	const rerenderWidget = (ctx: ExtensionContext, jobs = Array.from(state.asyncJobs.values())) => {
++	const rerenderWidget = (ctx: ExtensionContext, jobs = collectSubagentWidgetJobs(state)) => {
+ 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
+ 		ctx.ui.requestRender?.();
+ 	};
+-	const rerenderLastWidget = (jobs = Array.from(state.asyncJobs.values())) => {
++	const rerenderLastWidget = (jobs = collectSubagentWidgetJobs(state)) => {
+ 		const ctx = state.lastUiContext;
+ 		if (!ctx) return;
+ 		try {
+@@ -265,7 +337,7 @@
+ 		if (state.poller) return;
+ 		state.poller = setInterval(() => {
+ 			if (state.asyncJobs.size === 0) {
+-				rerenderLastWidget([]);
++				rerenderLastWidget();
+ 				if (state.poller) {
+ 					clearInterval(state.poller);
+ 					state.poller = null;
+--- a/src/tui/render.ts
++++ b/src/tui/render.ts
+@@ -125,7 +125,7 @@
+ }
+
+ const RUNNING_FRAMES = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+-const STATIC_RUNNING_GLYPH = "●";
++const RUNNING_FRAME_INTERVAL_MS = 80;
+
+ type ProgressSeedSource = Partial<Pick<AgentProgress, "index" | "toolCount" | "tokens" | "durationMs" | "lastActivityAt" | "currentToolStartedAt" | "turnCount">>;
+
+@@ -138,9 +138,9 @@
+ 	return seed;
+ }
+
+-function runningGlyph(seed?: number): string {
+-	if (seed === undefined) return STATIC_RUNNING_GLYPH;
+-	return RUNNING_FRAMES[Math.abs(seed) % RUNNING_FRAMES.length]!;
++export function runningGlyph(seed = 0, now = Date.now()): string {
++	const animationFrame = Math.floor(now / RUNNING_FRAME_INTERVAL_MS);
++	return RUNNING_FRAMES[Math.abs(animationFrame + seed) % RUNNING_FRAMES.length]!;
+ }
+
+ function progressRunningSeed(progress: ProgressSeedSource | undefined): number | undefined {
+@@ -336,25 +336,6 @@
+ 	if (job.mode === "single" && job.agents?.length === 1) return job.agents[0]!;
+ 	if (job.agents?.length) return formatWidgetAgents(job.agents);
+ 	return job.mode ?? "subagent";
+-}
+-
+-function widgetActivity(job: AsyncJobState): string {
+-	const facts: string[] = [];
+-	if (job.currentTool && job.currentToolStartedAt !== undefined && job.updatedAt !== undefined) facts.push(`${job.currentTool} ${formatDuration(Math.max(0, job.updatedAt - job.currentToolStartedAt))}`);
+-	else if (job.currentTool) facts.push(job.currentTool);
+-	if (job.currentPath) facts.push(shortenPath(job.currentPath));
+-	if (job.turnCount !== undefined) facts.push(`${job.turnCount} turns`);
+-	if (job.toolCount !== undefined) facts.push(`${job.toolCount} tools`);
+-	const activity = buildLiveStatusLine(job, job.updatedAt);
+-	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
+-	if (activity) return activity;
+-	if (facts.length) return facts.join(" · ");
+-	if (job.status === "running") return "thinking…";
+-	if (job.status === "queued") return "queued…";
+-	if (job.status === "paused") return "Paused";
+-	if (job.status === "stopped") return "Stopped";
+-	if (job.status === "failed") return "Failed";
+-	return "Done";
+ }
+
+ function widgetStepRunningSeed(step: NonNullable<AsyncJobState["steps"]>[number], fallbackIndex?: number): number | undefined {
+@@ -421,23 +402,8 @@
+ 	if (status === "paused") return theme.fg("warning", "paused");
+ 	if (status === "stopped") return theme.fg("warning", "stopped");
+ 	return theme.fg("dim", status);
+-}
+-
+-function widgetStepActivity(step: NonNullable<AsyncJobState["steps"]>[number], snapshotNow?: number): string {
+-	const facts: string[] = [];
+-	if (step.currentTool && step.currentToolStartedAt !== undefined && snapshotNow !== undefined) facts.push(`${step.currentTool} ${formatDuration(Math.max(0, snapshotNow - step.currentToolStartedAt))}`);
+-	else if (step.currentTool) facts.push(step.currentTool);
+-	if (step.currentPath) facts.push(shortenPath(step.currentPath));
+-	if (step.turnCount !== undefined) facts.push(`${step.turnCount} turns`);
+-	if (step.toolCount !== undefined) facts.push(`${step.toolCount} tools`);
+-	if (step.tokens?.total) facts.push(formatTokenStat(step.tokens.total));
+-	const activity = buildLiveStatusLine(step, snapshotNow);
+-	if (activity && facts.length) return `${activity} · ${facts.join(" · ")}`;
+-	if (activity) return activity;
+-	return facts.join(" · ");
+ }
+
+-
+ function widgetChainDetails(job: AsyncJobState, theme: Theme, expanded = false, width = getTermWidth()): string[] {
+ 	if (!job.steps?.length) return [];
+ 	const total = job.chainStepCount ?? job.steps.length;
+@@ -467,10 +433,10 @@
+ 	const lines: string[] = [];
+ 	for (const [index, step] of job.steps.entries()) {
+ 		const marker = index === job.steps.length - 1 ? "└" : "├";
+-		const activity = widgetStepActivity(step, job.updatedAt);
+ 		const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+ 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+-		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${activity ? ` · ${activity}` : ""}`)}`);
++		const stats = widgetStepStats(theme, step);
++		lines.push(`  ${theme.fg("dim", `${marker} ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${step.agent} · ${widgetStepStatus(step.status, theme)}${modelDisplay}${stats ? ` · ${stats}` : ""}`)}`);
+ 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt, expanded ? 8 : 1)) lines.push(`    ${nestedLine}`);
+ 	}
+ 	return lines;
+@@ -757,30 +723,14 @@
+
+ function widgetStepStats(theme: Theme, step: NonNullable<AsyncJobState["steps"]>[number]): string {
+ 	return statJoin(theme, [
+-		step.turnCount !== undefined ? `${step.turnCount} turns` : "",
+ 		step.toolCount !== undefined ? formatToolUseStat(step.toolCount) : "",
+ 		step.tokens?.total ? formatTokenStat(step.tokens.total) : "",
+-		step.durationMs !== undefined ? formatDuration(step.durationMs) : "",
+ 	]);
+ }
+
+ function modelThinkingBadge(theme: Theme, model?: string, thinking?: string): string {
+-	const label = formatModelThinking(model, thinking);
++	const label = [model, thinking].filter(Boolean).join(" · ");
+ 	return label ? theme.fg("dim", ` (${label})`) : "";
+-}
+-
+-function widgetStepActivityLine(step: NonNullable<AsyncJobState["steps"]>[number], width: number, expanded: boolean, snapshotNow?: number): string {
+-	const toolLine = formatCurrentToolLine(step, width, expanded, snapshotNow);
+-	if (toolLine) return toolLine;
+-	const activity = buildLiveStatusLine(step, snapshotNow);
+-	if (activity) return activity;
+-	if (step.status === "running") return "thinking…";
+-	return "";
+-}
+-
+-function widgetOutputPath(job: AsyncJobState, step: NonNullable<AsyncJobState["steps"]>[number]): string | undefined {
+-	if (typeof step.index !== "number") return undefined;
+-	return path.join(job.asyncDir, `output-${step.index}.log`);
+ }
+
+ function nestedRunName(run: NestedRunSummary): string {
+@@ -901,36 +851,24 @@
+ 	const stats = widgetStepStats(theme, step);
+ 	const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+ 	const lines = [`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index - 1))} ${itemTitle} ${index}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`];
+-	const activity = widgetStepActivityLine(step, width, expanded, job.updatedAt);
+-	if (activity) lines.push(`    ${theme.fg("dim", `⎿  ${activity}`)}`);
+ 	for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, expanded, job.updatedAt)) {
+ 		lines.push(`    ${nestedLine}`);
+ 	}
+-	if (step.status === "running") {
+-		if (!expanded) lines.push(`    ${theme.fg("accent", liveDetailHintText())}`);
+-		const output = widgetOutputPath(job, step);
+-		if (output) lines.push(`    ${theme.fg("dim", `output: ${shortenPath(output)}`)}`);
+-		if (expanded) {
+-			const liveStatus = buildLiveStatusLine(step, job.updatedAt);
+-			if (liveStatus && liveStatus !== activity) lines.push(`    ${theme.fg("accent", liveStatus)}`);
+-			for (const tool of step.recentTools?.slice(-3) ?? []) {
+-				const maxArgsLen = Math.max(40, width - 30);
+-				const argsPreview = tool.args.length <= maxArgsLen ? tool.args : `${tool.args.slice(0, maxArgsLen)}...`;
+-				lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
+-			}
+-			for (const line of step.recentOutput?.slice(-5) ?? []) {
+-				lines.push(`      ${theme.fg("dim", line)}`);
+-			}
++	if (step.status === "running" && expanded) {
++		for (const tool of step.recentTools?.slice(-3) ?? []) {
++			const maxArgsLen = Math.max(40, width - 30);
++			const argsPreview = tool.args.length <= maxArgsLen ? tool.args : `${tool.args.slice(0, maxArgsLen)}...`;
++			lines.push(`      ${theme.fg("dim", `${tool.tool}${argsPreview ? `: ${argsPreview}` : ""}`)}`);
+ 		}
++		for (const line of step.recentOutput?.slice(-5) ?? []) {
++			lines.push(`      ${theme.fg("dim", line)}`);
++		}
+ 	}
+ 	return lines;
+ }
+
+ function foregroundStyleWidgetDetails(job: AsyncJobState, theme: Theme, expanded: boolean, width: number): string[] {
+-	if (!job.steps?.length) return [
+-		`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
+-		...formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt).map((line) => `  ${line}`),
+-	];
++	if (!job.steps?.length) return formatNestedWidgetLines(job.nestedChildren, theme, width, expanded, job.updatedAt).map((line) => `  ${line}`);
+ 	if (job.mode === "chain" && !job.activeParallelGroup && job.parallelGroups?.length) return widgetChainDetails(job, theme, expanded, width);
+ 	const total = job.stepsTotal ?? job.steps.length;
+ 	const itemTitle = job.mode === "parallel" || job.activeParallelGroup ? "Agent" : "Step";
+@@ -950,9 +888,10 @@
+ 	const stats = widgetStats(job, theme);
+ 	const count = job.mode === "chain" ? job.chainStepCount : job.stepsTotal ?? job.agents?.length ?? job.steps?.length;
+ 	const mode = widgetJobName(job);
+-	const title = `async subagent ${mode}${count && count > 1 ? ` (${count})` : ""}`;
++	const source = job.source ?? "async";
++	const title = `${source === "async" ? "async subagent" : "subagent"} ${mode}${count && count > 1 ? ` (${count})` : ""}`;
+ 	return [
+-		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", "· background")}`,
++		`${theme.fg("toolTitle", themeBold(theme, title))} ${theme.fg("dim", source === "async" ? "· background" : "· foreground")}`,
+ 		`${widgetStatusGlyph(job, theme)} ${themeBold(theme, mode)}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+ 		...foregroundStyleWidgetDetails(job, theme, expanded, width),
+ 	].map((line) => truncLine(line, width));
+@@ -967,14 +906,11 @@
+ 	const lines = fullLines.slice(0, 2);
+ 	for (const [index, step] of job.steps.entries()) {
+ 		const status = widgetStepStatus(step.status, theme);
+-		const activity = widgetStepActivityLine(step, width, false, job.updatedAt);
+ 		const stepStats = widgetStepStats(theme, step);
+-		const activitySuffix = activity ? ` ${theme.fg("dim", "·")} ${theme.fg("dim", activity)}` : "";
+ 		const modelDisplay = modelThinkingBadge(theme, step.model, step.thinking);
+-		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${activitySuffix}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
++		lines.push(`  ${widgetStepGlyph(step.status, theme, widgetStepRunningSeed(step, index))} ${itemTitle} ${index + 1}/${total}: ${themeBold(theme, step.agent)}${contextModeBadge(theme, step.context)} ${theme.fg("dim", "·")} ${status}${modelDisplay}${stepStats ? ` ${theme.fg("dim", "·")} ${stepStats}` : ""}`);
+ 		for (const nestedLine of formatNestedWidgetLines(step.children, theme, width, false, job.updatedAt)) lines.push(`    ${nestedLine}`);
+ 	}
+-	if (job.steps.some((step) => step.status === "running")) lines.push(theme.fg("accent", `  ${liveDetailHintText()}`));
+ 	return lines.map((line) => truncLine(line, width));
+ }
+
+@@ -1108,13 +1044,11 @@
+
+ function progressiveJobLine(job: AsyncJobState, theme: Theme, width: number): string {
+ 	const stats = widgetStats(job, theme);
+-	const activity = widgetActivity(job);
+ 	const status = job.status === "complete" ? "done" : job.status;
+ 	const parts = [
+ 		`${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}`,
+ 		theme.fg("dim", status),
+ 		stats,
+-		activity && activity.toLowerCase() !== status ? theme.fg("dim", activity) : "",
+ 	].filter(Boolean);
+ 	return truncLine(`  ${widgetStatusGlyph(job, theme)} ${parts.join(` ${theme.fg("dim", "·")} `)}`, width);
+ }
+@@ -1212,7 +1146,7 @@
+
+ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: unknown, theme: Theme) => Component {
+ 	return (_tui, theme) => {
+-		const width = getTermWidth();
++		const width = Math.max(20, getTermWidth() - 2);
+ 		const lines = expanded
+ 			? buildWidgetLines(jobs, theme, width, true)
+ 			: jobs.length === 1
+@@ -1234,7 +1168,13 @@
+ 	const lines: string[] = [];
+ 	const hasActive = running.length > 0 || queued.length > 0;
+ 	const headerGlyph = running.length > 0 ? runningGlyph(widgetJobsRunningSeed(running)) : hasActive ? "●" : "○";
+-	lines.push(truncLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", "Async agents")} ${theme.fg("dim", "· background")}`, width));
++	const sources = new Set(jobs.map((job) => job.source ?? "async"));
++	const headerTitle = sources.size === 1 && sources.has("async") ? "Async agents" : "Subagents";
++	const headerMode = sources.size > 1 ? "mixed" : sources.has("foreground") ? "foreground" : "background";
++	lines.push(truncLine(`${theme.fg(hasActive ? "accent" : "dim", headerGlyph)} ${theme.fg(hasActive ? "accent" : "dim", headerTitle)} ${theme.fg("dim", `· ${headerMode}`)}`, width));
++	const sourceBadge = (job: AsyncJobState) => sources.size > 1
++		? theme.fg("dim", ` · ${job.source === "foreground" ? "foreground" : "background"}`)
++		: "";
+
+ 	const items: string[][] = [];
+ 	let hiddenRunning = 0;
+@@ -1246,8 +1186,7 @@
+ 		if (slots <= 0) { hiddenRunning++; continue; }
+ 		const stats = widgetStats(job, theme);
+ 		items.push([
+-			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+-			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
++			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${sourceBadge(job)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+ 			...widgetParallelAgentDetails(job, theme, expanded, width),
+ 		]);
+ 		slots--;
+@@ -1263,8 +1202,7 @@
+ 		if (slots <= 0) { hiddenFinished++; continue; }
+ 		const stats = widgetStats(job, theme);
+ 		items.push([
+-			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+-			`  ${theme.fg("dim", `⎿  ${widgetActivity(job)}`)}`,
++			`${widgetStatusGlyph(job, theme)} ${themeBold(theme, widgetJobName(job))}${contextModeBadge(theme, job.context)}${sourceBadge(job)}${stats ? ` ${theme.fg("dim", "·")} ${stats}` : ""}`,
+ 			...widgetParallelAgentDetails(job, theme, expanded, width),
+ 		]);
+ 		slots--;
+--- a/src/extension/index.ts
++++ b/src/extension/index.ts
+@@ -252,6 +252,8 @@
+ 			deliverIntercomResults: config.intercomBridge?.resultDelivery !== false,
+ 		},
+ 	);
++	let unifiedWidgetTimer: ReturnType<typeof setInterval> | undefined;
++	let unifiedWidgetHadJobs = false;
+
+ 	const runtimeCleanup = () => {
+ 		stopResultWatcher();
+@@ -265,6 +267,10 @@
+ 		if (state.poller) {
+ 			clearInterval(state.poller);
+ 			state.poller = null;
++		}
++		if (unifiedWidgetTimer) {
++			clearInterval(unifiedWidgetTimer);
++			unifiedWidgetTimer = undefined;
+ 		}
+ 	};
+ 	globalStore[runtimeCleanupStoreKey] = runtimeCleanup;
+@@ -272,6 +278,21 @@
+ 	const { ensurePoller, refreshWidget, handleStarted, handleComplete, resetJobs, restoreActiveJobs } = createAsyncJobTracker(pi, state, ASYNC_DIR, {
+ 		widgetEnabled: asyncWidgetEnabled,
+ 	});
++	if (asyncWidgetEnabled) {
++		unifiedWidgetTimer = setInterval(() => {
++			const hasJobs = state.asyncJobs.size > 0 || state.foregroundControls.size > 0;
++			if (!hasJobs && !unifiedWidgetHadJobs) return;
++			unifiedWidgetHadJobs = hasJobs;
++			const ctx = state.lastUiContext;
++			if (!ctx?.hasUI) return;
++			try {
++				refreshWidget(ctx);
++			} catch (error) {
++				if (!isStaleExtensionContextError(error)) throw error;
++			}
++		}, 80);
++		unifiedWidgetTimer.unref?.();
++	}
+ 	let executorExecute: ((id: string, params: SubagentParamsLike, signal: AbortSignal, onUpdate: ((r: AgentToolResult<Details>) => void) | undefined, ctx: ExtensionContext) => Promise<AgentToolResult<Details>>) | undefined;
+ 	const scheduledRunManager = createScheduledRunManager({
+ 		config,
+@@ -595,6 +616,10 @@
+ 		scheduledRunManager.stop();
+ 		if (state.poller) clearInterval(state.poller);
+ 		state.poller = null;
++		if (unifiedWidgetTimer) {
++			clearInterval(unifiedWidgetTimer);
++			unifiedWidgetTimer = undefined;
++		}
+ 		clearPendingForegroundControlNotices(state);
+ 		for (const timer of state.cleanupTimers.values()) {
+ 			clearTimeout(timer);

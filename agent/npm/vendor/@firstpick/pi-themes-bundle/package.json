@@ -1,0 +1,34 @@
+{
+  "name": "@firstpick/pi-themes-bundle",
+  "version": "0.1.5",
+  "description": "Firstpick's custom Pi coding agent themes.",
+  "license": "MIT",
+  "homepage": "https://github.com/Firstp1ck/pi-coding-agent-forge/tree/main/pi-package-themes-bundle#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Firstp1ck/pi-coding-agent-forge.git",
+    "directory": "pi-package-themes-bundle"
+  },
+  "keywords": [
+    "pi-package",
+    "pi",
+    "pi-coding-agent",
+    "theme",
+    "themes",
+    "catppuccin",
+    "dracula",
+    "tokyo-night",
+    "matrix",
+    "crimson"
+  ],
+  "pi": {
+    "themes": [
+      "./themes"
+    ]
+  },
+  "files": [
+    "themes",
+    "README.md",
+    "LICENSE"
+  ]
+}
