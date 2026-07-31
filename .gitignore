@@ -1,6 +1,7 @@
 # Credentials and machine-local trust
 agent/auth.json
 agent/trust.json
+agent/my-pi-settings.json
 
 # Sessions and runtime history
 agent/sessions/

@@ -786,12 +786,9 @@ describe('ContextStore', () => {
 			close_db(db);
 		}
 
-		const built_schema = new URL(
-			'../dist/schema.sql',
-			import.meta.url,
-		);
-		expect(existsSync(built_schema)).toBe(true);
-		expect(readFileSync(built_schema, 'utf8')).toContain(
+		const source_schema = new URL('./schema.sql', import.meta.url);
+		expect(existsSync(source_schema)).toBe(true);
+		expect(readFileSync(source_schema, 'utf8')).toContain(
 			'CREATE TABLE IF NOT EXISTS context_sources',
 		);
 	});

@@ -1,15 +1,13 @@
 # Community source provenance
 
-Community code is organized by runtime role instead of being stored under the npm installation directory:
+Community code is organized by runtime role:
 
-- `agent/extensions/community/` contains Pi extension packages.
+- `agent/extensions/community/` contains Pi extension sources.
 - `agent/lib/community/` contains Pi-coupled helper libraries that do not register extension entry points themselves.
-- `agent/themes/community/` contains theme packages.
+- `agent/themes/community/` contains theme resources.
 
-The executable resources are loaded directly from this repository. `agent/package.json` is both the local Pi package manifest and the single npm dependency manifest; npm is used only to install generic runtime dependencies and create links to the local helper libraries.
+The executable resources load directly from this repository. `agent/package.json` is both the local Pi package manifest and the single npm dependency manifest; npm is used only for generic runtime dependencies and links to local helper libraries.
 
-`upstream.json` records each imported version, repository, license declaration, local path, and known local modification. Package-level `README.md`, `LICENSE`, tests, and `package.json` files are retained when they were available.
+`upstream.json` records each imported version, repository, license declaration, local path, and known local modification. The repository keeps TypeScript source, maintenance tests, runtime assets, package manifests required for module resolution, and one `tsconfig.json` per recovered source package.
 
-The `@spences10` npm artifacts publish compiled JavaScript only. Their original TypeScript sources and tests were recovered from exact matching upstream Git tags. Extension entries and locally linked helpers load those TypeScript sources directly; published `dist/` directories are retained as import baselines.
-
-Large gallery-only media and upstream CI metadata are excluded because they are not needed to run or maintain this configuration.
+Per-package README, LICENSE, CHANGELOG, generated `dist/`, build-only TypeScript configs, publishing metadata, installation scripts, examples, and unused bundled resources are intentionally omitted from this private source-only configuration.

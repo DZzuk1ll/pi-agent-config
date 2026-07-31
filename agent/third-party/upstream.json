@@ -65,7 +65,7 @@
       "upstreamCommit": "4d7e1f998c9d56d0be09bb9ea9d0ab3378ad8754",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/lib/community/@spences10/pi-child-env"
     },
@@ -77,7 +77,7 @@
       "upstreamCommit": "547565ba8afb68e25bdc270f4257dfbdfd07096e",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/extensions/community/@spences10/pi-confirm-destructive"
     },
@@ -89,7 +89,7 @@
       "upstreamCommit": "2460cc206cfd76c037621bc2354a09e330deee06",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/extensions/community/@spences10/pi-context"
     },
@@ -101,7 +101,7 @@
       "upstreamCommit": "2460cc206cfd76c037621bc2354a09e330deee06",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/extensions/community/@spences10/pi-lsp"
     },
@@ -113,7 +113,7 @@
       "upstreamCommit": "cfc13c7ae447e576214c5e9a91e0a0d0322d4567",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/lib/community/@spences10/pi-project-trust"
     },
@@ -125,7 +125,7 @@
       "upstreamCommit": "547565ba8afb68e25bdc270f4257dfbdfd07096e",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/lib/community/@spences10/pi-redact"
     },
@@ -137,7 +137,7 @@
       "upstreamCommit": "cfc13c7ae447e576214c5e9a91e0a0d0322d4567",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/lib/community/@spences10/pi-settings"
     },
@@ -149,7 +149,7 @@
       "upstreamCommit": "a5737d631e9cb68d8f8fb4a6ce92b25a97345250",
       "license": "MIT",
       "notes": [
-        "Original TypeScript sources and tests were recovered from the exact upstream tag; the npm dist is retained as a baseline."
+        "Original TypeScript sources and tests were recovered from the exact upstream tag; generated npm dist output is omitted by the source-only repository policy."
       ],
       "path": "agent/lib/community/@spences10/pi-tui-modal"
     },

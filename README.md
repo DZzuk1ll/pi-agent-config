@@ -156,7 +156,7 @@ git push
 以下内容已被 `.gitignore` 排除：
 
 - `agent/auth.json`：登录令牌和 API Key
-- `agent/trust.json`：本机信任记录
+- `agent/trust.json`、`agent/my-pi-settings.json`：本机信任和扩展设置记录
 - `agent/sessions/`：会话内容
 - `agent/run-history.jsonl`：运行历史
 - `agent/context.db*`：本机上下文索引

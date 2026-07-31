@@ -1,12 +1,7 @@
 {
   "name": "@spences10/pi-settings",
   "version": "0.0.3",
-  "description": "Shared my-pi settings store",
-  "files": [
-    "src",
-    "dist",
-    "README.md"
-  ],
+  "private": true,
   "type": "module",
   "main": "./src/index.ts",
   "types": "./src/index.ts",
@@ -16,9 +11,7 @@
       "import": "./src/index.ts"
     }
   },
-  "dependencies": {},
   "peerDependencies": {
     "@earendil-works/pi-coding-agent": "*"
-  },
-  "private": true
+  }
 }
