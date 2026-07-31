@@ -57,6 +57,8 @@ Use `argsJson` for user-supplied structured inputs instead of embedding them in 
 
 ## Bounds and lifecycle
 
-A workflow has a maximum of 32 agent calls, concurrency 4, and 30 minutes wall time. Source, args, IPC messages, and results are byte bounded. Foreground workflows follow the tool AbortSignal; background workflows survive Esc but are cancelled on reload or session shutdown. `/workflows` shows runs and can cancel them; `/subagents-fleet` remains the source for child transcripts.
+A workflow has a maximum of 32 agent calls, concurrency 4, and 30 minutes wall time. Source, args, IPC messages, and results are byte bounded. Foreground workflows follow the tool AbortSignal; background workflows survive Esc but are cancelled on reload or session shutdown. `/workflows` opens a live run/agent dashboard, supports confirmed workflow cancellation, and can show bounded child transcripts through the versioned pi-subagents transcript API. Use `/subagents-fleet` as the fallback and for the full child-run inspector.
+
+Active workflows automatically render a live phase/agent panel below the editor. Press Down or Right to focus it even when the editor already contains text; the editor text is preserved. Use Up/Down or j/k to select, Enter to open the adaptive two-column Workflow fleet inspector, and Esc/Left to return; press c twice within three seconds to cancel. Tool calls are compact by default; press x or Ctrl+O in the inspector to expand or collapse their arguments and output. Workflow-owned children are omitted from the automatic Subagents widgets to avoid duplicate rows, but remain available through `/subagents-fleet` and transcript APIs. `/workflows` opens the same framed inspector with live and historical runs.
 
 Artifacts are private under `~/.pi/agent/workflows/<run-id>/` and retained for at most 30 days and 100 runs. Do not put secrets in script source or `argsJson` because both are persisted.

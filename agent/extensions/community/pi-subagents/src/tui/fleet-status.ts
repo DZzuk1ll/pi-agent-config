@@ -1,9 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import type { AsyncJobStep, FleetViewPlacement, SubagentState } from "../shared/types.ts";
+import { isOwnedByOrchestratorUi } from "../shared/ui-ownership.ts";
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
+const SHARED_FOCUS_STATE_KEY = Symbol.for("pi.agent.interactive-widget-focus.v1");
+const FOCUS_OWNER = "subagent-fleet-status";
 const MAX_AGENT_ROWS = 5;
 const REFRESH_MS = 500;
 
@@ -53,6 +56,28 @@ function isActiveState(value: string): boolean {
 	return value === "running" || value === "queued" || value === "pending";
 }
 
+function sharedFocusState(): { owner?: string } {
+	const globalRecord = globalThis as typeof globalThis & Record<symbol, { owner?: string } | undefined>;
+	return globalRecord[SHARED_FOCUS_STATE_KEY] ??= {};
+}
+
+function claimInteractiveWidgetFocus(owner: string): boolean {
+	const state = sharedFocusState();
+	if (state.owner && state.owner !== owner) return false;
+	state.owner = owner;
+	return true;
+}
+
+function releaseInteractiveWidgetFocus(owner: string): void {
+	const state = sharedFocusState();
+	if (state.owner === owner) state.owner = undefined;
+}
+
+function interactiveWidgetFocusedByOther(owner: string): boolean {
+	const current = sharedFocusState().owner;
+	return current !== undefined && current !== owner;
+}
+
 function isStaleExtensionContextError(error: unknown): boolean {
 	// Pi currently exposes stale contexts as plain Errors without a stable code or subtype.
 	return error instanceof Error
@@ -63,6 +88,7 @@ function isStaleExtensionContextError(error: unknown): boolean {
 export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntry[] {
 	const entries: FleetStatusEntry[] = [];
 	for (const control of state.foregroundControls.values()) {
+		if (isOwnedByOrchestratorUi(control)) continue;
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
 				entries.push({
@@ -131,6 +157,7 @@ export class SubagentFleetStatus {
 	private active = false;
 	private selectedKey = "main";
 	private inspectorOpen = false;
+	private workflowPanelVisible = false;
 	private lastRenderKey = "";
 	private entries: FleetStatusEntry[] = [];
 	private readonly state: SubagentState;
@@ -152,14 +179,17 @@ export class SubagentFleetStatus {
 	}
 
 	setContext(ctx: ExtensionContext): void {
-		if (!ctx.hasUI) return;
+		if (!ctx.hasUI) {
+			this.dispose();
+			return;
+		}
 		const ui = ctx.ui;
 		if (this.ui === ui) {
 			this.ctx = ctx;
 			this.refresh();
 			return;
 		}
-		this.clearUiRegistration();
+		this.dispose();
 		this.ctx = ctx;
 		this.ui = ui;
 		if (typeof ui.onTerminalInput === "function") {
@@ -172,13 +202,21 @@ export class SubagentFleetStatus {
 
 	dispose(): void {
 		this.clearUiRegistration();
+		releaseInteractiveWidgetFocus(FOCUS_OWNER);
 		this.ctx = undefined;
 		this.ui = undefined;
 		this.entries = [];
 		this.active = false;
 		this.selectedKey = "main";
 		this.inspectorOpen = false;
+		this.workflowPanelVisible = false;
 		this.lastRenderKey = "";
+	}
+
+	setWorkflowPanelVisible(visible: boolean): void {
+		this.workflowPanelVisible = visible;
+		if (visible && this.active) this.deactivate();
+		else this.refresh();
 	}
 
 	refresh(): void {
@@ -196,6 +234,7 @@ export class SubagentFleetStatus {
 			return;
 		}
 		if (this.entries.length === 0) {
+			releaseInteractiveWidgetFocus(FOCUS_OWNER);
 			this.active = false;
 			this.selectedKey = "main";
 			this.lastRenderKey = "";
@@ -236,14 +275,18 @@ export class SubagentFleetStatus {
 		const ctx = this.getActiveUiContext();
 		if (!ctx || this.entries.length === 0 || isKeyRelease(data)) return undefined;
 		if (this.inspectorOpen) return undefined;
+		if (interactiveWidgetFocusedByOther(FOCUS_OWNER)) {
+			if (this.active) this.deactivate();
+			return undefined;
+		}
 		if (!this.editorHasFocus()) {
 			if (this.active) this.deactivate();
 			return undefined;
 		}
 
 		if (!this.active) {
-			const activates = matchesKey(data, "down") || matchesKey(data, "left");
-			if (!activates || ctx.ui.getEditorText() !== "") return undefined;
+			const activates = matchesKey(data, "left") || !this.workflowPanelVisible && matchesKey(data, "down");
+			if (!activates || ctx.ui.getEditorText() !== "" || !claimInteractiveWidgetFocus(FOCUS_OWNER)) return undefined;
 			this.active = true;
 			this.selectedKey = "main";
 			this.refresh();
@@ -280,7 +323,13 @@ export class SubagentFleetStatus {
 			const selectedKey = this.selectedKey;
 			void Promise.resolve()
 				.then(() => this.openInspector(selectedKey))
-				.catch((error) => ctx.ui.notify(error instanceof Error ? error.message : String(error), "error"))
+				.catch((error) => {
+					try {
+						this.getActiveUiContext()?.ui.notify(error instanceof Error ? error.message : String(error), "error");
+					} catch {
+						// A failed or stale notification must not create an unhandled rejection.
+					}
+				})
 				.finally(() => {
 					this.inspectorOpen = false;
 					this.refresh();
@@ -298,7 +347,9 @@ export class SubagentFleetStatus {
 		const selectedIndex = Math.max(0, roster.indexOf(this.selectedKey));
 		const hint = this.active
 			? "↑↓/jk select · enter inspect · esc back"
-			: "esc to interrupt · ← for agents · ↓ to manage";
+			: this.workflowPanelVisible
+				? "esc to interrupt · ← for agents · ↓ for workflow"
+				: "esc to interrupt · ← for agents · ↓ to manage";
 		const lines = [truncateToWidth(`  ${theme.fg("dim", hint)}`, width), ""];
 		lines.push(truncateToWidth(`  ${this.bullet(0, selectedIndex, theme)} main`, width));
 
@@ -335,6 +386,7 @@ export class SubagentFleetStatus {
 	}
 
 	private deactivate(): void {
+		releaseInteractiveWidgetFocus(FOCUS_OWNER);
 		this.active = false;
 		this.selectedKey = "main";
 		this.refresh();
@@ -359,6 +411,7 @@ export class SubagentFleetStatus {
 			active: this.active,
 			selected: this.selectedKey,
 			inspectorOpen: this.inspectorOpen,
+			workflowPanelVisible: this.workflowPanelVisible,
 			entries: this.entries.map((entry) => [
 				entry.key,
 				entry.agent,
@@ -382,6 +435,7 @@ export class SubagentFleetStatus {
 	}
 
 	private clearUiRegistration(): void {
+		releaseInteractiveWidgetFocus(FOCUS_OWNER);
 		if (this.timer) clearInterval(this.timer);
 		this.timer = undefined;
 

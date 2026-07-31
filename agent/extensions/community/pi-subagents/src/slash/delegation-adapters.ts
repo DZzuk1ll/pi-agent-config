@@ -158,6 +158,8 @@ export interface DelegatedSubagentExecutionParams {
 	delegatedThinkingOverride?: SubagentDelegationV2Thinking;
 	/** Internal-only V2 capability accepted and stripped by executeDelegated. */
 	delegatedAllowZeroToolBudget?: true;
+	/** Internal-only owner used to avoid duplicating orchestrated children in automatic UI surfaces. */
+	delegatedUiOwnerRunId?: string;
 	async: false;
 	foregroundOnly: true;
 	clarify: false;
@@ -404,6 +406,7 @@ export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegatio
 		artifacts: request.artifacts,
 		delegatedThinkingOverride: request.thinking,
 		delegatedAllowZeroToolBudget: true,
+		delegatedUiOwnerRunId: request.ownerRunId,
 		async: false,
 		foregroundOnly: true,
 		clarify: false,

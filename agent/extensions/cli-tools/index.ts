@@ -3,6 +3,8 @@ import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
 import { sanitizeForDisplay } from "../shared/text.ts";
+import { scanAvailableCliTools } from "./inventory.ts";
+import { buildCliToolsPrompt } from "./prompt.ts";
 import { queryCliTools } from "./query.ts";
 
 const CliToolsParams = Type.Object({
@@ -20,13 +22,18 @@ function safeInline(value: string): string {
 }
 
 export default function cliTools(pi: ExtensionAPI): void {
+	const prompt = buildCliToolsPrompt(scanAvailableCliTools());
+	if (!prompt) return;
+
 	pi.registerTool({
 		name: "cli_tools",
 		label: "CLI Tools",
-		description: "Inspect a curated, progressively disclosed inventory of command-line tools that are currently available on this system. Unavailable catalog entries are never returned.",
+		description: "Inspect a curated, progressively disclosed inventory of development command-line tools that are currently available through bash. Unavailable catalog entries are never returned.",
+		promptSnippet: prompt.promptSnippet,
+		promptGuidelines: prompt.promptGuidelines,
 		parameters: CliToolsParams,
 		async execute(_id, params) {
-			const response = queryCliTools(params);
+			const response = queryCliTools(params, prompt.tools);
 			return {
 				content: [{ type: "text", text: response.text }],
 				details: response,

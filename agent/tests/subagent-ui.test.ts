@@ -103,6 +103,15 @@ test("foreground controls are projected into the same status widget", () => {
 				updatedAt: 300,
 				activeChildren: new Map([[0, child]]),
 			}],
+			["workflow-child", {
+				runId: "workflow-child",
+				sessionId: "parent-session",
+				uiOwnerRunId: "wf_test",
+				mode: "single",
+				startedAt: 100,
+				updatedAt: 300,
+				activeChildren: new Map([[0, child]]),
+			}],
 		]),
 	};
 

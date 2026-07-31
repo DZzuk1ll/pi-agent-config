@@ -1288,6 +1288,8 @@ export interface ForegroundRunControl {
 	currentIndex?: number;
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
 	description?: string;
+	/** Owning orchestrator run; automatic status surfaces may render that owner instead. */
+	uiOwnerRunId?: string;
 	currentActivityState?: ActivityState;
 	lastActivityAt?: number;
 	currentTool?: string;

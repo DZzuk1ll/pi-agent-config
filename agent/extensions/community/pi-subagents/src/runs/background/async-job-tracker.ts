@@ -19,6 +19,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
+import { isOwnedByOrchestratorUi } from "../../shared/ui-ownership.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
 
 interface AsyncJobTrackerOptions {
@@ -47,6 +48,7 @@ function rememberFleetJob(state: SubagentState, job: AsyncJobState): void {
 export function collectSubagentWidgetJobs(state: SubagentState): AsyncJobState[] {
 	const asyncJobs = [...state.asyncJobs.values()].map((job) => ({ ...job, source: job.source ?? "async" as const }));
 	const foregroundJobs = [...state.foregroundControls.values()]
+		.filter((control) => !isOwnedByOrchestratorUi(control))
 		.filter((control) => state.currentSessionId ? control.sessionId === state.currentSessionId : control.sessionId === undefined)
 		.map((control): AsyncJobState => {
 			const children = [...(control.activeChildren?.values() ?? [])].sort((left, right) => left.index - right.index);

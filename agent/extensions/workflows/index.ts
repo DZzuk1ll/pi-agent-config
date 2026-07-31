@@ -1,15 +1,20 @@
 import { randomBytes } from "node:crypto";
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 import { boundToolText, sanitizeForDisplay, utf8ByteLength } from "../shared/text.ts";
 import { settleWithin } from "../shared/lifecycle.ts";
-import { WorkflowArtifacts, aggregateUsage, loadWorkflowHistory, prepareWorkflowStorage } from "./artifacts.ts";
+import { WorkflowArtifacts, aggregateUsage, loadWorkflowHistory, prepareWorkflowStorage, workflowRoot } from "./artifacts.ts";
 import { WorkflowAdmission, WorkflowController, WORKFLOW_SHUTDOWN_MS, type WorkflowDetails } from "./controller.ts";
+import { showWorkflowDashboard, type WorkflowDashboardSource } from "./dashboard.ts";
 import { DelegationClient } from "./delegation.ts";
+import { WorkflowLiveStatus } from "./live-status.ts";
 import { MAX_WORKFLOW_ARGS_BYTES, MAX_WORKFLOW_SOURCE_BYTES, runWorkflowSandbox } from "./sandbox.ts";
+import { WorkflowTranscriptClient } from "./transcript.ts";
+import { formatWorkflowCall, formatWorkflowResult } from "./view.ts";
 
-const WIDGET_KEY = "workflows";
 const MAX_ACTIVE_WORKFLOWS = 4;
+const WORKFLOW_UI_VISIBILITY_EVENT = "workflow:ui-visibility";
 
 interface ActiveWorkflow {
 	controller: WorkflowController;
@@ -57,34 +62,60 @@ function resultText(details: WorkflowDetails, directory: string): string {
 export default function workflows(pi: ExtensionAPI): void {
 	const active = new Map<string, ActiveWorkflow>();
 	const workflowAdmission = new WorkflowAdmission(MAX_ACTIVE_WORKFLOWS);
-	let ui: { setWidget: (key: string, content: string[] | undefined, options?: { placement?: "aboveEditor" | "belowEditor" }) => void; notify: (message: string, level?: "info" | "warning" | "error") => void } | undefined;
+	const transcriptClient = new WorkflowTranscriptClient(pi.events);
+	let uiLifetime = new AbortController();
 	let shuttingDown = false;
-
-	const updateWidget = () => {
-		if (!ui) return;
-		const runs = [...active.values()].map((item) => item.controller.details);
-		if (runs.length === 0) {
-			ui.setWidget(WIDGET_KEY, undefined);
-			return;
+	const dashboardSource: WorkflowDashboardSource = {
+		getActive: () => new Map([...active.values()].map((item) => [item.controller.details.runId, item.controller.details])),
+		loadHistory: () => loadWorkflowHistory(),
+		cancel: (runId, reason) => {
+			const run = active.get(runId);
+			if (!run) return false;
+			run.controller.abort(reason);
+			return true;
+		},
+		loadTranscript: (runId, childIndex, cursor, limit, signal) => transcriptClient.query({ runId, childIndex, cursor, limit, signal }),
+	};
+	const liveStatus = new WorkflowLiveStatus(dashboardSource, async (ctx, target) => {
+		await showWorkflowDashboard(
+			ctx,
+			dashboardSource,
+			target.runId,
+			uiLifetime.signal,
+			target.nodeId,
+			target.openTranscript,
+			true,
+		);
+	});
+	let publishedWorkflowVisibility: boolean | undefined;
+	const publishWorkflowVisibility = (visible: boolean, force = false) => {
+		if (!force && publishedWorkflowVisibility === visible) return;
+		publishedWorkflowVisibility = visible;
+		try {
+			pi.events.emit(WORKFLOW_UI_VISIBILITY_EVENT, { version: 1, visible });
+		} catch {
+			// A cooperating UI listener must not affect workflow execution.
 		}
-		const latest = runs.sort((a, b) => b.startedAt - a.startedAt)[0];
-		const count = counts(latest);
-		ui.setWidget(WIDGET_KEY, [`WF ${runs.length}  ${latest.runId} ${count.done}/${latest.agents.length} ${latest.currentPhase ? `· ${sanitizeForDisplay(latest.currentPhase)}` : ""}`], {
-			placement: "belowEditor",
-		});
+	};
+	const refreshLiveUi = () => {
+		publishWorkflowVisibility(!shuttingDown && active.size > 0);
+		liveStatus.refresh();
 	};
 
 	pi.on("session_start", (_event, ctx) => {
+		uiLifetime.abort();
+		uiLifetime = new AbortController();
 		shuttingDown = false;
-		ui = ctx.ui;
 		prepareWorkflowStorage();
-		updateWidget();
+		liveStatus.setContext(ctx);
+		publishWorkflowVisibility(active.size > 0, true);
 	});
 
 	pi.on("session_shutdown", async () => {
 		shuttingDown = true;
-		ui?.setWidget(WIDGET_KEY, undefined);
-		ui = undefined;
+		uiLifetime.abort();
+		publishWorkflowVisibility(false, true);
+		liveStatus.dispose();
 		const runs = [...active.values()];
 		for (const run of runs) run.controller.abort("Pi session is shutting down");
 		await settleWithin(Promise.allSettled(runs.map((run) => run.completion)).then(() => undefined), WORKFLOW_SHUTDOWN_MS);
@@ -111,6 +142,12 @@ export default function workflows(pi: ExtensionAPI): void {
 			argsJson: Type.Optional(Type.String({ maxLength: 256 * 1024, description: "Valid JSON exposed to the script as immutable args" })),
 			background: Type.Optional(Type.Boolean({ default: false })),
 		}),
+		renderCall(args, theme) {
+			return new Text(formatWorkflowCall(args, theme), 0, 0);
+		},
+		renderResult(result, options, theme) {
+			return new Text(formatWorkflowResult(result, options, theme), 0, 0);
+		},
 		async execute(_toolCallId, params, signal, onUpdate, ctx) {
 			if (shuttingDown) throw new Error("Workflow runtime is shutting down");
 			if (utf8ByteLength(params.script) > MAX_WORKFLOW_SOURCE_BYTES) {
@@ -148,7 +185,7 @@ export default function workflows(pi: ExtensionAPI): void {
 						lastEventSignature = signature;
 						artifacts!.event("workflow.progress", JSON.parse(signature));
 					}
-					updateWidget();
+					refreshLiveUi();
 					if (background || emitTimer) return;
 					emitTimer = setTimeout(() => {
 						emitTimer = undefined;
@@ -177,42 +214,45 @@ export default function workflows(pi: ExtensionAPI): void {
 				artifacts.checkpoint(controller.details, true);
 
 				const runScript = async () => {
-					let result: unknown;
-					let failure: unknown;
 					try {
-						result = await runWorkflowSandbox({
-							source: params.script,
-							args,
-							cwd: ctx.cwd,
-							signal: controller.signal,
-							onAgent: (prompt, options, invocationSignal) => controller.runAgent(prompt, options, invocationSignal),
-							onPhase: (title) => controller.phase(title),
-						});
-					} catch (error) {
-						failure = error;
-					}
-					await controller.finalize(failure ? { error: failure } : { result });
-					if (emitTimer) clearTimeout(emitTimer);
-					emitTimer = undefined;
-					try {
-						artifacts!.finish(controller.details);
-					} catch (error) {
-						controller.details.state = "failed";
-						controller.details.error = `Workflow artifact persistence failed: ${error instanceof Error ? error.message : String(error)}`;
-						artifacts!.dispose();
+						let result: unknown;
+						let failure: unknown;
+						try {
+							result = await runWorkflowSandbox({
+								source: params.script,
+								args,
+								cwd: ctx.cwd,
+								signal: controller.signal,
+								onAgent: (prompt, options, invocationSignal) => controller.runAgent(prompt, options, invocationSignal),
+								onPhase: (title) => controller.phase(title),
+							});
+						} catch (error) {
+							failure = error;
+						}
+						await controller.finalize(failure ? { error: failure } : { result });
+						try {
+							artifacts!.finish(controller.details);
+						} catch (error) {
+							controller.details.state = "failed";
+							controller.details.error = `Workflow artifact persistence failed: ${error instanceof Error ? error.message : String(error)}`;
+							artifacts!.dispose();
+						}
+					} finally {
+						if (emitTimer) clearTimeout(emitTimer);
+						emitTimer = undefined;
 					}
 				};
 
 				const completion = runScript();
 				active.set(runId, { controller, artifacts, completion });
-				updateWidget();
+				refreshLiveUi();
 				if (background) {
 					void completion.finally(() => {
 						active.delete(runId);
 						releaseAdmission();
 						artifacts!.dispose();
 						try { prepareWorkflowStorage([...active.keys()]); } catch {}
-						updateWidget();
+						refreshLiveUi();
 						if (shuttingDown) return;
 						try {
 							pi.sendMessage(
@@ -241,7 +281,7 @@ export default function workflows(pi: ExtensionAPI): void {
 					releaseAdmission();
 					artifacts.dispose();
 					try { prepareWorkflowStorage([...active.keys()]); } catch {}
-					updateWidget();
+					refreshLiveUi();
 				}
 				if (controller.details.state !== "completed") throw new Error(resultText(controller.details, artifacts.directory));
 				return { content: [{ type: "text", text: resultText(controller.details, artifacts.directory) }], details: controller.details };
@@ -256,7 +296,20 @@ export default function workflows(pi: ExtensionAPI): void {
 
 	pi.registerCommand("workflows", {
 		description: "Inspect and cancel workflow runs",
-		handler: async (_args, ctx) => {
+		handler: async (args, ctx) => {
+			if (ctx.mode === "tui") {
+				try {
+					await liveStatus.runInspector(() => showWorkflowDashboard(
+						ctx,
+						dashboardSource,
+						args.trim() || undefined,
+						uiLifetime.signal,
+					));
+					return;
+				} catch (error) {
+					ctx.ui.notify(`Workflow dashboard unavailable; using basic view: ${error instanceof Error ? error.message : String(error)}`, "warning");
+				}
+			}
 			const live = new Map([...active.values()].map((item) => [item.controller.details.runId, item]));
 			const history = loadWorkflowHistory();
 			const merged = [[...live.values()].map((item) => item.controller.details), history.filter((item) => !live.has(item.runId))].flat()
@@ -293,6 +346,5 @@ export default function workflows(pi: ExtensionAPI): void {
 }
 
 function preparePath(runId: string): string {
-	const home = process.env.PI_CODING_AGENT_DIR ?? `${process.env.HOME ?? "~"}/.pi/agent`;
-	return `${home}/workflows/${runId}`;
+	return `${workflowRoot()}/${runId}`;
 }

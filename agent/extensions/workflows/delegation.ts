@@ -15,6 +15,9 @@ const MAX_AGENT_ERROR_BYTES = 16 * 1024;
 const MAX_PROGRESS_BYTES = 16 * 1024;
 const MAX_STRUCTURED_RAW_BYTES = 48 * 1024;
 const MAX_STRUCTURED_NODES = 4_096;
+const MAX_PROGRESS_COUNT = 1_000_000_000;
+const MAX_PROGRESS_DURATION_MS = 7 * 24 * 60 * 60 * 1_000;
+const MAX_PROGRESS_TOKENS = 1_000_000_000_000;
 
 export type WorkflowThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
@@ -41,6 +44,7 @@ export interface AgentCallResult {
 	error?: string;
 	usage?: AgentUsage;
 	runId?: string;
+	model?: string;
 }
 
 export interface AgentCallOptions {
@@ -54,6 +58,7 @@ export interface AgentCallOptions {
 
 export interface DelegationProgress {
 	runId?: string;
+	model?: string;
 	currentTool?: string;
 	recentOutput?: string;
 	toolCount?: number;
@@ -90,6 +95,10 @@ function matches(value: unknown, request: DelegationRequest): value is Record<st
 
 function stringField(value: unknown): string | undefined {
 	return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+function progressNumber(value: unknown, maximum: number): number | undefined {
+	return typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum ? value : undefined;
 }
 
 function requireBoundedString(value: string, maxBytes: number, label: string): string {
@@ -163,9 +172,23 @@ function stringifyStructured(value: unknown): string {
 
 function usageField(value: unknown): AgentUsage | undefined {
 	if (!isRecord(value)) return undefined;
-	const keys: Array<keyof AgentUsage> = ["input", "output", "cacheRead", "cacheWrite", "cost", "turns", "toolCalls", "durationMs"];
-	if (!keys.every((key) => typeof value[key] === "number" && Number.isFinite(value[key]))) return undefined;
-	return Object.fromEntries(keys.map((key) => [key, value[key]])) as unknown as AgentUsage;
+	const limits: Record<keyof AgentUsage, number> = {
+		input: MAX_PROGRESS_TOKENS,
+		output: MAX_PROGRESS_TOKENS,
+		cacheRead: MAX_PROGRESS_TOKENS,
+		cacheWrite: MAX_PROGRESS_TOKENS,
+		cost: MAX_PROGRESS_COUNT,
+		turns: MAX_PROGRESS_COUNT,
+		toolCalls: MAX_PROGRESS_COUNT,
+		durationMs: MAX_PROGRESS_DURATION_MS,
+	};
+	const parsed = {} as AgentUsage;
+	for (const key of Object.keys(limits) as Array<keyof AgentUsage>) {
+		const number = progressNumber(value[key], limits[key]);
+		if (number === undefined) return undefined;
+		parsed[key] = number;
+	}
+	return parsed;
 }
 
 function terminalResult(value: Record<string, unknown>): AgentCallResult {
@@ -176,6 +199,8 @@ function terminalResult(value: Record<string, unknown>): AgentCallResult {
 	}
 	const rawRunId = stringField(value.runId);
 	const runId = rawRunId ? boundedDisplay(rawRunId, 256) : undefined;
+	const rawModel = stringField(value.model);
+	const model = rawModel ? boundedDisplay(rawModel, 256) : undefined;
 	const usage = usageField(value.usage);
 	if (status !== "completed") {
 		return {
@@ -184,14 +209,15 @@ function terminalResult(value: Record<string, unknown>): AgentCallResult {
 			error: boundedDisplay(stringField(value.error) ?? `Subagent ended with status ${status}`, MAX_AGENT_ERROR_BYTES),
 			...(usage ? { usage } : {}),
 			...(runId ? { runId } : {}),
+			...(model ? { model } : {}),
 		};
 	}
 	if (!isRecord(value.result)) throw new Error("Subagent delegation completed without a result envelope");
 	if (value.result.kind === "text" && typeof value.result.text === "string") {
-		return { ok: true, output: cleanAgentOutput(value.result.text), ...(usage ? { usage } : {}), ...(runId ? { runId } : {}) };
+		return { ok: true, output: cleanAgentOutput(value.result.text), ...(usage ? { usage } : {}), ...(runId ? { runId } : {}), ...(model ? { model } : {}) };
 	}
 	if (value.result.kind === "structured" && Object.hasOwn(value.result, "value")) {
-		return { ok: true, output: stringifyStructured(value.result.value), structured: value.result.value, ...(usage ? { usage } : {}), ...(runId ? { runId } : {}) };
+		return { ok: true, output: stringifyStructured(value.result.value), structured: value.result.value, ...(usage ? { usage } : {}), ...(runId ? { runId } : {}), ...(model ? { model } : {}) };
 	}
 	throw new Error("Subagent delegation returned a malformed result envelope");
 }
@@ -232,6 +258,7 @@ export class DelegationClient {
 		return new Promise<AgentCallResult>((resolve, reject) => {
 			let settled = false;
 			let started = false;
+			let cancelStarted = false;
 			let bridgeTimer: ReturnType<typeof setTimeout> | undefined;
 			let cancelTimer: ReturnType<typeof setTimeout> | undefined;
 			const cleanups: Array<() => void> = [];
@@ -253,12 +280,20 @@ export class DelegationClient {
 				else resolve(result!);
 			};
 			const onAbort = () => {
-				this.events.emit(CANCEL_EVENT, {
-					version: VERSION,
-					requestId: request.requestId,
-					ownerRunId: request.ownerRunId,
-					nodeId: request.nodeId,
-				});
+				if (settled || cancelStarted) return;
+				cancelStarted = true;
+				try {
+					this.events.emit(CANCEL_EVENT, {
+						version: VERSION,
+						requestId: request.requestId,
+						ownerRunId: request.ownerRunId,
+						nodeId: request.nodeId,
+					});
+				} catch {
+					finish(abortError(options.signal));
+					return;
+				}
+				if (settled) return;
 				cancelTimer = setTimeout(() => finish(abortError(options.signal)), CANCEL_SETTLE_TIMEOUT_MS);
 				cancelTimer.unref?.();
 			};
@@ -271,15 +306,20 @@ export class DelegationClient {
 			subscribe(UPDATE_EVENT, (value) => {
 				if (!matches(value, request) || settled || !options.onProgress) return;
 				const runId = stringField(value.runId);
+				const model = stringField(value.model);
 				const currentTool = stringField(value.currentTool);
 				const recentOutput = stringField(value.recentOutput);
+				const toolCount = progressNumber(value.toolCount, MAX_PROGRESS_COUNT);
+				const durationMs = progressNumber(value.durationMs, MAX_PROGRESS_DURATION_MS);
+				const tokens = progressNumber(value.tokens, MAX_PROGRESS_TOKENS);
 				options.onProgress({
 					...(runId ? { runId: boundedDisplay(runId, 256) } : {}),
+					...(model ? { model: boundedDisplay(model, 256) } : {}),
 					...(currentTool ? { currentTool: boundedDisplay(currentTool, 512) } : {}),
 					...(recentOutput ? { recentOutput: boundedDisplay(recentOutput, MAX_PROGRESS_BYTES) } : {}),
-					...(typeof value.toolCount === "number" ? { toolCount: value.toolCount } : {}),
-					...(typeof value.durationMs === "number" ? { durationMs: value.durationMs } : {}),
-					...(typeof value.tokens === "number" ? { tokens: value.tokens } : {}),
+					...(toolCount !== undefined ? { toolCount } : {}),
+					...(durationMs !== undefined ? { durationMs } : {}),
+					...(tokens !== undefined ? { tokens } : {}),
 				});
 			});
 			subscribe(RESPONSE_EVENT, (value) => {

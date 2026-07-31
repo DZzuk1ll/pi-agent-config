@@ -10,6 +10,7 @@ import {
 	scanAvailableCliTools,
 	type AvailableCliTool,
 } from "../extensions/cli-tools/inventory.ts";
+import { buildCliToolsPrompt } from "../extensions/cli-tools/prompt.ts";
 
 function catalogEntry(name: string) {
 	const entry = CLI_TOOL_CATALOG.find((candidate) => candidate.name === name);
@@ -19,10 +20,12 @@ function catalogEntry(name: string) {
 
 function available(name: string): AvailableCliTool {
 	const entry = catalogEntry(name);
+	const command = entry.commands[0];
+	assert.ok(command, `missing command for catalog entry ${name}`);
 	return {
 		entry,
-		command: entry.commands[0],
-		path: `/tools/${entry.commands[0]}`,
+		command,
+		path: `/tools/${command}`,
 	};
 }
 
@@ -71,6 +74,45 @@ test("inventory exposes only executable catalog entries and verifies Universal C
 	} finally {
 		fs.rmSync(directory, { recursive: true, force: true });
 	}
+});
+
+test("prompt exposes only installed development CLIs as Bash capabilities", () => {
+	const prompt = buildCliToolsPrompt([
+		available("ast-grep"),
+		available("yq"),
+		available("uv"),
+	]);
+
+	assert.ok(prompt);
+	assert.equal(
+		prompt.promptSnippet,
+		"Inspect installed development CLI capabilities available through bash when an additional or unclear capability must be discovered.",
+	);
+	assert.deepEqual(prompt.tools.map((tool) => tool.entry.name), ["ast-grep", "yq", "uv"]);
+	assert.equal(prompt.promptGuidelines[0], [
+		"Bash has these installed development CLI capabilities: ast-grep (syntax-aware code search and rewrite)",
+		"yq (YAML, JSON, XML, CSV, and properties processing)",
+		"uv (Python project, dependency, environment, and command management).",
+	].join(", "));
+	const preferenceGuideline = prompt.promptGuidelines[1];
+	const discoveryGuideline = prompt.promptGuidelines[2];
+	assert.ok(preferenceGuideline);
+	assert.ok(discoveryGuideline);
+	assert.match(preferenceGuideline, /specialist CLIs.*existing scripts and task runners/);
+	assert.match(discoveryGuideline, /unlisted CLI.*cli_tools/);
+	assert.doesNotMatch(prompt.promptGuidelines.join("\n"), /shellcheck|\/tools\//);
+});
+
+test("prompt omits catalog entries not marked as development Bash capabilities", () => {
+	const base = available("rg");
+	const { bashCapability: _bashCapability, ...undisclosedEntry } = base.entry;
+	const undisclosed: AvailableCliTool = {
+		...base,
+		entry: { ...undisclosedEntry, name: "pdf-tool" },
+	};
+
+	assert.equal(buildCliToolsPrompt([]), undefined);
+	assert.equal(buildCliToolsPrompt([undisclosed]), undefined);
 });
 
 test("overview uses horizontal defaults and nonzero additional category counts", () => {

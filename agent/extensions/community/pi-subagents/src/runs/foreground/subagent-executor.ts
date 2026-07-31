@@ -3504,6 +3504,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 } {
 	const delegatedThinkingOverrides = new WeakMap<object, AgentConfig["thinking"]>();
 	const delegatedZeroToolBudgets = new WeakSet<object>();
+	const delegatedUiOwnerRunIds = new WeakMap<object, string>();
 	const execute = async (
 		_id: string,
 		params: SubagentParamsLike,
@@ -3513,6 +3514,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 	): Promise<AgentToolResult<Details>> => {
 		const delegatedThinkingOverride = delegatedThinkingOverrides.get(params);
 		const allowZeroToolBudget = delegatedZeroToolBudgets.has(params);
+		const delegatedUiOwnerRunId = delegatedUiOwnerRunIds.get(params);
 		deps.state.baseCwd = ctx.cwd;
 		deps.state.foregroundRuns ??= new Map();
 		deps.state.foregroundControls ??= new Map();
@@ -4114,6 +4116,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				currentAgent: undefined,
 				currentIndex: undefined,
 				description: foregroundDescription,
+				...(delegatedUiOwnerRunId ? { uiOwnerRunId: delegatedUiOwnerRunId } : {}),
 				currentActivityState: undefined,
 				activeChildren: new Map(),
 				nestedRoute,
@@ -4261,13 +4264,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		const privateParams = delegatedParams as SubagentParamsLike & {
 			delegatedThinkingOverride?: AgentConfig["thinking"];
 			delegatedAllowZeroToolBudget?: true;
+			delegatedUiOwnerRunId?: string;
 		};
 		const thinkingOverride = privateParams.delegatedThinkingOverride;
 		const allowZeroToolBudget = privateParams.delegatedAllowZeroToolBudget === true;
+		const uiOwnerRunId = privateParams.delegatedUiOwnerRunId;
 		delete privateParams.delegatedThinkingOverride;
 		delete privateParams.delegatedAllowZeroToolBudget;
+		delete privateParams.delegatedUiOwnerRunId;
 		if (thinkingOverride !== undefined) delegatedThinkingOverrides.set(delegatedParams, thinkingOverride);
 		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
+		if (uiOwnerRunId) delegatedUiOwnerRunIds.set(delegatedParams, uiOwnerRunId);
 		return execute(id, delegatedParams, signal, onUpdate, ctx);
 	};
 

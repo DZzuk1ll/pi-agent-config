@@ -3,7 +3,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { WorkflowArtifacts, loadWorkflowHistory, prepareWorkflowStorage } from "../extensions/workflows/artifacts.ts";
+import { WorkflowArtifacts, aggregateUsage, loadWorkflowHistory, normalizeWorkflowDetails, prepareWorkflowStorage } from "../extensions/workflows/artifacts.ts";
 import { WorkflowAdmission, WorkflowController } from "../extensions/workflows/controller.ts";
 import { DelegationClient, type AgentCallResult, type DelegationEvents } from "../extensions/workflows/delegation.ts";
 import { runWorkflowSandbox } from "../extensions/workflows/sandbox.ts";
@@ -172,6 +172,56 @@ test("delegation client correlates the full V2 tuple and releases listeners", as
 	assert.equal(bus.listenerCount(), baseline);
 });
 
+test("delegation preserves bounded progress fields and rejects invalid counters", async () => {
+	const bus = new EventBus();
+	const progress: Array<Record<string, unknown>> = [];
+	bus.on("prompt-template:subagent:request", (raw) => {
+		const request = raw as Record<string, unknown>;
+		bus.emit("prompt-template:subagent:started", request);
+		bus.emit("prompt-template:subagent:update", {
+			...request,
+			runId: "child-progress",
+			model: "provider/model\u001b[31m",
+			currentTool: "read",
+			recentOutput: "working",
+			toolCount: 3,
+			durationMs: 25,
+			tokens: 42,
+		});
+		bus.emit("prompt-template:subagent:update", {
+			...request,
+			toolCount: -1,
+			durationMs: Number.POSITIVE_INFINITY,
+			tokens: 1e20,
+		});
+		bus.emit("prompt-template:subagent:response", {
+			...request,
+			status: "completed",
+			model: "provider/model",
+			result: { kind: "text", text: "done" },
+		});
+	});
+	const result = await new DelegationClient(bus, process.cwd()).run({
+		ownerRunId: "wf-progress",
+		nodeId: "agent-1",
+		prompt: "work",
+		call: {},
+		signal: new AbortController().signal,
+		onProgress: (value) => progress.push(value as Record<string, unknown>),
+	});
+	assert.deepEqual(progress[0], {
+		runId: "child-progress",
+		model: "provider/model",
+		currentTool: "read",
+		recentOutput: "working",
+		toolCount: 3,
+		durationMs: 25,
+		tokens: 42,
+	});
+	assert.deepEqual(progress[1], {});
+	assert.equal(result.model, "provider/model");
+});
+
 test("delegation rejects oversized terminal text before workflow IPC serialization", async () => {
 	const bus = new EventBus();
 	bus.on("prompt-template:subagent:request", (raw) => {
@@ -236,6 +286,27 @@ test("delegation cancellation uses the same tuple and returns a typed failure", 
 	assert.equal(cancel?.nodeId, "agent-9");
 });
 
+test("delegation cancellation settles when the event bridge throws", async () => {
+	const bus = new EventBus();
+	bus.on("prompt-template:subagent:request", (raw) => bus.emit("prompt-template:subagent:started", raw));
+	const originalEmit = bus.emit.bind(bus);
+	bus.emit = (event: string, data: unknown) => {
+		if (event === "prompt-template:subagent:cancel") throw new Error("bridge failed");
+		originalEmit(event, data);
+	};
+	const controller = new AbortController();
+	const operation = new DelegationClient(bus, process.cwd()).run({
+		ownerRunId: "wf-cancel-error",
+		nodeId: "agent-1",
+		prompt: "wait",
+		call: {},
+		signal: controller.signal,
+	});
+	controller.abort(new Error("stop"));
+	await assert.rejects(operation, /stop|aborted/i);
+	assert.equal(bus.listenerCount(), 1);
+});
+
 test("workflow admission atomically caps active workflow runs", () => {
 	const admission = new WorkflowAdmission(4);
 	const releases = Array.from({ length: 4 }, () => admission.acquire());
@@ -244,6 +315,47 @@ test("workflow admission atomically caps active workflow runs", () => {
 	const release = admission.acquire();
 	release();
 	for (const dispose of releases) dispose();
+});
+
+test("workflow controller deduplicates progress and records its display fields", async () => {
+	let changes = 0;
+	const delegation = {
+		run: async ({ onProgress }: { onProgress: (value: Record<string, unknown>) => void }) => {
+			const update = { runId: "child-1", model: "provider/model", currentTool: "read", recentOutput: "working", toolCount: 2, durationMs: 50, tokens: 100 };
+			onProgress(update);
+			onProgress(update);
+			return { ok: true, output: "done", runId: "child-1", model: "provider/model" };
+		},
+	} as unknown as DelegationClient;
+	const controller = new WorkflowController({
+		runId: "wf-progress-controller",
+		sessionId: "session",
+		name: "controller",
+		background: false,
+		delegation,
+		onChange: () => { changes++; },
+	});
+	await controller.runAgent("work", { model: "requested/model" });
+	assert.equal(changes, 4);
+	assert.match(controller.details.agents[0]?.lastProgressAt?.toString() ?? "", /^\d+$/);
+	assert.deepEqual({ ...controller.details.agents[0], startedAt: 0, endedAt: 0, lastProgressAt: 0 }, {
+		index: 1,
+		nodeId: "agent-1",
+		label: "agent-1",
+		agent: "general-purpose",
+		model: "provider/model",
+		state: "done",
+		startedAt: 0,
+		endedAt: 0,
+		runId: "child-1",
+		currentTool: "read",
+		preview: "done",
+		toolCount: 2,
+		durationMs: 50,
+		tokens: 100,
+		lastProgressAt: 0,
+	});
+	await controller.finalize({ result: true });
 });
 
 test("workflow controller records business failures without failing the protocol", async () => {
@@ -297,6 +409,67 @@ test("asynchronous artifact checkpoint failures are captured instead of escaping
 		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
 		else process.env.PI_CODING_AGENT_DIR = previous;
 		fs.rmSync(agentDir, { recursive: true, force: true });
+	}
+});
+
+test("workflow artifact normalization is additive, bounded, and rejects malformed states", () => {
+	const normalized = normalizeWorkflowDetails({
+		runId: "forged",
+		sessionId: "session",
+		name: "old\u001b[31m run",
+		background: true,
+		state: "running",
+		startedAt: 10,
+		phases: ["Gather", "Gather", 42],
+		result: { nested: { value: "ok" } },
+		agents: [
+			{
+				index: 1,
+				nodeId: "agent-1",
+				label: "Research",
+				agent: "Explore",
+				state: "running",
+				toolCount: -1,
+				tokens: 12,
+				usage: { input: Number.NaN, output: 1, cacheRead: 0, cacheWrite: 0, cost: 0, turns: 1, toolCalls: 1, durationMs: 1 },
+			},
+			{ state: "unknown" },
+		],
+	}, "wf_directory");
+	assert.equal(normalized?.runId, "wf_directory");
+	assert.equal(normalized?.name, "old run");
+	assert.deepEqual(normalized?.phases, ["Gather"]);
+	assert.equal(normalized?.agents.length, 1);
+	assert.equal(normalized?.agents[0]?.toolCount, undefined);
+	assert.equal(normalized?.agents[0]?.tokens, 12);
+	assert.equal(normalized?.agents[0]?.usage, undefined);
+	assert.deepEqual(normalized?.result, { nested: { value: "ok" } });
+	assert.equal(normalizeWorkflowDetails({ state: "unknown", runId: "wf_bad", startedAt: 1 }), undefined);
+
+	const totals = aggregateUsage({
+		...normalized!,
+		agents: [{ ...normalized!.agents[0]!, usage: { input: Number.NaN, output: -1, cacheRead: 2, cacheWrite: 3, cost: 0.5, turns: 1, toolCalls: 1, durationMs: 10 } }],
+	});
+	assert.deepEqual(totals, { input: 0, output: 0, cacheRead: 2, cacheWrite: 3, cost: 0.5, turns: 1, toolCalls: 1, durationMs: 10 });
+});
+
+test("workflow history refuses symlinked snapshots", () => {
+	const agentDir = tempDir();
+	const outside = path.join(tempDir(), "outside.json");
+	const previous = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = agentDir;
+	try {
+		prepareWorkflowStorage();
+		const runDir = path.join(agentDir, "workflows", "wf_link");
+		fs.mkdirSync(runDir, { recursive: true });
+		fs.writeFileSync(outside, JSON.stringify({ runId: "wf_link", sessionId: "session", name: "link", background: false, state: "completed", startedAt: 1, phases: [], agents: [] }));
+		fs.symlinkSync(outside, path.join(runDir, "workflow.json"));
+		assert.equal(loadWorkflowHistory().some((run) => run.runId === "wf_link"), false);
+	} finally {
+		if (previous === undefined) delete process.env.PI_CODING_AGENT_DIR;
+		else process.env.PI_CODING_AGENT_DIR = previous;
+		fs.rmSync(agentDir, { recursive: true, force: true });
+		fs.rmSync(path.dirname(outside), { recursive: true, force: true });
 	}
 });
 

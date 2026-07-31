@@ -48,6 +48,10 @@ export interface WorkflowAgentRecord {
 	model?: string;
 	currentTool?: string;
 	preview?: string;
+	toolCount?: number;
+	durationMs?: number;
+	tokens?: number;
+	lastProgressAt?: number;
 	error?: string;
 	usage?: AgentUsage;
 }
@@ -138,6 +142,7 @@ export class WorkflowController {
 			label: options.label?.trim().slice(0, 160) || nodeId,
 			agent,
 			...(options.phase?.trim() ? { phase: options.phase.trim().slice(0, 160) } : this.details.currentPhase ? { phase: this.details.currentPhase } : {}),
+			...(options.model?.trim() ? { model: options.model.trim().slice(0, 256) } : {}),
 			state: "queued",
 		};
 		this.details.agents.push(record);
@@ -164,8 +169,9 @@ export class WorkflowController {
 				record.state = result.ok ? "done" : "failed";
 				record.endedAt = Date.now();
 				record.runId = result.runId;
-				record.error = result.error;
-				record.usage = result.usage;
+				record.model = result.model ?? record.model;
+				if (result.error) record.error = result.error;
+				if (result.usage) record.usage = result.usage;
 				record.preview = (result.output || record.preview || "").slice(-2_000);
 				this.onChange();
 				return result;
@@ -231,9 +237,21 @@ export class WorkflowController {
 	}
 
 	private updateProgress(record: WorkflowAgentRecord, progress: DelegationProgress): void {
-		if (progress.runId) record.runId = progress.runId;
-		if (progress.currentTool) record.currentTool = progress.currentTool.slice(0, 160);
-		if (progress.recentOutput) record.preview = progress.recentOutput.slice(-2_000);
+		let changed = false;
+		const update = <Key extends keyof WorkflowAgentRecord>(key: Key, value: WorkflowAgentRecord[Key] | undefined) => {
+			if (value === undefined || record[key] === value) return;
+			record[key] = value;
+			changed = true;
+		};
+		update("runId", progress.runId);
+		update("model", progress.model?.slice(0, 256));
+		update("currentTool", progress.currentTool?.slice(0, 160));
+		update("preview", progress.recentOutput?.slice(-2_000));
+		update("toolCount", progress.toolCount);
+		update("durationMs", progress.durationMs);
+		update("tokens", progress.tokens);
+		if (!changed) return;
+		record.lastProgressAt = Date.now();
 		this.onChange();
 	}
 }

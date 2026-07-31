@@ -19,6 +19,8 @@ export interface CliToolCatalogEntry {
 	category: CliToolCategoryId;
 	description: string;
 	keywords: readonly string[];
+	/** Concise development capability disclosed in the Bash system-prompt section. */
+	bashCapability?: string;
 	defaultDisclosure?: boolean;
 	probeArgs?: readonly string[];
 	identityPattern?: RegExp;
@@ -69,6 +71,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "file-and-code-search",
 		description: "Recursive line-oriented text search command.",
 		keywords: ["text", "content", "regex", "search", "files"],
+		bashCapability: "recursive text and regular-expression search",
 		defaultDisclosure: true,
 	},
 	{
@@ -77,6 +80,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "file-and-code-search",
 		description: "Filesystem entry search command with name, path, type, and extension filters.",
 		keywords: ["file", "directory", "path", "name", "extension", "search"],
+		bashCapability: "fast filesystem discovery",
 		defaultDisclosure: true,
 	},
 	{
@@ -85,6 +89,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "file-and-code-search",
 		description: "Syntax-tree pattern search and rewrite command for source code.",
 		keywords: ["ast", "syntax", "structural", "code", "search", "rewrite"],
+		bashCapability: "syntax-aware code search and rewrite",
 		defaultDisclosure: true,
 	},
 	{
@@ -93,6 +98,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "structured-data",
 		description: "YAML, JSON, XML, CSV, and properties query and transformation command.",
 		keywords: ["yaml", "json", "xml", "csv", "properties", "query", "transform"],
+		bashCapability: "YAML, JSON, XML, CSV, and properties processing",
 		defaultDisclosure: true,
 	},
 	{
@@ -101,6 +107,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "shell-development",
 		description: "Static analysis command for shell scripts.",
 		keywords: ["shell", "bash", "static", "analysis", "lint"],
+		bashCapability: "shell script static analysis",
 		defaultDisclosure: true,
 	},
 	{
@@ -109,6 +116,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "shell-development",
 		description: "Parser and formatter command for shell programs.",
 		keywords: ["shell", "bash", "format", "parser"],
+		bashCapability: "shell script formatting",
 		defaultDisclosure: true,
 	},
 	{
@@ -117,6 +125,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "task-automation",
 		description: "Command runner backed by project Justfiles.",
 		keywords: ["task", "runner", "justfile", "automation", "project"],
+		bashCapability: "project task execution through Justfiles",
 	},
 	{
 		name: "uv",
@@ -124,6 +133,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "python-development",
 		description: "Python project, package, and environment management command.",
 		keywords: ["python", "project", "package", "environment", "dependency"],
+		bashCapability: "Python project, dependency, environment, and command management",
 	},
 	{
 		name: "universal-ctags",
@@ -131,6 +141,7 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "code-navigation",
 		description: "Source-code symbol tag generation command.",
 		keywords: ["ctags", "symbol", "tags", "index", "navigation", "source"],
+		bashCapability: "source symbol indexing",
 		probeArgs: ["--version"],
 		identityPattern: /^Universal Ctags\b/mi,
 	},
@@ -140,5 +151,6 @@ export const CLI_TOOL_CATALOG: readonly CliToolCatalogEntry[] = [
 		category: "code-metrics",
 		description: "Source code statistics command grouped by language.",
 		keywords: ["statistics", "lines", "language", "codebase", "metrics"],
+		bashCapability: "repository language and code metrics",
 	},
 ];

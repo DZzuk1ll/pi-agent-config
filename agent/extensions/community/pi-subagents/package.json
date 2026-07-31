@@ -7,6 +7,7 @@
     ".": "./index.ts",
     "./background-work": "./src/api/background-work.ts",
     "./delegation": "./src/api/delegation.ts",
+    "./transcript": "./src/api/transcript.ts",
     "./capability-ceiling": "./src/api/capability-ceiling.ts",
     "./preflight": "./src/api/preflight.ts"
   }

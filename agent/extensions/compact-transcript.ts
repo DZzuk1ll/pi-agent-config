@@ -14,13 +14,16 @@ import {
 	resolveTodoGrouping,
 	resolveToolGrouping,
 } from "../lib/tool-grouping.ts";
+import {
+	formatCompactUserMessageLines,
+	OSC133_ZONE_RE,
+} from "./shared/compact-transcript-format.ts";
 
-const USER_RENDER_PATCH = Symbol.for("compact-transcript:user-render:v3");
+const USER_RENDER_PATCH = Symbol.for("compact-transcript:user-render:v4");
 const ASSISTANT_RENDER_PATCH = Symbol.for("compact-transcript:assistant-render:v4");
 const WORKING_MESSAGE_PATCH = Symbol.for("compact-transcript:working-message");
 const TOOL_PREVIEW_PATCH = Symbol.for("compact-transcript:tool-preview");
 const TOOL_GROUPING_PATCH = Symbol.for("compact-transcript:tool-grouping:v4");
-const OSC133_ZONE_RE = /\x1b\]133;[ABC](?:\x07|\x1b\\)/g;
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
 
 function readUiSettings(): Record<string, unknown> {
@@ -137,14 +140,7 @@ function patchUserPrefix(): void {
 	prototype.render = function compactUserRender(width: number): string[] {
 		const lines = render.call(this, width);
 		if (!Array.isArray(lines)) return lines;
-		let replaced = false;
-		const rendered = lines.map((line) => {
-			const cleanLine = line.replace(OSC133_ZONE_RE, "");
-			if (replaced || !cleanLine.includes("❯")) return cleanLine;
-			replaced = true;
-			return cleanLine.replace("❯", "›");
-		});
-		return [...rendered, ""];
+		return formatCompactUserMessageLines(lines);
 	};
 	prototype[USER_RENDER_PATCH] = true;
 }

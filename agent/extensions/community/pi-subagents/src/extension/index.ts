@@ -39,6 +39,7 @@ import { registerMainWatchdog } from "../watchdog/register-main.ts";
 import { registerSlashSubagentBridge } from "../slash/slash-bridge.ts";
 import { createNativeSupervisorChannel } from "../intercom/native-supervisor-channel.ts";
 import { registerSubagentRpcBridge } from "./rpc.ts";
+import { registerSubagentTranscriptApi } from "./transcript-api.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
 import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
@@ -75,6 +76,8 @@ import {
 } from "./control-notices.ts";
 
 export { loadConfig } from "./config.ts";
+
+const WORKFLOW_UI_VISIBILITY_EVENT = "workflow:ui-visibility";
 
 /**
  * Derive subagent session base directory from parent session file.
@@ -232,6 +235,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 	};
 
+	const transcriptApi = registerSubagentTranscriptApi(pi.events, state);
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
 	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
@@ -260,6 +264,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		state.currentSessionId = null;
 		completionNotifier.dispose();
 		mainWatchdog.dispose();
+		transcriptApi.dispose();
 		scheduledRunManager.stop();
 		supervisorChannel.dispose();
 		fleetStatus?.dispose();
@@ -522,11 +527,18 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		handleComplete(payload);
 		fleetStatus?.refresh();
 	};
+	const workflowUiVisibilityHandler = (payload: unknown) => {
+		if (!payload || typeof payload !== "object") return;
+		const value = payload as { version?: unknown; visible?: unknown };
+		if (value.version !== 1 || typeof value.visible !== "boolean") return;
+		fleetStatus?.setWorkflowPanelVisible(value.visible);
+	};
 	const eventUnsubscribes = [
 		pi.events.on(SUBAGENT_ASYNC_STARTED_EVENT, asyncStartedHandler),
 		pi.events.on(SUBAGENT_ASYNC_COMPLETE_EVENT, asyncCompleteHandler),
 		pi.events.on(SUBAGENT_CONTROL_EVENT, controlEventHandler),
 		pi.events.on(SUBAGENT_STEERING_NOTICE_EVENT, steeringNoticeHandler),
+		pi.events.on(WORKFLOW_UI_VISIBILITY_EVENT, workflowUiVisibilityHandler),
 		rpcBridge.dispose,
 	];
 	globalStore[eventUnsubscribeStoreKey] = eventUnsubscribes;
@@ -631,6 +643,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		slashBridge.dispose();
 		promptTemplateBridge.cancelAll();
 		promptTemplateBridge.dispose();
+		transcriptApi.dispose();
 		supervisorChannel.dispose();
 		fleetStatus?.dispose();
 		if (globalStore[runtimeCleanupStoreKey] === runtimeCleanup) {
