@@ -73,7 +73,7 @@ test("inventory exposes only executable catalog entries and verifies Universal C
 	}
 });
 
-test("overview returns ordered names and folded category ids only", () => {
+test("overview uses horizontal defaults and nonzero additional category counts", () => {
 	const response = queryCliTools({ action: "overview" }, [
 		available("rg"),
 		available("fd"),
@@ -82,31 +82,34 @@ test("overview returns ordered names and folded category ids only", () => {
 	]);
 
 	assert.equal(response.text, [
-		"Default",
-		"rg",
-		"fd",
+		"[default]",
+		"rg, fd",
 		"",
-		"Additional categories",
-		"task-automation",
-		"python-development",
+		"[categories]",
+		"task-automation: 1",
+		"python-development: 1",
 	].join("\n"));
 	assert.deepEqual(response.tools, ["rg", "fd"]);
 	assert.deepEqual(response.categories, ["task-automation", "python-development"]);
-	assert.doesNotMatch(response.text, /\/tools\/|—|Recursive|Command runner/);
+	assert.doesNotMatch(response.text, /code-navigation|code-metrics|\/tools\/|—|Recursive|Command runner/);
 });
 
-test("category and search return ordered available names only", () => {
+test("category output excludes defaults while search can still match them", () => {
 	const tools = [available("rg"), available("shellcheck"), available("shfmt"), available("just")];
-	const category = queryCliTools({ action: "category", category: "shell-development" }, tools);
-	assert.equal(category.text, "shellcheck\nshfmt");
-	assert.deepEqual(category.tools, ["shellcheck", "shfmt"]);
+	const category = queryCliTools({ action: "category", category: "task-automation" }, tools);
+	assert.equal(category.text, "[category: task-automation]\njust");
+	assert.deepEqual(category.tools, ["just"]);
 
-	const search = queryCliTools({ action: "search", query: "search" }, tools);
-	assert.equal(search.text, "rg");
-	assert.deepEqual(search.tools, ["rg"]);
+	const defaultCategory = queryCliTools({ action: "category", category: "shell-development" }, tools);
+	assert.equal(defaultCategory.text, "[tools]");
+	assert.deepEqual(defaultCategory.tools, []);
+
+	const search = queryCliTools({ action: "search", query: "shell" }, tools);
+	assert.equal(search.text, "[search: shell]\nshellcheck, shfmt");
+	assert.deepEqual(search.tools, ["shellcheck", "shfmt"]);
 
 	const missing = queryCliTools({ action: "search", query: "python" }, tools);
-	assert.equal(missing.text, "No available CLI tools.");
+	assert.equal(missing.text, "[tools]");
 	assert.deepEqual(missing.tools, []);
 	assert.doesNotMatch(missing.text, /uv|not installed|unavailable/i);
 });

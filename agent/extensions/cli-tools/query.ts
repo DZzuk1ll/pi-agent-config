@@ -1,3 +1,4 @@
+import { sanitizeForDisplay } from "../shared/text.ts";
 import { CLI_TOOL_CATEGORIES } from "./catalog.ts";
 import {
 	findCliToolCategory,
@@ -19,27 +20,38 @@ export interface CliToolsResponse {
 }
 
 const EMPTY_RESPONSE: CliToolsResponse = {
-	text: "No available CLI tools.",
+	text: "[tools]",
 	tools: [],
 	categories: [],
 };
 
+function safeInline(value: string): string {
+	return sanitizeForDisplay(value).replace(/[\r\n\t]+/g, " ").trim();
+}
+
 function overviewResponse(tools: readonly AvailableCliTool[]): CliToolsResponse {
 	if (tools.length === 0) return EMPTY_RESPONSE;
 
-	const defaultTools = tools.filter((tool) => tool.entry.defaultDisclosure);
+	const defaultNames = tools
+		.filter((tool) => tool.entry.defaultDisclosure)
+		.map((tool) => tool.entry.name);
 	const additionalTools = tools.filter((tool) => !tool.entry.defaultDisclosure);
-	const categories = CLI_TOOL_CATEGORIES
-		.filter((category) => additionalTools.some((tool) => tool.entry.category === category.id))
-		.map((category) => category.id);
-	const names = defaultTools.map((tool) => tool.entry.name);
+	const categoryCounts = CLI_TOOL_CATEGORIES
+		.map((category) => ({
+			id: category.id,
+			count: additionalTools.filter((tool) => tool.entry.category === category.id).length,
+		}))
+		.filter((category) => category.count > 0);
+	const categories = categoryCounts.map((category) => category.id);
 	const sections: string[] = [];
-	if (names.length > 0) sections.push(`Default\n${names.join("\n")}`);
-	if (categories.length > 0) sections.push(`Additional categories\n${categories.join("\n")}`);
+	if (defaultNames.length > 0) sections.push(`[default]\n${defaultNames.join(", ")}`);
+	if (categoryCounts.length > 0) {
+		sections.push(`[categories]\n${categoryCounts.map((category) => `${category.id}: ${category.count}`).join("\n")}`);
+	}
 
 	return {
 		text: sections.join("\n\n"),
-		tools: names,
+		tools: defaultNames,
 		categories,
 	};
 }
@@ -48,17 +60,17 @@ function categoryResponse(tools: readonly AvailableCliTool[], value: string): Cl
 	const category = findCliToolCategory(value);
 	if (!category) return EMPTY_RESPONSE;
 	const names = tools
-		.filter((tool) => tool.entry.category === category.id)
+		.filter((tool) => !tool.entry.defaultDisclosure && tool.entry.category === category.id)
 		.map((tool) => tool.entry.name);
 	return names.length > 0
-		? { text: names.join("\n"), tools: names, categories: [category.id] }
+		? { text: `[category: ${category.id}]\n${names.join(", ")}`, tools: names, categories: [category.id] }
 		: EMPTY_RESPONSE;
 }
 
 function searchResponse(tools: readonly AvailableCliTool[], query: string): CliToolsResponse {
 	const names = searchAvailableCliTools(tools, query).map((tool) => tool.entry.name);
 	return names.length > 0
-		? { text: names.join("\n"), tools: names, categories: [] }
+		? { text: `[search: ${safeInline(query)}]\n${names.join(", ")}`, tools: names, categories: [] }
 		: EMPTY_RESPONSE;
 }
 
