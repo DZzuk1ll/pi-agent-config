@@ -1,4 +1,4 @@
-import { abortError, linkAbortSignal, Semaphore, settleWithin } from "../shared/lifecycle.ts";
+import { abortError, linkAbortSignal, Semaphore, settleWithin } from "../_shared/runtime/lifecycle.ts";
 import type { AgentCallOptions, AgentCallResult, AgentUsage, DelegationClient, DelegationProgress } from "./delegation.ts";
 
 export const MAX_WORKFLOW_AGENT_CALLS = 32;

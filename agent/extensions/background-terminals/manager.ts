@@ -4,9 +4,9 @@ import * as os from "node:os";
 import * as path from "node:path";
 import { backgroundEnvironment } from "./environment.ts";
 import type { StreamCapture, StreamSnapshot, TerminalRecord, TerminalSnapshot } from "./types.ts";
-import { Deferred, settleWithin, type FinalRunState } from "../shared/lifecycle.ts";
-import { ensurePrivateDir, writeJsonAtomic } from "../shared/artifacts.ts";
-import { sanitizeForDisplay, truncateUtf8, utf8ByteLength, Utf8TailBuffer } from "../shared/text.ts";
+import { Deferred, settleWithin, type FinalRunState } from "../_shared/runtime/lifecycle.ts";
+import { ensurePrivateDir, writeJsonAtomic } from "../_shared/runtime/artifacts.ts";
+import { sanitizeForDisplay, truncateUtf8, utf8ByteLength, Utf8TailBuffer } from "../_shared/runtime/text.ts";
 
 export const MAX_RUNNING_TERMINALS = 8;
 export const MAX_COMMAND_BYTES = 32 * 1024;

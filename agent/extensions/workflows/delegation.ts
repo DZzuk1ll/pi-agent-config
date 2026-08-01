@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { abortError } from "../shared/lifecycle.ts";
-import { sanitizeForDisplay, truncateUtf8, utf8ByteLength } from "../shared/text.ts";
+import { abortError } from "../_shared/runtime/lifecycle.ts";
+import { sanitizeForDisplay, truncateUtf8, utf8ByteLength } from "../_shared/runtime/text.ts";
 
 const VERSION = 2 as const;
 const REQUEST_EVENT = "prompt-template:subagent:request";

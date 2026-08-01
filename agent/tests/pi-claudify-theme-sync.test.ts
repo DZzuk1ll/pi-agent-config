@@ -7,7 +7,7 @@ import {
 	ensureThemeOverrides,
 	invalidateThemeOverrides,
 	type ThemeOverrideTarget,
-} from "../extensions/community/@owlburtoe/pi-claudify/extensions/theme-sync.ts";
+} from "../extensions/claudify/extensions/theme-sync.ts";
 
 function theme(background: string): ThemeOverrideTarget & { bgColors: Map<string, string> } {
 	return { bgColors: new Map([["toolSuccessBg", background]]) };

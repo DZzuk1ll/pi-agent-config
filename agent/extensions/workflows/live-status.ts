@@ -4,8 +4,8 @@ import {
 	claimInteractiveWidgetFocus,
 	interactiveWidgetFocusedByOther,
 	releaseInteractiveWidgetFocus,
-} from "../shared/interactive-widget-focus.ts";
-import { sanitizeForDisplay } from "../shared/text.ts";
+} from "../_shared/runtime/interactive-widget-focus.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import type { WorkflowAgentRecord, WorkflowDetails } from "./controller.ts";
 
 export const WORKFLOW_LIVE_WIDGET_KEY = "workflow-live-status";

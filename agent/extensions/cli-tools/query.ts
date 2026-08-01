@@ -1,4 +1,4 @@
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import { CLI_TOOL_CATEGORIES } from "./catalog.ts";
 import {
 	findCliToolCategory,

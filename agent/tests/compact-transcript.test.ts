@@ -4,7 +4,7 @@ import test from "node:test";
 import {
 	formatCompactUserMessageLines,
 	OSC133_ZONE_RE,
-} from "../extensions/shared/compact-transcript-format.ts";
+} from "../extensions/_shared/runtime/compact-transcript-format.ts";
 
 const OSC_START = "\x1b]133;A\x07";
 const OSC_END = "\x1b]133;B\x07";

@@ -31,7 +31,7 @@ const claudify = await jiti.import<{
 		maxVisualLines: number,
 		styleHint?: (text: string) => string,
 	) => { visibleLines: string[]; omittedVisualLines: number };
-}>("../extensions/community/@owlburtoe/pi-claudify/extensions/index.ts");
+}>("../extensions/claudify/extensions/index.ts");
 const tui = await jiti.import<{
 	visibleWidth: (text: string) => number;
 }>("@earendil-works/pi-tui");

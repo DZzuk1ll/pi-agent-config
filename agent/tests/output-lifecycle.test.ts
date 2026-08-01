@@ -3,9 +3,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import test from "node:test";
-import { ensurePrivateDir, prunePrivateRunDirs, safeStringify, writeFileAtomic } from "../extensions/shared/artifacts.ts";
-import { DeferredResultDelivery, Semaphore } from "../extensions/shared/lifecycle.ts";
-import { boundToolText, sanitizeForDisplay, truncateUtf8, utf8ByteLength, Utf8TailBuffer } from "../extensions/shared/text.ts";
+import { ensurePrivateDir, prunePrivateRunDirs, safeStringify, writeFileAtomic } from "../extensions/_shared/runtime/artifacts.ts";
+import { DeferredResultDelivery, Semaphore } from "../extensions/_shared/runtime/lifecycle.ts";
+import { boundToolText, sanitizeForDisplay, truncateUtf8, utf8ByteLength, Utf8TailBuffer } from "../extensions/_shared/runtime/text.ts";
 
 function tempDir(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-output-test-"));

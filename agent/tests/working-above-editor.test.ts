@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import workingAboveEditor from "../extensions/working-above-editor.ts";
+import workingAboveEditor from "../extensions/working-above-editor/index.ts";
 
 interface FakeComponent {
 	children?: FakeComponent[];

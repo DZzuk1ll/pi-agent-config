@@ -1,4 +1,4 @@
-import { boundToolText, sanitizeForDisplay } from "../shared/text.ts";
+import { boundToolText, sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import { aggregateUsage } from "./artifacts.ts";
 import type { WorkflowDetails } from "./controller.ts";
 

@@ -12,11 +12,11 @@ import {
 	mergeWorkflowDashboardEntries,
 	moveWorkflowSelection,
 } from "../extensions/workflows/dashboard-model.ts";
-import { getArtifactPaths, getArtifactsDir } from "../extensions/community/pi-subagents/src/shared/artifacts.ts";
-import { registerSubagentTranscriptApi } from "../extensions/community/pi-subagents/src/extension/transcript-api.ts";
+import { getArtifactPaths, getArtifactsDir } from "../extensions/subagents/src/shared/artifacts.ts";
+import { registerSubagentTranscriptApi } from "../extensions/subagents/src/extension/transcript-api.ts";
 import { WorkflowTranscriptClient } from "../extensions/workflows/transcript.ts";
 import { formatWorkflowCall, formatWorkflowResult, type WorkflowTheme } from "../extensions/workflows/view.ts";
-import { claimInteractiveWidgetFocus, releaseInteractiveWidgetFocus } from "../extensions/shared/interactive-widget-focus.ts";
+import { claimInteractiveWidgetFocus, releaseInteractiveWidgetFocus } from "../extensions/_shared/runtime/interactive-widget-focus.ts";
 
 const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const piPackage = path.join(globalNodeModules, "@earendil-works/pi-coding-agent");
@@ -43,10 +43,10 @@ const fleetStatusModule = await jiti.import<{
 		dispose(): void;
 	};
 	collectFleetStatusEntries(state: unknown): Array<Record<string, unknown>>;
-}>("../extensions/community/pi-subagents/src/tui/fleet-status.ts");
+}>("../extensions/subagents/src/tui/fleet-status.ts");
 const delegationAdaptersModule = await jiti.import<{
 	toSubagentDelegationV2ExecutionParams(request: Record<string, unknown>): Record<string, unknown>;
-}>("../extensions/community/pi-subagents/src/slash/delegation-adapters.ts");
+}>("../extensions/subagents/src/slash/delegation-adapters.ts");
 const dashboardModule = await jiti.import<{
 	WorkflowDashboard: new (
 		tui: unknown,

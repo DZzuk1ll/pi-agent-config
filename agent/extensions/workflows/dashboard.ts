@@ -1,6 +1,6 @@
 import type { ExtensionContext, KeybindingsManager, Theme } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type TUI } from "@earendil-works/pi-tui";
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import { workflowRoot } from "./artifacts.ts";
 import type { WorkflowAgentRecord, WorkflowDetails } from "./controller.ts";
 import type { WorkflowTranscriptEvent, WorkflowTranscriptPage } from "./transcript.ts";

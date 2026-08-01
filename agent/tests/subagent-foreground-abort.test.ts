@@ -20,10 +20,10 @@ const jiti = createJiti(import.meta.url, {
 });
 const execution = await jiti.import<{
 	runSync: (runtimeCwd: string, agents: unknown[], agentName: string, task: string, options: Record<string, unknown>) => Promise<{ exitCode: number; stopped?: boolean; error?: string }>;
-}>("../extensions/community/pi-subagents/src/runs/foreground/execution.ts");
+}>("../extensions/subagents/src/runs/foreground/execution.ts");
 const chainExecution = await jiti.import<{
 	executeChain: (params: Record<string, unknown>) => Promise<{ content: Array<{ text: string }> }>;
-}>("../extensions/community/pi-subagents/src/runs/foreground/chain-execution.ts");
+}>("../extensions/subagents/src/runs/foreground/chain-execution.ts");
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));

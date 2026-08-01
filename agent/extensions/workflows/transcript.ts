@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import type { DelegationEvents } from "./delegation.ts";
 
 const VERSION = 1 as const;

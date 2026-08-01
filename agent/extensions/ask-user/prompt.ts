@@ -1,4 +1,4 @@
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 
 export const ASK_USER_TOOL_DESCRIPTION =
 	"Ask the user one multiple-choice question with 2-5 options. A free-form answer option is appended automatically, and the user may dismiss the question.";

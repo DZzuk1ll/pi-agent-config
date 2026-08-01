@@ -17,7 +17,7 @@ import {
 	buildAskUserResultMessage,
 	hasDistinctOptionLabels,
 } from "./prompt.ts";
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 5;

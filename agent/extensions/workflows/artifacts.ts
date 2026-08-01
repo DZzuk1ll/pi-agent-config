@@ -1,8 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { homedir } from "node:os";
-import { ensurePrivateDir, prunePrivateRunDirs, safeStringify, writeFileAtomic, writeJsonAtomic } from "../shared/artifacts.ts";
-import { sanitizeForDisplay, truncateUtf8 } from "../shared/text.ts";
+import { ensurePrivateDir, prunePrivateRunDirs, safeStringify, writeFileAtomic, writeJsonAtomic } from "../_shared/runtime/artifacts.ts";
+import { sanitizeForDisplay, truncateUtf8 } from "../_shared/runtime/text.ts";
 import type { WorkflowAgentRecord, WorkflowAgentState, WorkflowDetails, WorkflowState } from "./controller.ts";
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;

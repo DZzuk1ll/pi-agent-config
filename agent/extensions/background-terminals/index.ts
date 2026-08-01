@@ -2,8 +2,8 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import { BackgroundTerminalManager } from "./manager.ts";
 import type { TerminalSnapshot } from "./types.ts";
-import { DeferredResultDelivery } from "../shared/lifecycle.ts";
-import { boundToolText, sanitizeForDisplay, tailLines } from "../shared/text.ts";
+import { DeferredResultDelivery } from "../_shared/runtime/lifecycle.ts";
+import { boundToolText, sanitizeForDisplay, tailLines } from "../_shared/runtime/text.ts";
 
 const WIDGET_KEY = "background-terminals";
 

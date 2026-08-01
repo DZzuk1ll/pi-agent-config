@@ -1,8 +1,8 @@
 import { randomBytes } from "node:crypto";
 import { spawn, type ChildProcess } from "node:child_process";
 import { fileURLToPath } from "node:url";
-import { safeStringify, toSerializable } from "../shared/artifacts.ts";
-import { utf8ByteLength } from "../shared/text.ts";
+import { safeStringify, toSerializable } from "../_shared/runtime/artifacts.ts";
+import { utf8ByteLength } from "../_shared/runtime/text.ts";
 import type { AgentCallOptions, AgentCallResult, WorkflowThinking } from "./delegation.ts";
 
 export const MAX_WORKFLOW_SOURCE_BYTES = 512 * 1024;

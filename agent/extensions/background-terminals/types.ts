@@ -1,7 +1,7 @@
 import type { ChildProcess } from "node:child_process";
 import type * as fs from "node:fs";
-import { Deferred, type RunState } from "../shared/lifecycle.ts";
-import { Utf8TailBuffer } from "../shared/text.ts";
+import { Deferred, type RunState } from "../_shared/runtime/lifecycle.ts";
+import { Utf8TailBuffer } from "../_shared/runtime/text.ts";
 
 export interface StreamSnapshot {
 	text: string;

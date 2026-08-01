@@ -7,7 +7,7 @@ import {
 	createEscalatingTermination,
 	isChildProcessTreeAlive,
 	trySignalChildTree,
-} from "../extensions/community/pi-subagents/src/shared/post-exit-stdio-guard.ts";
+} from "../extensions/subagents/src/shared/post-exit-stdio-guard.ts";
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));

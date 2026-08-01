@@ -2,7 +2,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Text } from "@earendil-works/pi-tui";
 import { Type } from "typebox";
 
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import { scanAvailableCliTools } from "./inventory.ts";
 import { buildCliToolsPrompt } from "./prompt.ts";
 import { queryCliTools } from "./query.ts";

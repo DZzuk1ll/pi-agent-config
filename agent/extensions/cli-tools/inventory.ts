@@ -2,7 +2,7 @@ import { constants as fsConstants, accessSync, statSync } from "node:fs";
 import { delimiter, extname, join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-import { sanitizeForDisplay } from "../shared/text.ts";
+import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
 import {
 	CLI_TOOL_CATALOG,
 	CLI_TOOL_CATEGORIES,

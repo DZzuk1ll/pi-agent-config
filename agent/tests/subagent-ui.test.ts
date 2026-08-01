@@ -19,10 +19,10 @@ const jiti = createJiti(import.meta.url, {
 const renderModule = await jiti.import<{
 	buildWidgetLines: (jobs: unknown[], theme: unknown, width?: number, expanded?: boolean) => string[];
 	runningGlyph: (seed?: number, now?: number) => string;
-}>("../extensions/community/pi-subagents/src/tui/render.ts");
+}>("../extensions/subagents/src/tui/render.ts");
 const trackerModule = await jiti.import<{
 	collectSubagentWidgetJobs: (state: unknown) => Array<Record<string, unknown>>;
-}>("../extensions/community/pi-subagents/src/runs/background/async-job-tracker.ts");
+}>("../extensions/subagents/src/runs/background/async-job-tracker.ts");
 
 const theme = {
 	fg: (_color: string, text: string) => text,

@@ -8,7 +8,7 @@ import {
 	resolveTodoGrouping,
 	resolveToolGrouping,
 	type ToolComponentLike,
-} from "../lib/tool-grouping.ts";
+} from "../extensions/_shared/runtime/tool-grouping.ts";
 
 function tool(
 	toolName: string,

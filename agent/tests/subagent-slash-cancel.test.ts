@@ -19,7 +19,7 @@ const jiti = createJiti(import.meta.url, {
 const slashCommands = await jiti.import<{
 	isSlashSubagentCancelInput: (input: string) => boolean;
 	requestSlashRun: (pi: unknown, ctx: unknown, requestId: string, params: unknown) => Promise<unknown>;
-}>("../extensions/community/pi-subagents/src/slash/slash-commands.ts");
+}>("../extensions/subagents/src/slash/slash-commands.ts");
 
 test("slash subagent cancellation accepts Escape", () => {
 	assert.equal(slashCommands.isSlashSubagentCancelInput("\u001b"), true);
