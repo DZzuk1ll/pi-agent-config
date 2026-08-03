@@ -2,7 +2,6 @@
  * Core execution logic for running subagents
  */
 
-import { spawn } from "node:child_process";
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
@@ -54,7 +53,6 @@ import { buildAgentMemoryInjection } from "../../agents/agent-memory.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import { getPiSpawnCommand } from "../shared/pi-spawn.ts";
 import { createJsonlWriter } from "../../shared/jsonl-writer.ts";
-import { attachPostExitStdioGuard, createEscalatingTermination, isChildProcessTreeAlive, trySignalChildTree } from "../../shared/post-exit-stdio-guard.ts";
 import { applyThinkingSuffix, buildPiArgs, cleanupTempDir, resolvePiLaunchToolPlan } from "../shared/pi-args.ts";
 import { decodeSubagentCapabilityCeiling, resolveCurrentSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV } from "../shared/capability-ceiling.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
@@ -90,7 +88,12 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { formatProtocolOutputLimit } from "../shared/child-protocol.ts";
+import {
+	runChildProcess,
+	type ChildProcessRuntimeControls,
+	type ChildProcessRuntimeResult,
+} from "../shared/child-process-runtime.ts";
 import {
 	acceptChildWatchdogEvent,
 	childWatchdogIsActive,
@@ -404,67 +407,55 @@ async function runSingleAttempt(
 	const spawnEnv = { ...process.env, ...sharedEnv, ...getSubagentDepthEnv(options.maxSubagentDepth) };
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
+	const exitCode = await (async (): Promise<number> => {
+		interface ForegroundChildEvent {
+			[key: string]: unknown;
+			type?: string;
+			message?: Message;
+			toolName?: string;
+			args?: unknown;
+			willRetry?: unknown;
+		}
 
-	const exitCode = await new Promise<number>((resolve) => {
 		const spawnSpec = getPiSpawnCommand(args);
-		const useProcessGroup = process.platform !== "win32";
-		const proc = spawn(spawnSpec.command, spawnSpec.args, {
-			cwd: options.cwd ?? runtimeCwd,
-			env: spawnEnv,
-			stdio: ["ignore", "pipe", "pipe"],
-			windowsHide: true,
-			detached: useProcessGroup,
-		});
-		// Foreground children own a process group on POSIX so every termination
-		// path also reaches descendant tools. Windows routes tree termination
-		// through taskkill while preserving direct SIGINT pause semantics.
-		const trySignalChild = (child: typeof proc, signal: NodeJS.Signals): boolean =>
-			trySignalChildTree(child, signal, { processGroup: useProcessGroup });
-		const jsonlWriter = createJsonlWriter(shared.jsonlPath, proc.stdout);
+		let runtimeControls: ChildProcessRuntimeControls | undefined;
 		let processClosed = false;
 		let settled = false;
 		let detached = false;
 		let parentAbortRequested = false;
 		let intercomStarted = false;
 		let assistantError: string | undefined;
-		let removeAbortListener: (() => void) | undefined;
-		let removeInterruptListener: (() => void) | undefined;
 		let activityTimer: NodeJS.Timeout | undefined;
-		let timeoutTimer: NodeJS.Timeout | undefined;
-		let timeoutTerminationTimer: NodeJS.Timeout | undefined;
-		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
+		let removeInterruptListener: (() => void) | undefined;
+		let unsubscribeIntercomDetach: (() => void) | undefined;
+		let jsonlWriter: ReturnType<typeof createJsonlWriter> | undefined;
 		let turnBudgetSoftReached = false;
-		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
-		let protocolHardKillTimer: NodeJS.Timeout | undefined;
-		const clearTurnBudgetTimers = () => {
-			if (turnBudgetTerminationTimer) {
-				clearTimeout(turnBudgetTerminationTimer);
-				turnBudgetTerminationTimer = undefined;
-			}
-			if (turnBudgetHardKillTimer) {
-				clearTimeout(turnBudgetHardKillTimer);
-				turnBudgetHardKillTimer = undefined;
-			}
-		};
-		const clearTimeoutTimers = () => {
-			if (timeoutTimer) {
-				clearTimeout(timeoutTimer);
-				timeoutTimer = undefined;
-			}
-			if (timeoutTerminationTimer) {
-				clearTimeout(timeoutTerminationTimer);
-				timeoutTerminationTimer = undefined;
-			}
-			if (timeoutHardKillTimer) {
-				clearTimeout(timeoutHardKillTimer);
-				timeoutHardKillTimer = undefined;
-			}
-		};
+		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+		let resolveDetached!: () => void;
+		const detachedPromise = new Promise<void>((resolve) => {
+			resolveDetached = resolve;
+		});
 
-		const detachForIntercom = () => {
+		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
+			childWatchdogState = snapshot;
+			result.watchdog = snapshot;
+			progress.watchdog = snapshot;
+		};
+		const cleanupAdapter = (): void => {
+			if (activityTimer) {
+				clearInterval(activityTimer);
+				activityTimer = undefined;
+			}
+			unsubscribeIntercomDetach?.();
+			unsubscribeIntercomDetach = undefined;
+			removeInterruptListener?.();
+			removeInterruptListener = undefined;
+		};
+		const detachForIntercom = (): void => {
+			if (detached || settled) return;
 			detached = true;
 			processClosed = true;
+			runtimeControls?.detach();
 			result.detached = true;
 			result.detachedReason = "intercom coordination";
 			progress.status = "detached";
@@ -474,140 +465,8 @@ async function runSingleAttempt(
 				tokens: progress.tokens,
 				durationMs: progress.durationMs,
 			};
-			finish(-2);
-		};
-
-		// If the child emits a terminal assistant stop but never exits,
-		// give it a short grace period to flush naturally, then clean it up.
-		const FINAL_STOP_GRACE_MS = 1000;
-		const HARD_KILL_MS = 3000;
-		const abortTermination = createEscalatingTermination({
-			signal: (signal) => trySignalChild(proc, signal),
-			isInactive: () => detached || (useProcessGroup
-				? !isChildProcessTreeAlive(proc, { processGroup: true })
-				: processClosed || settled),
-			hardKillMs: HARD_KILL_MS,
-		});
-		let childExited = false;
-		let forcedTerminationSignal = false;
-		let cleanTerminalAssistantStopReceived = false;
-		let agentSettledReceived = false;
-		let finalDrainTimer: NodeJS.Timeout | undefined;
-		let finalHardKillTimer: NodeJS.Timeout | undefined;
-		let watchdogTailTimer: NodeJS.Timeout | undefined;
-		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
-		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
-			childWatchdogState = snapshot;
-			result.watchdog = snapshot;
-			progress.watchdog = snapshot;
-		};
-		const clearWatchdogTailTimer = () => {
-			if (watchdogTailTimer) {
-				clearTimeout(watchdogTailTimer);
-				watchdogTailTimer = undefined;
-			}
-		};
-		const clearFinalDrainTimers = () => {
-			if (finalDrainTimer) {
-				clearTimeout(finalDrainTimer);
-				finalDrainTimer = undefined;
-			}
-			if (finalHardKillTimer) {
-				clearTimeout(finalHardKillTimer);
-				finalHardKillTimer = undefined;
-			}
-		};
-		const startFinalDrain = () => {
-			if (childWatchdogIsActive(childWatchdogState)) {
-				armWatchdogTail();
-				return;
-			}
-			if (childExited || finalDrainTimer || settled || processClosed || detached) return;
-			finalDrainTimer = setTimeout(() => {
-				if (settled || processClosed || detached) return;
-				const termSent = trySignalChild(proc, "SIGTERM");
-				if (!termSent) return;
-				forcedTerminationSignal = true;
-				if (!cleanTerminalAssistantStopReceived && !agentSettledReceived && !assistantError) {
-					result.error = result.error ?? `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its terminal event. Forcing termination.`;
-				}
-				finalHardKillTimer = setTimeout(() => {
-					if (settled || processClosed || detached) return;
-					forcedTerminationSignal = trySignalChild(proc, "SIGKILL") || forcedTerminationSignal;
-				}, HARD_KILL_MS);
-				finalHardKillTimer.unref?.();
-			}, FINAL_STOP_GRACE_MS);
-			finalDrainTimer.unref?.();
-		};
-		function armWatchdogTail(): void {
-			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || settled || processClosed || detached) return;
-			watchdogTailTimer = setTimeout(() => {
-				watchdogTailTimer = undefined;
-				updateChildWatchdogState({
-					phase: "stale",
-					seq: (childWatchdogState?.seq ?? 0) + 1,
-					lastUpdate: Date.now(),
-					followUpPending: false,
-					reason: "child watchdog tail timeout",
-					timedOut: true,
-				});
-				startFinalDrain();
-				fireUpdate();
-			}, childWatchdog?.watchdogTailTimeoutMs ?? 120_000);
-			watchdogTailTimer.unref?.();
-		}
-		const applyChildLifecycle = (action: ChildLifecycleAction): void => {
-			if (action === "cancel-drain") {
-				clearFinalDrainTimers();
-				clearWatchdogTailTimer();
-				return;
-			}
-			if (action === "start-drain") startFinalDrain();
-		};
-
-		const unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
-			if (!options.allowIntercomDetach || detached || processClosed) return;
-			if (!payload || typeof payload !== "object") return;
-			const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown };
-			const requestId = event.requestId;
-			if (typeof requestId !== "string" || requestId.length === 0) return;
-			const hasRoute = event.runId !== undefined || event.agent !== undefined || event.childIndex !== undefined;
-			if (hasRoute) {
-				if (typeof event.runId === "string" && event.runId !== options.runId) return;
-				if (typeof event.agent === "string" && event.agent !== agent.name) return;
-				if (typeof event.childIndex === "number" && event.childIndex !== (options.index ?? 0)) return;
-			} else if (!intercomStarted) return;
-			if (parentAbortRequested) {
-				options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: false, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
-				return;
-			}
-			options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
-			detachForIntercom();
-		});
-
-		const finish = (code: number) => {
-			if (settled) return;
-			settled = true;
-			clearFinalDrainTimers();
-			clearWatchdogTailTimer();
-			clearStdioGuard();
-			// A POSIX process group can outlive its leader. Keep an armed abort
-			// escalation alive long enough to reap stubborn descendants.
-			if (!useProcessGroup) abortTermination.dispose();
-			clearTimeoutTimers();
-			clearTurnBudgetTimers();
-			if (protocolHardKillTimer) {
-				clearTimeout(protocolHardKillTimer);
-				protocolHardKillTimer = undefined;
-			}
-			if (activityTimer) {
-				clearInterval(activityTimer);
-				activityTimer = undefined;
-			}
-			unsubscribeIntercomDetach?.();
-			removeAbortListener?.();
-			removeInterruptListener?.();
-			resolve(code);
+			cleanupAdapter();
+			resolveDetached();
 		};
 
 		const drainPendingControlEvents = (): ControlEvent[] | undefined => {
@@ -686,17 +545,7 @@ async function runSingleAttempt(
 			progress.error = message;
 			progress.durationMs = Date.now() - startTime;
 			fireUpdate();
-			trySignalChild(proc, "SIGINT");
-			turnBudgetTerminationTimer = setTimeout(() => {
-				if (processClosed || settled || detached || result.timedOut) return;
-				trySignalChild(proc, "SIGTERM");
-			}, 1000);
-			turnBudgetTerminationTimer.unref?.();
-			turnBudgetHardKillTimer = setTimeout(() => {
-				if (processClosed || settled || detached || result.timedOut) return;
-				trySignalChild(proc, "SIGKILL");
-			}, 4000);
-			turnBudgetHardKillTimer.unref?.();
+			runtimeControls?.terminate("turn-budget");
 		};
 
 		const updateTurnBudget = (turnCount: number, terminalAssistantStop: boolean, toolWorkActiveOrStarting: boolean) => {
@@ -769,23 +618,8 @@ async function runSingleAttempt(
 			emitUpdateSnapshot(output || "(running...)");
 		};
 
-		const rawStdoutTail = createBoundedByteTail();
-		const processLine = (line: string) => {
-			if (!line.trim()) return;
-			jsonlWriter.writeLine(line);
-			let evt: { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
-			try {
-				evt = JSON.parse(line) as { type?: string; message?: Message; toolName?: string; args?: unknown; willRetry?: unknown };
-			} catch {
-				rawStdoutTail.push(`${line}\n`);
-				shared.transcriptWriter?.writeStdoutLine(line);
-				// Non-JSON stdout lines are expected; only structured events are parsed.
-				return;
-			}
+		const processEvent = (evt: ForegroundChildEvent, controls: ChildProcessRuntimeControls) => {
 			shared.transcriptWriter?.writeChildEvent(evt);
-			if (evt.type === "agent_settled") agentSettledReceived = true;
-			applyChildLifecycle(projectChildLifecycle(evt));
-
 			if (isChildWatchdogStatusEvent(evt)) {
 				if (!childWatchdog) return;
 				const next = acceptChildWatchdogEvent({
@@ -797,17 +631,10 @@ async function runSingleAttempt(
 				});
 				if (!next) return;
 				updateChildWatchdogState(next);
-				if (childWatchdogIsActive(next)) {
-					clearFinalDrainTimers();
-					armWatchdogTail();
-				} else {
-					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
-				}
+				controls.setWatchdogActive(childWatchdogIsActive(next));
 				fireUpdate();
 				return;
 			}
-
 			const now = Date.now();
 			progress.durationMs = now - startTime;
 			progress.lastActivityAt = now;
@@ -883,12 +710,7 @@ async function runSingleAttempt(
 					if (evt.message.errorMessage) assistantError = evt.message.errorMessage;
 					const assistantText = extractTextFromContent(evt.message.content);
 					appendRecentOutput(progress, assistantText.split("\n").slice(-10));
-					// Final assistant message: start the exit drain window.
-					if (terminalAssistantStop) {
-						if (!evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
-						cleanTerminalAssistantStopReceived ||= !evt.message.errorMessage;
-						applyChildLifecycle(projectChildLifecycle(evt, true));
-					}
+					if (terminalAssistantStop && !evt.message.errorMessage && assistantText.trim()) assistantError = undefined;
 				}
 				updateActivityState(now);
 				fireUpdate();
@@ -940,88 +762,30 @@ async function runSingleAttempt(
 			activityTimer.unref?.();
 		}
 
-		if (attemptTimeout) {
-			timeoutTimer = setTimeout(() => {
-				if (processClosed || settled || detached || interruptedByControl) return;
-				result.timedOut = true;
-				result.error = attemptTimeout.message;
-				result.finalOutput = attemptTimeout.message;
-				progress.status = "failed";
-				progress.error = attemptTimeout.message;
-				progress.durationMs = Date.now() - startTime;
-				fireUpdate();
-				trySignalChild(proc, "SIGINT");
-				timeoutTerminationTimer = setTimeout(() => {
-					if (processClosed || settled || detached) return;
-					trySignalChild(proc, "SIGTERM");
-				}, 1000);
-				timeoutTerminationTimer.unref?.();
-				timeoutHardKillTimer = setTimeout(() => {
-					if (processClosed || settled || detached) return;
-					trySignalChild(proc, "SIGKILL");
-				}, 4000);
-				timeoutHardKillTimer.unref?.();
-			}, attemptTimeout.remainingMs);
-			timeoutTimer.unref?.();
-		}
-
-		const stderrTail = createBoundedByteTail();
-		const failProtocol = (limit: ProtocolOutputLimit): void => {
-			if (result.protocolError) return;
-			result.protocolError = limit;
-			result.error = formatProtocolOutputLimit(limit);
-			progress.status = "failed";
-			progress.error = result.error;
-			progress.durationMs = Date.now() - startTime;
-			fireUpdate();
-			if (!childExited) {
-				trySignalChild(proc, "SIGTERM");
-				protocolHardKillTimer = setTimeout(() => {
-					if (!childExited) trySignalChild(proc, "SIGKILL");
-				}, 3000);
-				protocolHardKillTimer.unref?.();
-			}
-		};
-		const stdoutReader = createBoundedLineReader({ onLine: processLine, onLimit: failProtocol });
-		const stderrReader = createBoundedLineReader({
-			stream: "stderr",
-			maxPendingLineBytes: MAX_CHILD_STDERR_BYTES,
-			onLine: (line) => shared.transcriptWriter?.writeStderrLine(line),
-			onLimit: (limit) => shared.transcriptWriter?.writeStderrLine(formatProtocolOutputLimit(limit)),
-		});
-
-		const clearStdioGuard = attachPostExitStdioGuard(proc, { idleMs: 2000, hardMs: 8000 });
-		proc.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
-		proc.stderr.on("data", (chunk: Buffer) => {
-			stderrTail.push(chunk);
-			stderrReader.push(chunk);
-		});
-		proc.on("exit", () => {
-			childExited = true;
-			clearFinalDrainTimers();
-		});
-		proc.on("close", (code, signal) => {
-			clearFinalDrainTimers();
-			clearStdioGuard();
-			void jsonlWriter.close().catch(() => {
+		const finalizeRuntime = (runtime: ChildProcessRuntimeResult): number => {
+			settled = true;
+			cleanupAdapter();
+			void jsonlWriter?.close().catch(() => {
 				// JSONL artifact flush is best effort.
 			});
 			const toolDiagnosticError = readChildToolDiagnosticError(toolDiagnosticPath);
 			cleanupTempDir(tempDir);
-			stdoutReader.end();
-			stderrReader.end();
-			const stderr = stderrTail.text();
-			const rawStdout = rawStdoutTail.text();
-			let closeError = result.error ?? toolDiagnosticError ?? assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !closeError;
-			if (code !== 0 && rawStdout.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
-				closeError = rawStdout.trim();
+			let closeError = result.error ?? toolDiagnosticError ?? assistantError ?? runtime.spawnError;
+			const forcedDrainAfterFinalSuccess = runtime.terminationReason === "final-drain"
+				&& runtime.terminalSeen
+				&& !closeError;
+			if (runtime.exitCode !== 0 && runtime.rawStdout.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+				closeError = runtime.rawStdout.trim();
 			}
-			if (code !== 0 && stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
-				closeError = stderr.trim();
+			if (runtime.exitCode !== 0 && runtime.stderr.trim() && !closeError && !forcedDrainAfterFinalSuccess) {
+				closeError = runtime.stderr.trim();
 			}
-			const finalCode = forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (code ?? 1) : (code ?? 0);
-			if (signal) result.processSignal = signal;
+			const finalCode = forcedDrainAfterFinalSuccess
+				? 0
+				: runtime.forcedTermination || runtime.signal
+					? (runtime.exitCode ?? 1)
+					: (runtime.exitCode ?? 0);
+			if (runtime.signal) result.processSignal = runtime.signal;
 			if (detached) {
 				const recoveredProgress = snapshotProgress(progress);
 				const recoveredResult = snapshotResult(result, recoveredProgress);
@@ -1068,74 +832,124 @@ async function runSingleAttempt(
 					}
 				}
 				options.onDetachedExit?.(recoveredResult);
-				finish(-2);
-				return;
+				return -2;
 			}
 			if (!result.error && closeError) result.error = closeError;
 			processClosed = true;
-			finish(finalCode);
-		});
-		proc.on("error", (error) => {
-			clearFinalDrainTimers();
-			clearStdioGuard();
-			void jsonlWriter.close().catch(() => {
-				// JSONL artifact flush is best effort.
-			});
-			cleanupTempDir(tempDir);
-			stdoutReader.end();
-			stderrReader.end();
-			if (!result.error) {
-				result.error = error instanceof Error ? error.message : String(error);
-			}
-			finish(1);
-		});
+			return finalCode;
+		};
 
-		if (options.signal) {
-			const kill = () => {
-				if (processClosed || settled || detached || parentAbortRequested) return;
-				parentAbortRequested = true;
-				const message = "Subagent cancelled by parent.";
-				result.stopped = true;
-				result.error = message;
-				result.finalOutput = message;
+		const runtimePromise = runChildProcess<ForegroundChildEvent>({
+			command: spawnSpec.command,
+			args: spawnSpec.args,
+			cwd: options.cwd ?? runtimeCwd,
+			env: spawnEnv,
+			processGroup: process.platform !== "win32",
+			signal: options.signal,
+			cancelInitialSignal: "SIGTERM",
+			timeoutMs: attemptTimeout?.remainingMs,
+			watchdogTailMs: childWatchdog?.watchdogTailTimeoutMs,
+			onControls(controls) {
+				runtimeControls = controls;
+				unsubscribeIntercomDetach = options.intercomEvents?.on?.(INTERCOM_DETACH_REQUEST_EVENT, (payload) => {
+					if (!options.allowIntercomDetach || detached || processClosed) return;
+					if (!payload || typeof payload !== "object") return;
+					const event = payload as { requestId?: unknown; runId?: unknown; agent?: unknown; childIndex?: unknown };
+					const requestId = event.requestId;
+					if (typeof requestId !== "string" || requestId.length === 0) return;
+					const hasRoute = event.runId !== undefined || event.agent !== undefined || event.childIndex !== undefined;
+					if (hasRoute) {
+						if (typeof event.runId === "string" && event.runId !== options.runId) return;
+						if (typeof event.agent === "string" && event.agent !== agent.name) return;
+						if (typeof event.childIndex === "number" && event.childIndex !== (options.index ?? 0)) return;
+					} else if (!intercomStarted) return;
+					if (parentAbortRequested) {
+						options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: false, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
+						return;
+					}
+					options.intercomEvents?.emit(INTERCOM_DETACH_RESPONSE_EVENT, { requestId, accepted: true, runId: options.runId, agent: agent.name, childIndex: options.index ?? 0 });
+					detachForIntercom();
+				});
+
+				if (options.interruptSignal) {
+					const interrupt = (): void => {
+						if (processClosed || detached || settled || result.timedOut) return;
+						interruptedByControl = true;
+						progress.status = "running";
+						progress.durationMs = Date.now() - startTime;
+						result.interrupted = true;
+						result.finalOutput = "Interrupted. Waiting for explicit next action.";
+						progress.activityState = undefined;
+						fireUpdate();
+						controls.terminate("interrupt");
+					};
+					if (options.interruptSignal.aborted) interrupt();
+					else {
+						options.interruptSignal.addEventListener("abort", interrupt, { once: true });
+						removeInterruptListener = () => options.interruptSignal?.removeEventListener("abort", interrupt);
+					}
+				}
+			},
+			onSpawn(child) {
+				if (child.stdout) jsonlWriter = createJsonlWriter(shared.jsonlPath, child.stdout);
+			},
+			onStdoutLine: (line) => jsonlWriter?.writeLine(line),
+			onRawStdoutLine: (line) => shared.transcriptWriter?.writeStdoutLine(line),
+			onStderrLine: (line) => shared.transcriptWriter?.writeStderrLine(line),
+			onProtocolLimit(limit) {
+				if (result.protocolError) return;
+				result.protocolError = limit;
+				result.error = formatProtocolOutputLimit(limit);
 				progress.status = "failed";
-				progress.error = message;
+				progress.error = result.error;
 				progress.durationMs = Date.now() - startTime;
 				fireUpdate();
-				abortTermination.terminate();
-			};
-			if (options.signal.aborted) kill();
-			else {
-				options.signal.addEventListener("abort", kill, { once: true });
-				removeAbortListener = () => options.signal?.removeEventListener("abort", kill);
-			}
-		}
+			},
+			onTerminationRequested(reason) {
+				if (reason === "cancel") {
+					parentAbortRequested = true;
+					const message = "Subagent cancelled by parent.";
+					result.stopped = true;
+					result.error = message;
+					result.finalOutput = message;
+					progress.status = "failed";
+					progress.error = message;
+					progress.durationMs = Date.now() - startTime;
+					fireUpdate();
+				} else if (reason === "timeout") {
+					result.timedOut = true;
+					result.error = attemptTimeout?.message ?? "Subagent timed out.";
+					result.finalOutput = result.error;
+					progress.status = "failed";
+					progress.error = result.error;
+					progress.durationMs = Date.now() - startTime;
+					fireUpdate();
+				}
+			},
+			onWatchdogTail() {
+				updateChildWatchdogState({
+					phase: "stale",
+					seq: (childWatchdogState?.seq ?? 0) + 1,
+					lastUpdate: Date.now(),
+					followUpPending: false,
+					reason: "child watchdog tail timeout",
+					timedOut: true,
+				});
+				fireUpdate();
+			},
+			onEvent: processEvent,
+		});
 
-		if (options.interruptSignal) {
-			const interrupt = () => {
-				if (processClosed || detached || settled) return;
-				if (result.timedOut) return;
-				interruptedByControl = true;
-				clearTimeoutTimers();
-				progress.status = "running";
-				progress.durationMs = Date.now() - startTime;
-				result.interrupted = true;
-				result.finalOutput = "Interrupted. Waiting for explicit next action.";
-				progress.activityState = undefined;
-				fireUpdate();
-				trySignalChild(proc, "SIGINT");
-				setTimeout(() => {
-					if (settled || processClosed || detached) return;
-					trySignalChild(proc, "SIGTERM");
-				}, 1000).unref?.();
-			};
-			if (options.interruptSignal.aborted) interrupt();
-			else {
-				options.interruptSignal.addEventListener("abort", interrupt, { once: true });
-				removeInterruptListener = () => options.interruptSignal?.removeEventListener("abort", interrupt);
-			}
+		const outcome = await Promise.race([
+			runtimePromise.then((runtime) => ({ kind: "closed" as const, runtime })),
+			detachedPromise.then(() => ({ kind: "detached" as const })),
+		]);
+		if (outcome.kind === "detached") {
+			void runtimePromise.then(finalizeRuntime);
+			return -2;
 		}
-	});
+		return finalizeRuntime(outcome.runtime);
+	})();
 	result.exitCode = exitCode;
 	if (interruptedByControl) {
 		result.exitCode = 0;

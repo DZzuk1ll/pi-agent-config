@@ -1,4 +1,4 @@
-import { spawn, spawnSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
@@ -74,7 +74,7 @@ import {
 } from "../shared/subagent-startup-retry.ts";
 import { markProcessTerminalCandidateLeaseRelease, writeProcessTerminalCandidate, type ProcessTerminalCandidate } from "./process-terminal.ts";
 import { createSteeringStatus, recordSteeringRequest, steeringStatus, terminalSteeringNoticeState, updateSteeringTarget } from "./steering.ts";
-import { attachPostExitStdioGuard, trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
+import { trySignalChild } from "../../shared/post-exit-stdio-guard.ts";
 import { detectSubagentError, extractTextFromContent, extractToolArgsPreview, getFinalOutput, hasEmptyTerminalAssistantResponse, readStatus } from "../../shared/utils.ts";
 import { evaluateCompletionMutationGuard } from "../shared/completion-guard.ts";
 import {
@@ -111,7 +111,8 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { formatParallelHandoffError, formatParallelHandoffReference, parallelHandoffPath, writeParallelHandoffGroup } from "../shared/parallel-handoff.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
-import { createBoundedByteTail, createBoundedLineReader, formatProtocolOutputLimit, MAX_CHILD_STDERR_BYTES, projectChildLifecycle, type ChildLifecycleAction, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { formatProtocolOutputLimit, type ProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { runChildProcess } from "../shared/child-process-runtime.ts";
 import { acquireSessionLease, type SessionLeaseRequest } from "../shared/session-lease.ts";
 import { decodeSubagentCapabilityCeiling, SUBAGENT_CAPABILITY_CEILING_ENV, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import {
@@ -453,100 +454,121 @@ function runPiStreaming(
 	registerTurnBudgetAbort?: (abort: ((message: string, state?: TurnBudgetState) => void) | undefined) => void,
 	onWriterProcess?: (writer: { state: "none" | "spawning" } | { state: "running"; pid: number }) => void,
 ): Promise<RunPiStreamingResult> {
-	return new Promise((resolve) => {
-		const startedAt = Date.now();
-		const processInstanceId = randomUUID();
-		onWriterProcess?.({ state: "spawning" });
-		const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
-		const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
-		const spawnSpec = getPiSpawnCommand(args, {
-			...(piPackageRoot ? { piPackageRoot } : {}),
-			...(piArgv1 ? { argv1: piArgv1 } : {}),
-		});
-		const child = spawn(spawnSpec.command, spawnSpec.args, {
-			cwd,
-			stdio: ["ignore", "pipe", "pipe"],
-			env: spawnEnv,
-			windowsHide: true,
-		});
-		const stderrTail = createBoundedByteTail();
-		const rawStdoutTail = createBoundedByteTail();
-		const messages: Message[] = [];
-		const usage = emptyUsage();
-		let model: string | undefined;
-		let writerRegistrationError: string | undefined;
-		if (typeof child.pid === "number") {
+	const startedAt = Date.now();
+	const processInstanceId = randomUUID();
+	const messages: Message[] = [];
+	const usage = emptyUsage();
+	const outputStream = fs.createWriteStream(outputFile, { flags: "w" });
+	const spawnEnv = { ...process.env, ...(env ?? {}), ...getSubagentDepthEnv(maxSubagentDepth) };
+	const spawnSpec = getPiSpawnCommand(args, {
+		...(piPackageRoot ? { piPackageRoot } : {}),
+		...(piArgv1 ? { argv1: piArgv1 } : {}),
+	});
+	let model: string | undefined;
+	let error: string | undefined;
+	let assistantError: string | undefined;
+	let interrupted = false;
+	let timedOut = false;
+	let stopped = false;
+	let turnBudgetExceeded = false;
+	let turnBudgetMessage: string | undefined;
+	let turnBudget: TurnBudgetState | undefined;
+	let observedMutationAttempt = false;
+	let toolCount = 0;
+	let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
+	const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
+
+	const writeOutputLine = (line: string): void => {
+		if (line.trim()) outputStream.write(`${line}\n`);
+	};
+	const writeOutputText = (text: string): void => {
+		for (const line of text.split("\n")) writeOutputLine(line);
+	};
+	const appendChildEvent = (event: Record<string, unknown>): void => {
+		if (!childEventContext || !shouldPersistChildEvent(event)) return;
+		appendDiagnosticJsonl(childEventContext.eventsPath, JSON.stringify({
+			...event,
+			subagentSource: "child",
+			subagentRunId: childEventContext.runId,
+			subagentStepIndex: childEventContext.stepIndex,
+			subagentAgent: childEventContext.agent,
+			observedAt: Date.now(),
+		}), typeof event.type === "string" ? event.type : undefined);
+	};
+	const appendChildLine = (type: "subagent.child.stdout" | "subagent.child.stderr", line: string): void => {
+		appendChildEvent({ type, line });
+		if (type === "subagent.child.stdout") transcriptWriter?.writeStdoutLine(line);
+		else transcriptWriter?.writeStderrLine(line);
+	};
+
+	onWriterProcess?.({ state: "spawning" });
+	return runChildProcess<ChildEvent>({
+		command: spawnSpec.command,
+		args: spawnSpec.args,
+		cwd,
+		env: spawnEnv,
+		onControls(controls) {
+			registerInterrupt?.(() => {
+				if (timedOut || stopped) return;
+				interrupted = true;
+				error ||= "Interrupted. Waiting for explicit next action.";
+				controls.terminate("interrupt");
+			});
+			registerTimeout?.(() => {
+				if (timedOut || stopped) return;
+				timedOut = true;
+				interrupted = false;
+				error = timeoutMessage ?? "Subagent timed out.";
+				controls.terminate("timeout", "SIGTERM");
+			});
+			registerStop?.(() => {
+				if (timedOut || stopped) return;
+				stopped = true;
+				interrupted = false;
+				error = stopMessage ?? "Subagent stopped by user.";
+				controls.terminate("stop", "SIGTERM");
+			});
+			registerTurnBudgetAbort?.((message, state) => {
+				if (timedOut || stopped || turnBudgetExceeded) return;
+				turnBudgetExceeded = true;
+				turnBudgetMessage = message;
+				turnBudget = state;
+				interrupted = false;
+				error = message;
+				controls.terminate("turn-budget");
+			});
+		},
+		onSpawn(child) {
+			if (typeof child.pid !== "number") return;
 			try {
 				onWriterProcess?.({ state: "running", pid: child.pid });
 			} catch (writerError) {
-				writerRegistrationError = `Failed to record revived Pi writer ownership: ${writerError instanceof Error ? writerError.message : String(writerError)}`;
+				error = `Failed to record revived Pi writer ownership: ${writerError instanceof Error ? writerError.message : String(writerError)}`;
 				trySignalChild(child, "SIGKILL");
 			}
-		}
-		let error: string | undefined = writerRegistrationError;
-		let assistantError: string | undefined;
-		let interrupted = false;
-		let timedOut = false;
-		let stopped = false;
-		let turnBudgetExceeded = false;
-		let turnBudgetMessage: string | undefined;
-		let turnBudget: TurnBudgetState | undefined;
-		let observedMutationAttempt = false;
-		let toolCount = 0;
-		const childWatchdogConfig = decodeChildWatchdogConfig(env?.[CHILD_WATCHDOG_CONFIG_ENV]);
-		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
-		let applyChildLifecycle = (_action: ChildLifecycleAction): void => {};
-		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
-			childWatchdogState = snapshot;
-		};
-
-		const writeOutputLine = (line: string) => {
-			if (!line.trim()) return;
-			outputStream.write(`${line}\n`);
-		};
-
-		const writeOutputText = (text: string) => {
-			for (const line of text.split("\n")) {
-				writeOutputLine(line);
-			}
-		};
-
-		const appendChildEvent = (event: Record<string, unknown>) => {
-			if (!childEventContext) return;
-			if (!shouldPersistChildEvent(event)) return;
-			appendDiagnosticJsonl(childEventContext.eventsPath, JSON.stringify({
-				...event,
-				subagentSource: "child",
-				subagentRunId: childEventContext.runId,
-				subagentStepIndex: childEventContext.stepIndex,
-				subagentAgent: childEventContext.agent,
-				observedAt: Date.now(),
-			}), typeof event.type === "string" ? event.type : undefined);
-		};
-
-		const appendChildLine = (type: "subagent.child.stdout" | "subagent.child.stderr", line: string) => {
-			appendChildEvent({ type, line });
-			if (type === "subagent.child.stdout") transcriptWriter?.writeStdoutLine(line);
-			else transcriptWriter?.writeStderrLine(line);
-		};
-
-		const processStdoutLine = (line: string) => {
-			if (!line.trim()) return;
-			let event: ChildEvent;
-			try {
-				event = JSON.parse(line) as ChildEvent;
-			} catch {
-				rawStdoutTail.push(`${line}\n`);
-				writeOutputLine(line);
-				appendChildLine("subagent.child.stdout", line);
-				return;
-			}
-
+		},
+		onRawStdoutLine(line) {
+			writeOutputLine(line);
+			appendChildLine("subagent.child.stdout", line);
+		},
+		onStderrLine: (line) => appendChildLine("subagent.child.stderr", line),
+		onStderrChunk: (chunk) => outputStream.write(chunk),
+		onProtocolLimit(limit) {
+			error = formatProtocolOutputLimit(limit);
+		},
+		onWatchdogTail() {
+			childWatchdogState = {
+				phase: "stale",
+				seq: (childWatchdogState?.seq ?? 0) + 1,
+				lastUpdate: Date.now(),
+				followUpPending: false,
+				reason: "child watchdog tail timeout",
+				timedOut: true,
+			};
+		},
+		onEvent(event, controls) {
 			appendChildEvent(event);
 			transcriptWriter?.writeChildEvent(event);
-			if (event.type === "agent_settled") agentSettledReceived = true;
-			applyChildLifecycle(projectChildLifecycle(event));
-
 			if (isChildWatchdogStatusEvent(event)) {
 				if (!childWatchdogConfig) return;
 				const next = acceptChildWatchdogEvent({
@@ -557,312 +579,98 @@ function runPiStreaming(
 					childIndex: childEventContext?.stepIndex,
 				});
 				if (!next) return;
-				updateChildWatchdogState(next);
+				childWatchdogState = next;
+				controls.setWatchdogActive(childWatchdogIsActive(next));
 				onChildEvent?.(event);
-				if (childWatchdogIsActive(next)) {
-					if (finalDrainTimer) {
-						clearTimeout(finalDrainTimer);
-						finalDrainTimer = undefined;
-					}
-					if (finalHardKillTimer) {
-						clearTimeout(finalHardKillTimer);
-						finalHardKillTimer = undefined;
-					}
-					armWatchdogTail();
-				} else {
-					clearWatchdogTailTimer();
-					if (cleanTerminalAssistantStopReceived || agentSettledReceived) startFinalDrain();
-				}
 				return;
 			}
-
 			onChildEvent?.(event);
-
 			if (event.type === "tool_execution_start" && event.toolName) {
-				toolCount += 1;
-				observedMutationAttempt = observedMutationAttempt || isMutatingTool(event.toolName, event.args);
+				toolCount++;
+				observedMutationAttempt ||= isMutatingTool(event.toolName, event.args);
 				const toolArgs = extractToolArgsPreview(event.args ?? {});
 				writeOutputLine(toolArgs ? `${event.toolName}: ${toolArgs}` : event.toolName);
 				return;
 			}
-
-			if ((event.type === "message_end" || event.type === "tool_result_end") && event.message) {
-				messages.push(event.message);
-				const text = extractTextFromContent(event.message.content);
-				if (text) writeOutputText(text);
-
-				if (event.type !== "message_end" || event.message.role !== "assistant") return;
-				if (event.message.model) model = event.message.model;
-				if (event.message.errorMessage) assistantError = event.message.errorMessage;
-				const eventUsage = event.message.usage;
-				if (eventUsage) {
-					usage.turns++;
-					usage.input += eventUsage.input ?? eventUsage.inputTokens ?? 0;
-					usage.output += eventUsage.output ?? eventUsage.outputTokens ?? 0;
-					usage.cacheRead += eventUsage.cacheRead ?? 0;
-					usage.cacheWrite += eventUsage.cacheWrite ?? 0;
-					usage.cost += eventUsage.cost?.total ?? 0;
-				}
-				if (isTerminalAssistantStop(event.message)) {
-					if (!event.message.errorMessage && extractTextFromContent(event.message.content).trim()) assistantError = undefined;
-					cleanTerminalAssistantStopReceived ||= !event.message.errorMessage;
-					applyChildLifecycle(projectChildLifecycle(event, true));
-				}
+			if ((event.type !== "message_end" && event.type !== "tool_result_end") || !event.message) return;
+			messages.push(event.message);
+			const text = extractTextFromContent(event.message.content);
+			if (text) writeOutputText(text);
+			if (event.type !== "message_end" || event.message.role !== "assistant") return;
+			if (event.message.model) model = event.message.model;
+			if (event.message.errorMessage) assistantError = event.message.errorMessage;
+			const eventUsage = event.message.usage;
+			if (eventUsage) {
+				usage.turns++;
+				usage.input += eventUsage.input ?? eventUsage.inputTokens ?? 0;
+				usage.output += eventUsage.output ?? eventUsage.outputTokens ?? 0;
+				usage.cacheRead += eventUsage.cacheRead ?? 0;
+				usage.cacheWrite += eventUsage.cacheWrite ?? 0;
+				usage.cost += eventUsage.cost?.total ?? 0;
 			}
-		};
-
-		// Guard both cases that can leave the parent waiting on `close` forever:
-		// a lingering stdio holder after `exit`, or a child that never exits.
-		const FINAL_STOP_GRACE_MS = 1000;
-		const HARD_KILL_MS = 3000;
-		const TIMEOUT_HARD_KILL_MS = 3000;
-		let childExited = false;
-		let forcedTerminationSignal = false;
-		let cleanTerminalAssistantStopReceived = false;
-		let agentSettledReceived = false;
-		let finalDrainTimer: NodeJS.Timeout | undefined;
-		let finalHardKillTimer: NodeJS.Timeout | undefined;
-		let watchdogTailTimer: NodeJS.Timeout | undefined;
-		let timeoutHardKillTimer: NodeJS.Timeout | undefined;
-		let turnBudgetTerminationTimer: NodeJS.Timeout | undefined;
-		let turnBudgetHardKillTimer: NodeJS.Timeout | undefined;
-		let protocolHardKillTimer: NodeJS.Timeout | undefined;
-		let protocolError: ProtocolOutputLimit | undefined;
-		let settled = false;
-		applyChildLifecycle = (action: ChildLifecycleAction): void => {
-			if (action === "cancel-drain") {
-				if (finalDrainTimer) {
-					clearTimeout(finalDrainTimer);
-					finalDrainTimer = undefined;
-				}
-				if (finalHardKillTimer) {
-					clearTimeout(finalHardKillTimer);
-					finalHardKillTimer = undefined;
-				}
-				clearWatchdogTailTimer();
-				return;
+			if (isTerminalAssistantStop(event.message) && !event.message.errorMessage && text.trim()) {
+				assistantError = undefined;
 			}
-			if (action === "start-drain") startFinalDrain();
-		};
-		const failProtocol = (limit: ProtocolOutputLimit): void => {
-			if (protocolError) return;
-			protocolError = limit;
-			error = formatProtocolOutputLimit(limit);
-			if (!childExited) {
-				trySignalChild(child, "SIGTERM");
-				protocolHardKillTimer = setTimeout(() => {
-					if (!settled) trySignalChild(child, "SIGKILL");
-				}, 3000);
-				protocolHardKillTimer.unref?.();
-			}
-		};
-		const stdoutReader = createBoundedLineReader({ onLine: processStdoutLine, onLimit: failProtocol });
-		const stderrReader = createBoundedLineReader({
-			stream: "stderr",
-			maxPendingLineBytes: MAX_CHILD_STDERR_BYTES,
-			onLine: (line) => appendChildLine("subagent.child.stderr", line),
-			onLimit: (limit) => appendChildLine("subagent.child.stderr", formatProtocolOutputLimit(limit)),
-		});
-		const clearStdioGuard = attachPostExitStdioGuard(child, { idleMs: 2000, hardMs: 8000 });
-		child.stdout.on("data", (chunk: Buffer) => stdoutReader.push(chunk));
-		child.stderr.on("data", (chunk: Buffer) => {
-			stderrTail.push(chunk);
-			stderrReader.push(chunk);
-			outputStream.write(chunk);
-		});
-		registerInterrupt?.(() => {
-			if (settled || timedOut || stopped) return;
-			interrupted = true;
-			if (!error) error = "Interrupted. Waiting for explicit next action.";
-			trySignalChild(child, "SIGINT");
-			setTimeout(() => {
-				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGTERM");
-			}, 1000).unref?.();
-		});
-		registerTimeout?.(() => {
-			if (settled || timedOut || stopped) return;
-			timedOut = true;
-			interrupted = false;
-			error = timeoutMessage ?? "Subagent timed out.";
-			trySignalChild(child, "SIGTERM");
-			timeoutHardKillTimer = setTimeout(() => {
-				if (!settled) trySignalChild(child, "SIGKILL");
-			}, TIMEOUT_HARD_KILL_MS);
-			timeoutHardKillTimer.unref?.();
-		});
-		registerStop?.(() => {
-			if (settled || timedOut || stopped) return;
-			stopped = true;
-			interrupted = false;
-			error = stopMessage ?? "Subagent stopped by user.";
-			trySignalChild(child, "SIGTERM");
-			timeoutHardKillTimer = setTimeout(() => {
-				if (!settled) trySignalChild(child, "SIGKILL");
-			}, TIMEOUT_HARD_KILL_MS);
-			timeoutHardKillTimer.unref?.();
-		});
-		registerTurnBudgetAbort?.((message, state) => {
-			if (settled || timedOut || stopped || turnBudgetExceeded) return;
-			turnBudgetExceeded = true;
-			turnBudgetMessage = message;
-			turnBudget = state;
-			interrupted = false;
-			error = message;
-			trySignalChild(child, "SIGINT");
-			turnBudgetTerminationTimer = setTimeout(() => {
-				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGTERM");
-			}, 1000);
-			turnBudgetTerminationTimer.unref?.();
-			turnBudgetHardKillTimer = setTimeout(() => {
-				if (!settled && !timedOut && !stopped) trySignalChild(child, "SIGKILL");
-			}, 4000);
-			turnBudgetHardKillTimer.unref?.();
-		});
-		const clearDrainTimers = () => {
-			if (finalDrainTimer) {
-				clearTimeout(finalDrainTimer);
-				finalDrainTimer = undefined;
-			}
-			if (finalHardKillTimer) {
-				clearTimeout(finalHardKillTimer);
-				finalHardKillTimer = undefined;
-			}
-			clearWatchdogTailTimer();
-			if (timeoutHardKillTimer) {
-				clearTimeout(timeoutHardKillTimer);
-				timeoutHardKillTimer = undefined;
-			}
-			if (turnBudgetTerminationTimer) {
-				clearTimeout(turnBudgetTerminationTimer);
-				turnBudgetTerminationTimer = undefined;
-			}
-			if (turnBudgetHardKillTimer) {
-				clearTimeout(turnBudgetHardKillTimer);
-				turnBudgetHardKillTimer = undefined;
-			}
-			if (protocolHardKillTimer) {
-				clearTimeout(protocolHardKillTimer);
-				protocolHardKillTimer = undefined;
-			}
-		};
-		function startFinalDrain(): void {
-			if (childWatchdogIsActive(childWatchdogState)) {
-				armWatchdogTail();
-				return;
-			}
-			if (childExited || finalDrainTimer || settled) return;
-			finalDrainTimer = setTimeout(() => {
-				if (settled) return;
-				const termSent = trySignalChild(child, "SIGTERM");
-				if (!termSent) return;
-				forcedTerminationSignal = true;
-				if (!cleanTerminalAssistantStopReceived && !agentSettledReceived && !error && !assistantError) {
-					error = `Subagent process did not exit within ${FINAL_STOP_GRACE_MS}ms after its terminal event. Forcing termination.`;
-				}
-				finalHardKillTimer = setTimeout(() => {
-					if (settled) return;
-					forcedTerminationSignal = trySignalChild(child, "SIGKILL") || forcedTerminationSignal;
-				}, HARD_KILL_MS);
-				finalHardKillTimer.unref?.();
-			}, FINAL_STOP_GRACE_MS);
-			finalDrainTimer.unref?.();
+		},
+	}).then((runtime) => {
+		try {
+			onWriterProcess?.({ state: "none" });
+		} catch {
+			// The runner still owns and releases the lease during finalization.
 		}
-		function clearWatchdogTailTimer(): void {
-			if (watchdogTailTimer) {
-				clearTimeout(watchdogTailTimer);
-				watchdogTailTimer = undefined;
-			}
-		}
-		function armWatchdogTail(): void {
-			if ((!cleanTerminalAssistantStopReceived && !agentSettledReceived) || watchdogTailTimer || settled) return;
-			watchdogTailTimer = setTimeout(() => {
-				watchdogTailTimer = undefined;
-				updateChildWatchdogState({
-					phase: "stale",
-					seq: (childWatchdogState?.seq ?? 0) + 1,
-					lastUpdate: Date.now(),
-					followUpPending: false,
-					reason: "child watchdog tail timeout",
-					timedOut: true,
-				});
-				startFinalDrain();
-			}, childWatchdogConfig?.watchdogTailTimeoutMs ?? 120_000);
-			watchdogTailTimer.unref?.();
-		}
-		child.on("exit", () => {
-			childExited = true;
-			clearDrainTimers();
-		});
-		child.on("close", (exitCode, signal) => {
-			settled = true;
-			const processCloseObservedAt = Date.now();
-			try {
-				onWriterProcess?.({ state: "none" });
-			} catch {
-				// The runner still owns and releases the lease during finalization.
-			}
-			registerInterrupt?.(undefined);
-			registerTimeout?.(undefined);
-			registerStop?.(undefined);
-			registerTurnBudgetAbort?.(undefined);
-			clearDrainTimers();
-			clearStdioGuard();
-			stdoutReader.end();
-			stderrReader.end();
-			outputStream.end();
-			const stderr = stderrTail.text();
-			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
-			const finalError = error ?? assistantError;
-			const forcedDrainAfterFinalSuccess = forcedTerminationSignal && (cleanTerminalAssistantStopReceived || agentSettledReceived) && !finalError;
-			resolve({
-				stderr,
-				exitCode: timedOut || stopped ? 1 : turnBudgetExceeded ? 1 : interrupted || forcedDrainAfterFinalSuccess ? 0 : forcedTerminationSignal || signal ? (exitCode ?? 1) : exitCode,
-				messages,
-				usage,
-				toolCount,
-				durationMs: Date.now() - startedAt,
-				model,
-				error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : interrupted || forcedDrainAfterFinalSuccess ? undefined : finalError,
-				protocolError,
-				finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput,
-				interrupted,
-				timedOut,
-				stopped,
-				turnBudget,
-				turnBudgetExceeded,
-				wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined,
-				observedMutationAttempt,
-				watchdog: childWatchdogState,
-				processInstanceId,
-				processCloseObservedAt,
-				processSignal: signal,
-			});
-		});
+		registerInterrupt?.(undefined);
+		registerTimeout?.(undefined);
+		registerStop?.(undefined);
+		registerTurnBudgetAbort?.(undefined);
+		outputStream.end();
 
-		child.on("error", (spawnError) => {
-			settled = true;
-			try {
-				onWriterProcess?.({ state: "none" });
-			} catch {
-				// The runner still owns and releases the lease during finalization.
-			}
-			registerInterrupt?.(undefined);
-			registerTimeout?.(undefined);
-			registerStop?.(undefined);
-			registerTurnBudgetAbort?.(undefined);
-			clearDrainTimers();
-			clearStdioGuard();
-			stdoutReader.end();
-			stderrReader.end();
-			outputStream.end();
-			const stderr = stderrTail.text();
-			const finalOutput = getFinalOutput(messages) || rawStdoutTail.text().trim();
-			const spawnErrorMessage = spawnError instanceof Error ? spawnError.message : String(spawnError);
-			resolve({ stderr, exitCode: 1, messages, usage, toolCount, durationMs: Date.now() - startedAt, model, error: stopped ? (stopMessage ?? "Subagent stopped by user.") : timedOut ? (timeoutMessage ?? "Subagent timed out.") : turnBudgetExceeded ? turnBudgetMessage : error ?? assistantError ?? spawnErrorMessage, protocolError, finalOutput: (timedOut || stopped) && !finalOutput.trim() ? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.") : finalOutput, timedOut, stopped, turnBudget, turnBudgetExceeded, wrapUpRequested: turnBudget?.outcome === "wrap-up-requested" || turnBudget?.outcome === "termination-deferred" || turnBudgetExceeded || undefined, observedMutationAttempt, watchdog: childWatchdogState, processInstanceId });
-		});
+		const finalOutput = getFinalOutput(messages) || runtime.rawStdout;
+		const finalError = error ?? assistantError ?? runtime.spawnError;
+		const forcedDrainAfterFinalSuccess = runtime.terminationReason === "final-drain" && runtime.terminalSeen && !finalError;
+		return {
+			stderr: runtime.stderr,
+			exitCode: timedOut || stopped || turnBudgetExceeded
+				? 1
+				: interrupted || forcedDrainAfterFinalSuccess
+					? 0
+					: runtime.forcedTermination || runtime.signal
+						? (runtime.exitCode ?? 1)
+						: runtime.exitCode,
+			messages,
+			usage,
+			toolCount,
+			durationMs: Date.now() - startedAt,
+			model,
+			error: stopped
+				? (stopMessage ?? "Subagent stopped by user.")
+				: timedOut
+					? (timeoutMessage ?? "Subagent timed out.")
+					: turnBudgetExceeded
+						? turnBudgetMessage
+						: interrupted || forcedDrainAfterFinalSuccess
+							? undefined
+							: finalError,
+			protocolError: runtime.protocolError,
+			finalOutput: (timedOut || stopped) && !finalOutput.trim()
+				? (stopped ? stopMessage ?? "Subagent stopped by user." : timeoutMessage ?? "Subagent timed out.")
+				: finalOutput,
+			interrupted,
+			timedOut,
+			stopped,
+			turnBudget,
+			turnBudgetExceeded,
+			wrapUpRequested: turnBudget?.outcome === "wrap-up-requested"
+				|| turnBudget?.outcome === "termination-deferred"
+				|| turnBudgetExceeded
+				|| undefined,
+			observedMutationAttempt,
+			watchdog: childWatchdogState,
+			processInstanceId,
+			processCloseObservedAt: Date.now(),
+			processSignal: runtime.signal,
+		};
 	});
 }
-
 function resolvePiPackageRootFallback(): string {
 	const root = resolveInstalledPiPackageRoot();
 	if (root) return root;
