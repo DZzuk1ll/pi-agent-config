@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { access, link, lstat, readFile, rm, writeFile } from "node:fs/promises";
+import { access, link, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import {
@@ -197,7 +197,9 @@ async function firstExistingFallback(
 type FileIdentity = { dev: number; ino: number };
 
 async function installFileExclusively(filePath: string, contents: string): Promise<FileIdentity> {
-	const tempFile = join(dirname(filePath), `.${PLAN_MODE_SETTINGS_FILE}.${randomUUID()}.tmp`);
+	const directory = dirname(filePath);
+	await mkdir(directory, { recursive: true });
+	const tempFile = join(directory, `.${PLAN_MODE_SETTINGS_FILE}.${randomUUID()}.tmp`);
 	try {
 		await writeFile(tempFile, contents, { encoding: "utf8", flag: "wx" });
 		const identity = await lstat(tempFile);

@@ -14,6 +14,8 @@ const TOKEN_LINE_RE = /\[image\d+\]/g;
 const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif)$/i;
 const MARKDOWN_PATCH_STATE = Symbol.for("smoose.pi-beautify.markdown.patch");
 const PLAIN_CODE_LANGS = new Set(["", "text", "plain", "plaintext"]);
+const INPUT_PREFIX = "›";
+const INPUT_PADDING = 2;
 const MACOS_CLIPBOARD_FILE_PATHS_SCRIPT = `
 ObjC.import('AppKit');
 ObjC.import('Foundation');
@@ -115,6 +117,14 @@ function imageChip(id: number): string {
 
 function displayChip(token: string, theme: Theme): string {
   return theme.fg("toolDiffAdded", theme.inverse(token));
+}
+
+function renderInputPrefix(lines: string[], theme: Theme): string[] {
+  const input = lines[1];
+  if (input?.startsWith(" ".repeat(INPUT_PADDING))) {
+    lines[1] = `${theme.fg("accent", INPUT_PREFIX)} ${input.slice(INPUT_PADDING)}`;
+  }
+  return lines;
 }
 
 function readClipboardFilePaths(): string[] {
@@ -267,7 +277,11 @@ class BeautifyEditor extends CustomEditor {
     private readonly imageTokens: ImageTokenController,
     private readonly getTheme: () => Theme,
   ) {
-    super(tui, theme, appKeybindings);
+    super(tui, theme, appKeybindings, { paddingX: INPUT_PADDING });
+  }
+
+  override setPaddingX(_padding: number): void {
+    super.setPaddingX(INPUT_PADDING);
   }
 
   handleInput(data: string): void {
@@ -288,7 +302,8 @@ class BeautifyEditor extends CustomEditor {
   }
 
   render(width: number): string[] {
-    return this.imageTokens.renderChips(super.render(width), this.getTheme(), width);
+    const theme = this.getTheme();
+    return renderInputPrefix(this.imageTokens.renderChips(super.render(width), theme, width), theme);
   }
 
   private scheduleClipboardPathScan(): void {
@@ -317,7 +332,9 @@ class BeautifyEditorWrapper implements EditorComponent {
     private readonly appKeybindings: KeybindingsManager,
     private readonly imageTokens: ImageTokenController,
     private readonly getTheme: () => Theme,
-  ) {}
+  ) {
+    this.inner.setPaddingX?.(INPUT_PADDING);
+  }
 
   get focused(): boolean {
     return Boolean((this.inner as EditorComponent & { focused?: boolean }).focused);
@@ -383,8 +400,8 @@ class BeautifyEditorWrapper implements EditorComponent {
     this.inner.setAutocompleteProvider?.(provider);
   }
 
-  setPaddingX(padding: number): void {
-    this.inner.setPaddingX?.(padding);
+  setPaddingX(_padding: number): void {
+    this.inner.setPaddingX?.(INPUT_PADDING);
   }
 
   setAutocompleteMaxVisible(maxVisible: number): void {
@@ -400,7 +417,8 @@ class BeautifyEditorWrapper implements EditorComponent {
   }
 
   render(width: number): string[] {
-    return this.imageTokens.renderChips(this.inner.render(width), this.getTheme(), width);
+    const theme = this.getTheme();
+    return renderInputPrefix(this.imageTokens.renderChips(this.inner.render(width), theme, width), theme);
   }
 
   handleInput(data: string): void {

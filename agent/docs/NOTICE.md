@@ -7,7 +7,8 @@ This private Pi configuration maintains local forks of the projects listed below
 | `subscription-usage` | `@bacnh85/pi-sub` | 0.1.21 | https://github.com/bacnh85/pi-extensions/tree/main/pi-sub |
 | bundled themes | `@firstpick/pi-themes-bundle` | 0.1.5 | https://github.com/Firstp1ck/pi-coding-agent-forge |
 | `todo` | `@juicesharp/rpiv-todo` | 2.2.0 | https://github.com/juicesharp/rpiv-mono/tree/main/packages/rpiv-todo |
-| `plan-mode` | `@narumitw/pi-plan-mode` | 0.34.0 | https://github.com/narumiruna/pi-extensions |
+| `plan-mode` | `@narumitw/pi-plan-mode` | 0.41.0 | https://github.com/narumiruna/pi-extensions/tree/v0.41.0/extensions/pi-plan-mode |
+| `tui-kit` | `@narumitw/pi-tui-kit` | 0.41.0 | https://github.com/narumiruna/pi-extensions/tree/v0.41.0/packages/pi-tui-kit |
 | `claudify` | `@owlburtoe/pi-claudify` | 2.5.1 | https://forgejo.owlburtoe.dev/owlburtoe/pi-claudify |
 | `beautify` | `@smoose/pi-beautify` | 0.1.9 | https://github.com/smoosex/pi-beautify |
 | `confirm-destructive`, `context`, `lsp`, and local helper packages | `@spences10/my-pi` packages | 0.0.20 / 0.1.14 / 0.0.44; helpers 0.1.10 / 0.0.19 / 0.0.14 / 0.0.3 / 0.0.24 | https://github.com/spences10/my-pi |

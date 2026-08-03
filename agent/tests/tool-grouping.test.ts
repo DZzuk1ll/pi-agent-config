@@ -1,14 +1,30 @@
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
+import { join } from "node:path";
 import test from "node:test";
+import { createJiti } from "../node_modules/jiti/lib/jiti.mjs";
 
-import {
+import type { ToolComponentLike } from "../extensions/_shared/runtime/tool-grouping.ts";
+
+const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
+const piPackage = join(globalNodeModules, "@earendil-works/pi-coding-agent");
+const jiti = createJiti(import.meta.url, {
+	interopDefault: true,
+	alias: {
+		"@earendil-works/pi-tui": join(piPackage, "node_modules/@earendil-works/pi-tui"),
+	},
+});
+const grouping = await jiti.import<typeof import("../extensions/_shared/runtime/tool-grouping.ts")>(
+	"../extensions/_shared/runtime/tool-grouping.ts",
+);
+const tui = await jiti.import<{ visibleWidth: (text: string) => number }>("@earendil-works/pi-tui");
+const {
 	formatDoneLineSpacing,
 	planToolGroups,
 	renderPlannedChildren,
 	resolveTodoGrouping,
 	resolveToolGrouping,
-	type ToolComponentLike,
-} from "../extensions/_shared/runtime/tool-grouping.ts";
+} = grouping;
 
 function tool(
 	toolName: string,
@@ -227,4 +243,18 @@ test("new mode defaults and legacy booleans remain compatible", () => {
 		resolveToolGrouping({ toolGrouping: "consecutive-same-type", readOnlyToolGrouping: true }),
 		"consecutive-same-type",
 	);
+});
+
+test("grouped tool lines fit the terminal by visible width", () => {
+	const children = [
+		tool("grep", "g1", { pattern: "列一个计划测试一下|PLAN_MODE_NEW_SESSION_OK|plan…", path: "/Users/test/项目" }),
+		tool("grep", "g2", { pattern: "pi-clipboard-7de757fd|没有反应", path: "/Users/test/项目" }),
+	];
+	for (const width of [0, 1, 12, 111]) {
+		const rendered = renderPlannedChildren(children, "consecutive-same-type", width);
+		assert.ok(
+			rendered.every((line) => tui.visibleWidth(line) <= width),
+			`rendered line exceeded width ${width}: ${JSON.stringify(rendered)}`,
+		);
+	}
 });

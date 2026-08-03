@@ -1,3 +1,5 @@
+import { truncateToWidth } from "@earendil-works/pi-tui";
+
 export type ToolGroupingMode = "off" | "consecutive-same-type" | "all-read-only";
 
 export interface ToolGroupingSettings {
@@ -109,7 +111,7 @@ export function planToolGroups(
 
 function summarize(value: unknown, limit = 60): string {
 	const text = String(value ?? "").replace(/\s+/g, " ").trim();
-	return text.length > limit ? `${text.slice(0, limit - 1)}…` : text;
+	return truncateToWidth(text, limit, "…");
 }
 
 function targetForTool(child: ToolComponentLike, includeToolName: boolean): string {
@@ -149,9 +151,7 @@ function groupNoun(name: string, count: number): string {
 }
 
 function fitLine(line: string, width: number): string {
-	if (width <= 0) return "";
-	const chars = Array.from(line);
-	return chars.length <= width ? line : `${chars.slice(0, Math.max(0, width - 1)).join("")}…`;
+	return truncateToWidth(line, Math.max(0, width), "…");
 }
 
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;

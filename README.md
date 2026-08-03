@@ -137,8 +137,9 @@ git push
     ├── package-lock.json          # 可复现的依赖版本
     ├── settings.json              # Pi、模型与扩展配置
     ├── keybindings.json           # 快捷键
-    ├── pi-plan-mode.json          # Plan mode 配置
     ├── extensions/
+    │   ├── plan-mode/
+    │   │   └── config.json        # Plan mode 配置
     │   ├── community/             # 纳入维护的社区 Pi 扩展
     │   └── ...                    # 自有扩展及其配置
     ├── lib/

@@ -13,6 +13,7 @@
     "@personal-pi/project-trust": "file:extensions/_shared/packages/project-trust",
     "@personal-pi/redact": "file:extensions/_shared/packages/redact",
     "@personal-pi/settings": "file:extensions/_shared/packages/settings",
+    "@personal-pi/tui-kit": "file:extensions/_shared/packages/tui-kit",
     "@personal-pi/tui-modal": "file:extensions/_shared/packages/tui-modal",
     "@pierre/diffs": "1.2.12",
     "@shikijs/cli": "4.3.1",

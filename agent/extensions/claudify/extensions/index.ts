@@ -3868,6 +3868,7 @@ function getMode<T extends string>(value: unknown, allowed: readonly T[], fallba
 }
 
 const CORE_TOOL_OVERRIDES = new Set(["read", "bash", "grep", "find", "ls", "write", "edit"]);
+const NATIVE_TOOL_RENDERERS = new Set(["plan_mode_complete"]);
 
 const OPENAI_STYLE_TOOL_NAMES = new Set([
 	"apply_patch",
@@ -3971,8 +3972,13 @@ function isMcpToolName(name: unknown): boolean {
 	return name === "mcp" || /^mcp__/.test(name) || mcpToolNames.has(name);
 }
 
-function shouldUseGenericToolRenderer(name: unknown): boolean {
-	return typeof name === "string" && name.length > 0 && !CORE_TOOL_OVERRIDES.has(name);
+export function shouldUseGenericToolRenderer(name: unknown): boolean {
+	return (
+		typeof name === "string" &&
+		name.length > 0 &&
+		!CORE_TOOL_OVERRIDES.has(name) &&
+		!NATIVE_TOOL_RENDERERS.has(name)
+	);
 }
 
 function genericToolLabel(name: string): string {
