@@ -43,6 +43,7 @@ import {
 
 import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
+import { registerPrototypePatch as registerPrototypePatchBase } from "../../_shared/runtime/prototype-patch.ts";
 
 import { ClaudifyScreen } from "./claudify-screen.ts";
 import { installClaudeFooter, normalizeHexColor, patchEditorBorderColor } from "./footer.ts";
@@ -75,6 +76,16 @@ import {
 	type ThemeOverrideTarget,
 } from "./theme-sync.ts";
 
+const prototypePatchDisposers: Array<() => void> = [];
+const registerPrototypePatch: typeof registerPrototypePatchBase = (...args) => {
+	const dispose = registerPrototypePatchBase(...args);
+	prototypePatchDisposers.push(dispose);
+	return dispose;
+};
+function disposePrototypePatches(): void {
+	for (const dispose of prototypePatchDisposers.splice(0).reverse()) dispose();
+}
+
 const RESET = "\x1b[0m";
 const TRANSPARENT_BG = "\x1b[49m";
 const TRANSPARENT_RESET = `${RESET}${TRANSPARENT_BG}`;
@@ -85,14 +96,8 @@ const TRANSPARENT_RESET = `${RESET}${TRANSPARENT_BG}`;
 let BORDER_COLOR = "\x1b[38;5;238m";
 const ANSI_RE = /\x1b\[[0-9;]*m/g;
 const ANSI_PRESENT_RE = /\x1b\[[0-9;]*m/;
-const PATCH_FLAG = Symbol.for("pi-claudify:patched-container-render");
 const TOOL_RENDER_CACHE = Symbol.for("pi-claudify:tool-render-cache");
 const TOOL_THEME_REVISION = Symbol.for("pi-claudify:tool-theme-revision");
-const TOOL_CACHE_PATCH_FLAG = Symbol.for("pi-claudify:patched-tool-cache-invalidation");
-const TOOL_IMAGE_EXPAND_PATCH_FLAG = Symbol.for("pi-claudify:patched-read-image-expansion");
-const CUSTOM_MESSAGE_PATCH_FLAG = Symbol.for("pi-claudify:patched-custom-message-render");
-const COMPACTION_MESSAGE_PATCH_FLAG = Symbol.for("pi-claudify:patched-compaction-message-render");
-const USER_MESSAGE_PATCH_FLAG = Symbol.for("pi-claudify:patched-user-message-render");
 const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
 const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
@@ -818,10 +823,10 @@ function splitRenderedImageBlock(lines: string[]): { textLines: string[]; imageL
 
 function patchGlobalToolBorders(): void {
 	const proto = Container.prototype as any;
-	if (proto[PATCH_FLAG]) return;
-
-	const originalRender = proto.render;
-	proto.render = function patchedContainerRender(width: number): string[] {
+	registerPrototypePatch(proto, "render", {
+		name: "claudify:container-render",
+		order: 100,
+		wrap: (originalRender) => function patchedContainerRender(width: number): string[] {
 		const themeSync = ensureThemeOverrides();
 		if (!themeSync.enabled) return originalRender.call(this, width);
 		syncToolBackgroundMode();
@@ -897,9 +902,8 @@ function patchGlobalToolBorders(): void {
 			lines: result,
 		};
 		return result;
-	};
-
-	proto[PATCH_FLAG] = true;
+		},
+	});
 }
 
 function summarizeText(text: string, max = 60): string {
@@ -937,9 +941,6 @@ function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): vo
 	(timer as any)?.unref?.();
 }
 
-const ASSISTANT_PATCH_FLAG = Symbol.for("pi-claudify:patched-assistant-message");
-const TOOL_EXECUTION_PATCH_FLAG = Symbol.for("pi-claudify:patched-tool-execution");
-const TOOL_INDENT_PATCH_FLAG = Symbol.for("pi-claudify:patched-tool-row-indent");
 const OSC133_ZONE_START = "\x1b]133;A\x07";
 const OSC133_ZONE_END = "\x1b]133;B\x07";
 const OSC133_ZONE_FINAL = "\x1b]133;C\x07";
@@ -1171,22 +1172,20 @@ class ThinkingParagraph {
 
 function patchCustomMessageRender(): void {
 	const proto = CustomMessageComponent.prototype as any;
-	if (proto[CUSTOM_MESSAGE_PATCH_FLAG]) return;
-	const originalRender = proto.render;
-	if (typeof originalRender !== "function") return;
-	proto.render = function patchedCustomMessageRender(width: number) {
+	registerPrototypePatch(proto, "render", {
+		name: "claudify:custom-message-render",
+		wrap: (originalRender) => function patchedCustomMessageRender(width: number) {
 		const lines = originalRender.call(this, width);
 		return Array.isArray(lines) ? lines.map(normalizeLeadingCheckGlyph) : lines;
-	};
-	proto[CUSTOM_MESSAGE_PATCH_FLAG] = true;
+		},
+	});
 }
 
 function patchCompactionSummaryMessages(): void {
 	const proto = CompactionSummaryMessageComponent.prototype as any;
-	if (proto[COMPACTION_MESSAGE_PATCH_FLAG]) return;
-	const originalUpdateDisplay = proto.updateDisplay;
-	if (typeof originalUpdateDisplay !== "function") return;
-	proto.updateDisplay = function patchedCompactionSummaryDisplay() {
+	registerPrototypePatch(proto, "updateDisplay", {
+		name: "claudify:compaction-summary",
+		wrap: (originalUpdateDisplay) => function patchedCompactionSummaryDisplay() {
 		originalUpdateDisplay.call(this);
 		const summary = this.expanded && Array.isArray(this.children)
 			? this.children[this.children.length - 1]
@@ -1205,8 +1204,8 @@ function patchCompactionSummaryMessages(): void {
 			this.addChild(new Spacer(1));
 			this.addChild(summary);
 		}
-	};
-	proto[COMPACTION_MESSAGE_PATCH_FLAG] = true;
+		},
+	});
 }
 
 function stripOsc133Zones(line: string): string {
@@ -1313,10 +1312,10 @@ function colorizeUserPrefix(line: string): string {
 
 function patchUserMessageRender(): void {
 	const proto = UserMessageComponent.prototype as any;
-	if (proto[USER_MESSAGE_PATCH_FLAG]) return;
-	const originalRender = proto.render;
-	if (typeof originalRender !== "function") return;
-	proto.render = function patchedUserMessageRender(width: number) {
+	registerPrototypePatch(proto, "render", {
+		name: "claudify:user-message-render",
+		order: 100,
+		wrap: (originalRender) => function patchedUserMessageRender(width: number) {
 		// Duck-typed, not instanceof: the extension and pi can resolve separate
 		// copies of pi-tui, which makes instanceof fail across the boundary.
 		for (const child of (this as any).children ?? []) {
@@ -1351,15 +1350,15 @@ function patchUserMessageRender(): void {
 		rendered[0] = OSC133_ZONE_START + rendered[0];
 		rendered[rendered.length - 1] += OSC133_ZONE_END + OSC133_ZONE_FINAL;
 		return rendered;
-	};
-	proto[USER_MESSAGE_PATCH_FLAG] = true;
+		},
+	});
 }
 
 function patchAssistantMessages(): void {
 	const proto = AssistantMessageComponent.prototype as any;
-	if (proto[ASSISTANT_PATCH_FLAG]) return;
-	const originalUpdateContent = proto.updateContent;
-	proto.updateContent = function patchedUpdateContent(message: any) {
+	registerPrototypePatch(proto, "updateContent", {
+		name: "claudify:assistant-message",
+		wrap: (originalUpdateContent) => function patchedUpdateContent(message: any) {
 		if (!(this as any)[WORKED_START_KEY]) {
 			(this as any)[WORKED_START_KEY] = Date.now();
 		}
@@ -1400,13 +1399,12 @@ function patchAssistantMessages(): void {
 		if (typeof workedDuration === "number" && isFinalAssistantMessage && hasAssistantText && !hasWorkedDurationLine(message)) {
 			container.children.push(new Spacer(1), new Text(workedDurationText(workedDuration, componentStart), 0, 0));
 		}
-	};
-	proto[ASSISTANT_PATCH_FLAG] = true;
+		},
+	});
 }
 
 function patchToolRenderCacheInvalidation(): void {
 	const proto = ToolExecutionComponent.prototype as any;
-	if (proto[TOOL_CACHE_PATCH_FLAG]) return;
 
 	const methods = [
 		"updateDisplay",
@@ -1421,17 +1419,17 @@ function patchToolRenderCacheInvalidation(): void {
 	];
 
 	for (const method of methods) {
-		const original = proto[method];
-		if (typeof original !== "function") continue;
-		proto[method] = function patchedToolMutation(...args: any[]) {
+		registerPrototypePatch(proto, method, {
+			name: `claudify:tool-cache:${method}`,
+			order: 100,
+			wrap: (original) => function patchedToolMutation(...args: any[]) {
 			clearToolRenderCache(this);
 			const result = original.apply(this, args);
 			clearToolRenderCache(this);
 			return result;
-		};
+			},
+		});
 	}
-
-	proto[TOOL_CACHE_PATCH_FLAG] = true;
 }
 
 function deleteRenderedKittyImages(component: any): void {
@@ -1454,10 +1452,10 @@ function removeImageChildren(component: any): void {
 
 function patchReadImageExpansion(): void {
 	const proto = ToolExecutionComponent.prototype as any;
-	if (proto[TOOL_IMAGE_EXPAND_PATCH_FLAG]) return;
-	const originalUpdateDisplay = proto.updateDisplay;
-	if (typeof originalUpdateDisplay !== "function") return;
-	proto.updateDisplay = function patchedReadImageUpdateDisplay(...args: any[]) {
+	registerPrototypePatch(proto, "updateDisplay", {
+		name: "claudify:read-image-expansion",
+		order: 200,
+		wrap: (originalUpdateDisplay) => function patchedReadImageUpdateDisplay(...args: any[]) {
 		const result = originalUpdateDisplay.apply(this, args);
 		const hasImage = Array.isArray(this.result?.content) && this.result.content.some((block: any) => block?.type === "image");
 		if (this.toolName === "read" && hasImage && this.expanded !== true) {
@@ -1465,8 +1463,8 @@ function patchReadImageExpansion(): void {
 			clearToolRenderCache(this);
 		}
 		return result;
-	};
-	proto[TOOL_IMAGE_EXPAND_PATCH_FLAG] = true;
+		},
+	});
 }
 
 /**
@@ -1475,10 +1473,10 @@ function patchReadImageExpansion(): void {
  */
 function patchToolRowIndent(): void {
 	const proto = ToolExecutionComponent.prototype as any;
-	if (proto[TOOL_INDENT_PATCH_FLAG]) return;
-	const originalUpdateDisplay = proto.updateDisplay;
-	if (typeof originalUpdateDisplay !== "function") return;
-	proto.updateDisplay = function patchedToolIndentUpdateDisplay(...args: any[]) {
+	registerPrototypePatch(proto, "updateDisplay", {
+		name: "claudify:tool-row-indent",
+		order: 300,
+		wrap: (originalUpdateDisplay) => function patchedToolIndentUpdateDisplay(...args: any[]) {
 		for (const box of [this.contentBox, this.contentText]) {
 			if (box && box.paddingX !== 0) {
 				box.paddingX = 0;
@@ -1486,25 +1484,24 @@ function patchToolRowIndent(): void {
 			}
 		}
 		return originalUpdateDisplay.apply(this, args);
-	};
-	proto[TOOL_INDENT_PATCH_FLAG] = true;
+		},
+	});
 }
 
 function patchToolExecutionRenderers(): void {
 	const proto = ToolExecutionComponent.prototype as any;
-	if (proto[TOOL_EXECUTION_PATCH_FLAG]) return;
-
-	const originalHasRendererDefinition = proto.hasRendererDefinition;
-	const originalGetCallRenderer = proto.getCallRenderer;
-	const originalGetResultRenderer = proto.getResultRenderer;
-
-	if (typeof originalHasRendererDefinition === "function") {
-		proto.hasRendererDefinition = function patchedHasRendererDefinition() {
+	registerPrototypePatch(proto, "hasRendererDefinition", {
+		name: "claudify:has-renderer",
+		order: 100,
+		wrap: (originalHasRendererDefinition) => function patchedHasRendererDefinition() {
 			return originalHasRendererDefinition.call(this) || shouldUseGenericToolRenderer(this?.toolName);
-		};
-	}
+		},
+	});
 
-	proto.getCallRenderer = function patchedGetCallRenderer() {
+	registerPrototypePatch(proto, "getCallRenderer", {
+		name: "claudify:call-renderer",
+		order: 100,
+		wrap: (originalGetCallRenderer) => function patchedGetCallRenderer() {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
 			return (args: any, theme: Theme, ctx: any) =>
@@ -1513,10 +1510,14 @@ function patchToolExecutionRenderers(): void {
 		if (shouldUseGenericToolRenderer(toolName)) {
 			return (args: any, theme: Theme, ctx: any) => renderGenericToolCall(toolName, args, theme, ctx);
 		}
-		return typeof originalGetCallRenderer === "function" ? originalGetCallRenderer.call(this) : undefined;
-	};
+		return originalGetCallRenderer.call(this);
+		},
+	});
 
-	proto.getResultRenderer = function patchedGetResultRenderer() {
+	registerPrototypePatch(proto, "getResultRenderer", {
+		name: "claudify:result-renderer",
+		order: 100,
+		wrap: (originalGetResultRenderer) => function patchedGetResultRenderer() {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
 			return (result: any, options: any, theme: Theme, ctx: any) =>
@@ -1526,10 +1527,9 @@ function patchToolExecutionRenderers(): void {
 			return (result: any, options: any, theme: Theme, ctx: any) =>
 				renderGenericToolResult(toolName, result, options, theme, ctx);
 		}
-		return typeof originalGetResultRenderer === "function" ? originalGetResultRenderer.call(this) : undefined;
-	};
-
-	proto[TOOL_EXECUTION_PATCH_FLAG] = true;
+		return originalGetResultRenderer.call(this);
+		},
+	});
 }
 
 function shortPath(cwd: string, filePath: string): string {
@@ -4974,7 +4974,7 @@ export default function (pi: ExtensionAPI): void {
 	patchAssistantMessages();
 	patchToolRowIndent();
 	patchToolExecutionRenderers();
-	patchEditorBorderColor();
+	prototypePatchDisposers.push(patchEditorBorderColor());
 	applyDiffPalette();
 	registerThinkingLabels(pi);
 
@@ -5635,6 +5635,7 @@ export default function (pi: ExtensionAPI): void {
 		}
 	});
 	pi.on("session_shutdown", async () => {
+		disposePrototypePatches();
 		deactivateThemeOverrides(themeSyncOwner);
 		for (const entry of _blinkContexts.values()) {
 			entry.key._blinkActive = false;

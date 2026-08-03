@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
+import { registerPrototypePatch } from "../../_shared/runtime/prototype-patch.ts";
 
 import { readSettings } from "./settings.ts";
 
@@ -322,7 +323,10 @@ function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): vo
 	(timer as any)?.unref?.();
 }
 
-(Loader.prototype as any).updateDisplay = function patchedUpdateDisplay() {
+function installLoaderPatches(): Array<() => void> {
+	return [registerPrototypePatch(Loader.prototype, "updateDisplay", {
+	name: "claudify:loader-update-display",
+	override: function patchedUpdateDisplay() {
 	applyThemeColors(this.ui?.theme);
 	const frame = OB_FRAMES[this.currentFrame % OB_FRAMES.length];
 	const message = typeof this.message === "string" && RAW_ANSI_RE.test(this.message)
@@ -337,9 +341,12 @@ function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): vo
 		(globalThis as any)[ACTIVE_UI_SYMBOL] = this.ui;
 		this.ui.requestRender();
 	}
-};
+	},
+}),
 
-Loader.prototype.start = function patchedStart() {
+registerPrototypePatch(Loader.prototype, "start", {
+	name: "claudify:loader-start",
+	override: function patchedStart() {
 	this.stop();
 	(this as any)[LOADER_ACTIVE] = true;
 	const generation = ((this as any)[LOADER_GENERATION] ?? 0) + 1;
@@ -360,16 +367,21 @@ Loader.prototype.start = function patchedStart() {
 		(this as any).intervalId = timer;
 	};
 	scheduleNext();
-};
+	},
+}),
 
-Loader.prototype.stop = function patchedStop() {
+registerPrototypePatch(Loader.prototype, "stop", {
+	name: "claudify:loader-stop",
+	override: function patchedStop() {
 	(this as any)[LOADER_ACTIVE] = false;
 	(this as any)[LOADER_GENERATION] = ((this as any)[LOADER_GENERATION] ?? 0) + 1;
 	if ((this as any).intervalId) {
 		clearTimeout((this as any).intervalId);
 		(this as any).intervalId = null;
 	}
-};
+	},
+})];
+}
 
 // ---------------------------------------------------------------------------
 // Spinner verbs — fun/whimsical loading messages (different set from OpenBrawd)
@@ -627,6 +639,7 @@ const TURN_COMPLETION_MS = 2_500;
 
 
 export default function (pi: ExtensionAPI) {
+	const loaderPatchDisposers = installLoaderPatches();
 	let agentStartTime = 0;
 	let turnStartTime = 0;
 	let refreshTimer: ReturnType<typeof setTimeout> | null = null;
@@ -952,6 +965,7 @@ export default function (pi: ExtensionAPI) {
 	});
 
 	pi.on("session_shutdown", async () => {
+		for (const dispose of loaderPatchDisposers.splice(0).reverse()) dispose();
 		turnActive = false;
 		clearDisplay();
 		activeCtx = null;

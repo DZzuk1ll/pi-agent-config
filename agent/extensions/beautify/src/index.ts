@@ -2,6 +2,7 @@ import { spawnSync } from "node:child_process";
 
 import { CustomEditor, type AppKeybinding, type ExtensionAPI, type KeybindingsManager, type Theme } from "@earendil-works/pi-coding-agent";
 import { getKeybindings, Markdown, matchesKey, truncateToWidth, type AutocompleteProvider, type EditorComponent, type EditorTheme, type TUI } from "@earendil-works/pi-tui";
+import { registerPrototypePatch } from "../../_shared/runtime/prototype-patch.ts";
 
 interface Attachment {
   token: string;
@@ -12,7 +13,6 @@ const CLIPBOARD_PATH_RE = /(?:[^\s"'`<>]+[\\/])?pi-clipboard-[0-9a-f-]+\.(?:png|
 const TOKEN_RE = /\[image(\d+)\]/g;
 const TOKEN_LINE_RE = /\[image\d+\]/g;
 const IMAGE_FILE_RE = /\.(?:png|jpe?g|webp|gif)$/i;
-const MARKDOWN_PATCH_STATE = Symbol.for("smoose.pi-beautify.markdown.patch");
 const PLAIN_CODE_LANGS = new Set(["", "text", "plain", "plaintext"]);
 const INPUT_PREFIX = "›";
 const INPUT_PADDING = 2;
@@ -50,19 +50,6 @@ interface MarkdownRuntime {
   applyDefaultStyle?: (text: string) => string;
 }
 
-type MarkdownRenderToken = (this: MarkdownRuntime, token: unknown, width: number, nextTokenType?: string, styleContext?: unknown) => string[];
-
-interface MarkdownPatchState {
-  installed: true;
-  original: MarkdownRenderToken;
-  renderCodeToken: (instance: MarkdownRuntime, token: MarkdownCodeToken, nextTokenType?: string) => string[];
-}
-
-type PatchedMarkdownPrototype = {
-  renderToken?: MarkdownRenderToken;
-  [key: symbol]: unknown;
-};
-
 function isMarkdownCodeToken(token: unknown): token is MarkdownCodeToken {
   return typeof token === "object" && token !== null && (token as { type?: unknown }).type === "code";
 }
@@ -86,29 +73,14 @@ function renderCodeTokenWithoutFences(instance: MarkdownRuntime, token: Markdown
   return lines;
 }
 
-function installMarkdownFencePatch(): void {
-  const proto = Markdown.prototype as unknown as PatchedMarkdownPrototype;
-  const existing = proto[MARKDOWN_PATCH_STATE] as MarkdownPatchState | undefined;
-  if (existing?.installed) {
-    existing.renderCodeToken = renderCodeTokenWithoutFences;
-    return;
-  }
-
-  const original = proto.renderToken;
-  if (typeof original !== "function") return;
-
-  const state: MarkdownPatchState = {
-    installed: true,
-    original,
-    renderCodeToken: renderCodeTokenWithoutFences,
-  };
-  proto[MARKDOWN_PATCH_STATE] = state;
-
-  proto.renderToken = function (this: MarkdownRuntime, token: unknown, width: number, nextTokenType?: string, styleContext?: unknown): string[] {
-    const current = proto[MARKDOWN_PATCH_STATE] as MarkdownPatchState | undefined;
-    if (current && isMarkdownCodeToken(token)) return current.renderCodeToken(this, token, nextTokenType);
-    return (current?.original ?? original).call(this, token, width, nextTokenType, styleContext);
-  };
+function installMarkdownFencePatch(): () => void {
+	return registerPrototypePatch(Markdown.prototype, "renderToken", {
+    name: "beautify:markdown-fences",
+    wrap: (original) => function (this: MarkdownRuntime, token: unknown, width: number, nextTokenType?: string, styleContext?: unknown): string[] {
+      if (isMarkdownCodeToken(token)) return renderCodeTokenWithoutFences(this, token, nextTokenType);
+      return original.call(this, token, width, nextTokenType, styleContext) as string[];
+    },
+  });
 }
 
 function imageChip(id: number): string {
@@ -497,7 +469,7 @@ function collectImageAttachments(text: string, attachments: Map<string, Attachme
 }
 
 export default function piBeautify(pi: ExtensionAPI) {
-  installMarkdownFencePatch();
+	const disposeMarkdownFencePatch = installMarkdownFencePatch();
 
   const attachments = new Map<string, Attachment>();
 
@@ -515,8 +487,9 @@ export default function piBeautify(pi: ExtensionAPI) {
     ctx.ui.setStatus("pi-beautify", ctx.ui.theme.fg("dim", "beautify"));
   });
 
-  pi.on("session_shutdown", (_event, ctx) => {
-    attachments.clear();
+	pi.on("session_shutdown", (_event, ctx) => {
+		disposeMarkdownFencePatch();
+		attachments.clear();
     if (ctx.hasUI) ctx.ui.setStatus("pi-beautify", undefined);
   });
 

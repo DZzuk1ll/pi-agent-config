@@ -3,6 +3,7 @@ import { basename, dirname } from "node:path";
 
 import { Theme } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { registerPrototypePatch } from "../../_shared/runtime/prototype-patch.ts";
 
 import { readSettings, type SettingsFile } from "./settings.ts";
 
@@ -713,8 +714,6 @@ export function installClaudeFooter(ctx: any, pi?: any): void {
 	});
 }
 
-const BORDER_PATCH_FLAG = Symbol.for("claudify.editorBorderPatch");
-
 /**
  * Pin pi's input-box border to gray, the way Claude Code keeps it in every
  * permission mode and at every effort level. pi reassigns
@@ -725,12 +724,11 @@ const BORDER_PATCH_FLAG = Symbol.for("claudify.editorBorderPatch");
  * waiting for a thinking-level event. Bash mode (getBashModeBorderColor) is
  * left untouched — Claude Code recolors that state too.
  */
-export function patchEditorBorderColor(): void {
+export function patchEditorBorderColor(): () => void {
 	const proto = Theme.prototype as any;
-	if (proto[BORDER_PATCH_FLAG]) return;
-	const original = proto.getThinkingBorderColor;
-	if (typeof original !== "function") return;
-	proto.getThinkingBorderColor = function patchedThinkingBorderColor(level: unknown): (str: string) => string {
+	return registerPrototypePatch(proto, "getThinkingBorderColor", {
+		name: "claudify:editor-border-color",
+		wrap: (original) => function patchedThinkingBorderColor(level: unknown): (str: string) => string {
 		const passthrough = original.call(this, level);
 		return (str: string): string => {
 			if (resolveFooterSettings(readSettings().values).editorBorder !== "gray") return passthrough(str);
@@ -740,6 +738,6 @@ export function patchEditorBorderColor(): void {
 				return `${FALLBACK_BORDER_GRAY}${str}${RESET}`;
 			}
 		};
-	};
-	proto[BORDER_PATCH_FLAG] = true;
+		},
+	});
 }

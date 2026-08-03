@@ -18,12 +18,9 @@ import {
 	formatCompactUserMessageLines,
 	OSC133_ZONE_RE,
 } from "../_shared/runtime/compact-transcript-format.ts";
+import { registerPrototypePatch } from "../_shared/runtime/prototype-patch.ts";
 
-const USER_RENDER_PATCH = Symbol.for("compact-transcript:user-render:v4");
-const ASSISTANT_RENDER_PATCH = Symbol.for("compact-transcript:assistant-render:v4");
 const WORKING_MESSAGE_PATCH = Symbol.for("compact-transcript:working-message");
-const TOOL_PREVIEW_PATCH = Symbol.for("compact-transcript:tool-preview");
-const TOOL_GROUPING_PATCH = Symbol.for("compact-transcript:tool-grouping:v4");
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
 
 function readUiSettings(): Record<string, unknown> {
@@ -56,12 +53,12 @@ function previewLines(text: string): string[] {
 		.map((line) => line.length > 140 ? `${line.slice(0, 139)}…` : line);
 }
 
-function patchCollapsedToolPreviews(): void {
+function patchCollapsedToolPreviews(): () => void {
 	const prototype = ToolExecutionComponent.prototype as any;
-	if (prototype[TOOL_PREVIEW_PATCH] || typeof prototype.getResultRenderer !== "function") return;
-
-	const getResultRenderer = prototype.getResultRenderer;
-	prototype.getResultRenderer = function compactResultRenderer() {
+	return registerPrototypePatch(prototype, "getResultRenderer", {
+		name: "compact-transcript:tool-preview",
+		order: 200,
+		wrap: (getResultRenderer) => function compactResultRenderer() {
 		const renderer = getResultRenderer.call(this);
 		const toolName = typeof this.toolName === "string" ? this.toolName : "";
 		if (typeof renderer !== "function" || !["read", "grep", "find", "ls"].includes(toolName)) {
@@ -89,16 +86,16 @@ function patchCollapsedToolPreviews(): void {
 			));
 			return container;
 		};
-	};
-	prototype[TOOL_PREVIEW_PATCH] = true;
+		},
+	});
 }
 
-function patchToolGrouping(): void {
+function patchToolGrouping(): () => void {
 	const prototype = Container.prototype as any;
-	if (prototype[TOOL_GROUPING_PATCH] || typeof prototype.render !== "function") return;
-
-	const render = prototype.render;
-	prototype.render = function compactGroupedRender(width: number): string[] {
+	return registerPrototypePatch(prototype, "render", {
+		name: "compact-transcript:tool-grouping",
+		order: 200,
+		wrap: (render) => function compactGroupedRender(width: number): string[] {
 		const children = Array.isArray(this.children) ? this.children : [];
 		if (isToolComponent(this) || !children.some(isToolComponent)) {
 			return render.call(this, width);
@@ -111,8 +108,8 @@ function patchToolGrouping(): void {
 			isEmptyToolRoundAssistant,
 			resolveTodoGrouping(settings),
 		);
-	};
-	prototype[TOOL_GROUPING_PATCH] = true;
+		},
+	});
 }
 
 function isEmptyToolRoundAssistant(child: any): boolean {
@@ -132,25 +129,25 @@ function isEmptyToolRoundAssistant(child: any): boolean {
 	return hasToolCall && !hasVisibleAssistantContent;
 }
 
-function patchUserPrefix(): void {
+function patchUserPrefix(): () => void {
 	const prototype = UserMessageComponent.prototype as any;
-	if (prototype[USER_RENDER_PATCH] || typeof prototype.render !== "function") return;
-
-	const render = prototype.render;
-	prototype.render = function compactUserRender(width: number): string[] {
+	return registerPrototypePatch(prototype, "render", {
+		name: "compact-transcript:user-render",
+		order: 200,
+		wrap: (render) => function compactUserRender(width: number): string[] {
 		const lines = render.call(this, width);
 		if (!Array.isArray(lines)) return lines;
 		return formatCompactUserMessageLines(lines);
-	};
-	prototype[USER_RENDER_PATCH] = true;
+		},
+	});
 }
 
-function patchDoneLine(): void {
+function patchDoneLine(): () => void {
 	const prototype = AssistantMessageComponent.prototype as any;
-	if (prototype[ASSISTANT_RENDER_PATCH] || typeof prototype.render !== "function") return;
-
-	const render = prototype.render;
-	prototype.render = function compactAssistantRender(width: number): string[] {
+	return registerPrototypePatch(prototype, "render", {
+		name: "compact-transcript:assistant-render",
+		order: 200,
+		wrap: (render) => function compactAssistantRender(width: number): string[] {
 		const lines = render.call(this, width);
 		if (!Array.isArray(lines)) return lines;
 		const normalized = formatDoneLineSpacing(
@@ -178,32 +175,46 @@ function patchDoneLine(): void {
 			: normalized;
 		while (visible.length > 0 && !visible[0]!.replace(ANSI_SGR_RE, "").trim()) visible.shift();
 		return visible;
-	};
-	prototype[ASSISTANT_RENDER_PATCH] = true;
+		},
+	});
 }
 
-function patchWorkingMessage(ui: ExtensionUIContext): void {
+function patchWorkingMessage(ui: ExtensionUIContext): () => void {
 	const target = ui as any;
-	if (target[WORKING_MESSAGE_PATCH] || typeof target.setWorkingMessage !== "function") return;
+	if (target[WORKING_MESSAGE_PATCH] || typeof target.setWorkingMessage !== "function") return () => {};
 
-	const setWorkingMessage = target.setWorkingMessage.bind(target);
-	target.setWorkingMessage = (message?: string): void => {
-		setWorkingMessage(
+	const original = target.setWorkingMessage;
+	const patched = (message?: string): void => {
+		original.call(target,
 			typeof message === "string"
 				? message.replace("✻ Worked for ", "Done in ")
 				: message,
 		);
 	};
-	target[WORKING_MESSAGE_PATCH] = true;
+	target.setWorkingMessage = patched;
+	target[WORKING_MESSAGE_PATCH] = patched;
+	return () => {
+		if (target[WORKING_MESSAGE_PATCH] !== patched) return;
+		if (target.setWorkingMessage === patched) target.setWorkingMessage = original;
+		delete target[WORKING_MESSAGE_PATCH];
+	};
 }
 
 export default function compactTranscript(pi: ExtensionAPI): void {
+	let disposers: Array<() => void> = [];
+	const disposePatches = (): void => {
+		for (const dispose of disposers.splice(0).reverse()) dispose();
+	};
 	pi.on("session_start", async (_event, context) => {
 		// Package extensions load after user extensions, so patch after all factories initialize.
-		patchUserPrefix();
-		patchDoneLine();
-		patchCollapsedToolPreviews();
-		patchToolGrouping();
-		patchWorkingMessage(context.ui);
+		disposePatches();
+		disposers = [
+			patchUserPrefix(),
+			patchDoneLine(),
+			patchCollapsedToolPreviews(),
+			patchToolGrouping(),
+			patchWorkingMessage(context.ui),
+		];
 	});
+	pi.on("session_shutdown", disposePatches);
 }
