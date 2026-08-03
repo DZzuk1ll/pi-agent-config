@@ -52,6 +52,25 @@ export interface TaskDetails {
 	error?: string;
 }
 
+export const TaskSnapshotSchema = Type.Object({
+	id: Type.Integer({ minimum: 1 }),
+	subject: Type.String({ minLength: 1 }),
+	description: Type.Optional(Type.String()),
+	activeForm: Type.Optional(Type.String()),
+	status: StringEnum(["pending", "in_progress", "completed", "deleted"] as const),
+	blockedBy: Type.Optional(Type.Array(Type.Integer({ minimum: 1 }))),
+	owner: Type.Optional(Type.String()),
+	metadata: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+});
+
+export const TaskDetailsSchema = Type.Object({
+	action: StringEnum(["create", "update", "list", "get", "delete", "clear"] as const),
+	params: Type.Record(Type.String(), Type.Unknown()),
+	tasks: Type.Array(TaskSnapshotSchema),
+	nextId: Type.Integer({ minimum: 1 }),
+	error: Type.Optional(Type.String()),
+});
+
 /**
  * Open-shape input bag the reducer accepts. Stays an interface so the index
  * signature (`[key: string]: unknown`) lets the runtime pass through TypeBox

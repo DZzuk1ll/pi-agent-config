@@ -64,6 +64,21 @@ function taskChanged(before: Task, after: Task): boolean {
 	);
 }
 
+function activeDependent(state: TaskState, id: number): Task | undefined {
+	return state.tasks.find((task) => task.status !== "deleted" && task.blockedBy?.includes(id));
+}
+
+function validateInProgress(state: TaskState, task: Task): string | undefined {
+	if (!task.activeForm?.trim()) return "activeForm required when status is in_progress";
+	const other = state.tasks.find((candidate) => candidate.id !== task.id && candidate.status === "in_progress");
+	if (other) return `#${other.id} is already in_progress`;
+	for (const dependencyId of task.blockedBy ?? []) {
+		const dependency = state.tasks.find((candidate) => candidate.id === dependencyId);
+		if (dependency?.status !== "completed") return `blockedBy: #${dependencyId} must be completed before starting #${task.id}`;
+	}
+	return undefined;
+}
+
 /**
  * Pure reducer: (state, action, params) → (state, op). Mirrors the
  * `applyTaskMutation` of pre-refactor `todo.ts` minus content/details
@@ -82,6 +97,9 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 				return errorResult(state, "subject required for create");
 			}
 			if (params.blockedBy?.length) {
+				if (new Set(params.blockedBy).size !== params.blockedBy.length) {
+					return errorResult(state, "blockedBy contains duplicate task ids");
+				}
 				for (const dep of params.blockedBy) {
 					const depTask = state.tasks.find((t) => t.id === dep);
 					if (!depTask) return errorResult(state, `blockedBy: #${dep} not found`);
@@ -127,6 +145,9 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 					state,
 					"update requires at least one mutable field: subject, description, activeForm, status, owner, metadata, addBlockedBy, or removeBlockedBy",
 				);
+			if (params.subject !== undefined && !params.subject.trim()) {
+				return errorResult(state, "subject must not be empty");
+			}
 
 			let newStatus = current.status;
 			if (params.status !== undefined) {
@@ -173,6 +194,14 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			else delete updated.blockedBy;
 			if (newMetadata === undefined) delete updated.metadata;
 			else updated.metadata = newMetadata;
+			if (updated.status === "in_progress") {
+				const error = validateInProgress(state, updated);
+				if (error) return errorResult(state, error);
+			}
+			if (updated.status === "deleted" && current.status !== "deleted") {
+				const dependent = activeDependent(state, current.id);
+				if (dependent) return errorResult(state, `cannot delete #${current.id}; required by #${dependent.id}`);
+			}
 
 			const newTasks = [...state.tasks];
 			newTasks[idx] = updated;
@@ -213,6 +242,8 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			const current = state.tasks[idx];
 			if (!current) return errorResult(state, `#${params.id} not found`);
 			if (current.status === "deleted") return errorResult(state, `#${current.id} is already deleted`);
+			const dependent = activeDependent(state, current.id);
+			if (dependent) return errorResult(state, `cannot delete #${current.id}; required by #${dependent.id}`);
 			const updated: Task = { ...current, status: "deleted" };
 			const newTasks = [...state.tasks];
 			newTasks[idx] = updated;
@@ -223,9 +254,12 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 		}
 
 		case "clear": {
+			if (state.tasks.some((task) => task.status === "pending" || task.status === "in_progress")) {
+				return errorResult(state, "cannot clear while pending or in_progress tasks exist");
+			}
 			const count = state.tasks.length;
 			return {
-				state: { tasks: [], nextId: 1 },
+				state: { tasks: [], nextId: state.nextId },
 				op: { kind: "clear", count },
 			};
 		}

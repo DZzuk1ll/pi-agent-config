@@ -1,4 +1,5 @@
-import type { TaskDetails } from "../tool/types.js";
+import { Check } from "typebox/value";
+import { TaskDetailsSchema, type Task, type TaskDetails } from "../tool/types.js";
 import { EMPTY_STATE, type TaskState } from "./state.js";
 
 /**
@@ -7,9 +8,43 @@ import { EMPTY_STATE, type TaskState } from "./state.js";
  * skipped silently.
  */
 export function isTaskDetails(value: unknown): value is TaskDetails {
-	if (!value || typeof value !== "object") return false;
-	const v = value as Record<string, unknown>;
-	return Array.isArray(v.tasks) && typeof v.nextId === "number";
+	if (!Check(TaskDetailsSchema, value)) return false;
+	return isSemanticallyValidSnapshot(value.tasks, value.nextId);
+}
+
+function isSemanticallyValidSnapshot(tasks: readonly Task[], nextId: number): boolean {
+	const byId = new Map<number, Task>();
+	let inProgress = 0;
+	for (const task of tasks) {
+		if (!task.subject.trim() || byId.has(task.id)) return false;
+		byId.set(task.id, task);
+		if (task.status === "in_progress" && ++inProgress > 1) return false;
+	}
+	if (nextId <= Math.max(0, ...byId.keys())) return false;
+
+	for (const task of tasks) {
+		const dependencies = task.blockedBy ?? [];
+		if (new Set(dependencies).size !== dependencies.length) return false;
+		for (const id of dependencies) {
+			const dependency = byId.get(id);
+			if (id === task.id || !dependency || dependency.status === "deleted") return false;
+		}
+	}
+
+	const visiting = new Set<number>();
+	const visited = new Set<number>();
+	const visit = (id: number): boolean => {
+		if (visiting.has(id)) return false;
+		if (visited.has(id)) return true;
+		visiting.add(id);
+		for (const dependency of byId.get(id)?.blockedBy ?? []) {
+			if (!visit(dependency)) return false;
+		}
+		visiting.delete(id);
+		visited.add(id);
+		return true;
+	};
+	return tasks.every((task) => visit(task.id));
 }
 
 /**
@@ -30,7 +65,11 @@ export function replayFromBranch(ctx: { sessionManager: { getBranch(): Iterable<
 		if (msg?.role !== "toolResult" || msg.toolName !== "todo") continue;
 		if (!isTaskDetails(msg.details)) continue;
 		result = {
-			tasks: msg.details.tasks.map((t) => ({ ...t })),
+			tasks: msg.details.tasks.map((task) => ({
+				...task,
+				...(task.blockedBy ? { blockedBy: [...task.blockedBy] } : {}),
+				...(task.metadata ? { metadata: { ...task.metadata } } : {}),
+			})),
 			nextId: msg.details.nextId,
 		};
 	}

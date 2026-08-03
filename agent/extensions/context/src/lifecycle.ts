@@ -47,8 +47,14 @@ export function register_context_lifecycle(pi: ExtensionAPI): void {
 				...scope_from_context(ctx),
 			});
 			if (!stored) return;
+			const first_text_index = event.content.findIndex(is_text_content);
+			const content: typeof event.content = [];
+			for (const [index, item] of event.content.entries()) {
+				if (!is_text_content(item)) content.push(item);
+				else if (index === first_text_index) content.push({ type: 'text', text: stored.receipt });
+			}
 			return {
-				content: [{ type: 'text' as const, text: stored.receipt }],
+				content,
 			};
 		} catch {
 			return;

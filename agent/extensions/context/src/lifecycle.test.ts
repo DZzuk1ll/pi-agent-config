@@ -106,4 +106,48 @@ describe('register_context_lifecycle', () => {
 			get_context_store().search('needle-token', { global: true }),
 		).toHaveLength(1);
 	});
+
+	it('replaces all text at the first text position and preserves non-text blocks', async () => {
+		process.env.MY_PI_CONTEXT_DB = temp_db();
+		const { pi, hooks } = fake_pi();
+		register_context_lifecycle(pi);
+		const tool_result = hooks.get('tool_result')![0]!;
+		const image_a = { type: 'image', data: 'a', mimeType: 'image/png' };
+		const image_b = { type: 'image', data: 'b', mimeType: 'image/png' };
+
+		const text_first = (await tool_result({
+			toolName: 'bash',
+			content: [
+				{ type: 'text', text: `first\n${'x\n'.repeat(400)}` },
+				image_a,
+				{ type: 'text', text: 'second' },
+				image_b,
+			],
+		})) as { content: unknown[] };
+		expect(text_first.content).toHaveLength(3);
+		expect(text_first.content[0]).toMatchObject({ type: 'text' });
+		expect(text_first.content.slice(1)).toEqual([image_a, image_b]);
+
+		const image_first = (await tool_result({
+			toolName: 'bash',
+			content: [image_a, { type: 'text', text: `third\n${'y\n'.repeat(400)}` }, image_b],
+		})) as { content: unknown[] };
+		expect(image_first.content).toHaveLength(3);
+		expect(image_first.content[0]).toEqual(image_a);
+		expect(image_first.content[1]).toMatchObject({ type: 'text' });
+		expect(image_first.content[2]).toEqual(image_b);
+	});
+
+	it('leaves an oversized result unchanged when sidecar persistence fails', async () => {
+		const db_directory = mkdtempSync(join(tmpdir(), 'pi-context-lifecycle-db-dir-'));
+		dirs.push(db_directory);
+		process.env.MY_PI_CONTEXT_DB = db_directory;
+		const { pi, hooks } = fake_pi();
+		register_context_lifecycle(pi);
+		const replacement = await hooks.get('tool_result')![0]!({
+			toolName: 'bash',
+			content: [{ type: 'text', text: `kept\n${'z\n'.repeat(400)}` }],
+		});
+		expect(replacement).toBeUndefined();
+	});
 });
