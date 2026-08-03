@@ -1,7 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "../shared/tool-result.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { Type } from "typebox";
 import {
@@ -14,6 +14,7 @@ import {
 } from "../runs/shared/pi-args.ts";
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
+import { registerSubagentTool } from "../extension/tool-registration.ts";
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -299,7 +300,7 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
 				return sendSupervisorRequest(params as ContactSupervisorParams, signal);
 			},
 		};
-		pi.registerTool(tool);
+		registerSubagentTool(pi, tool);
 	}
 }
 
@@ -613,7 +614,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	let lastStaleCleanupAt = 0;
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pending, state));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) registerSubagentTool(pi, buildParentSupervisorTool(pending, state));
 	};
 
 	const cleanupStaleChannelsIfDue = (): void => {

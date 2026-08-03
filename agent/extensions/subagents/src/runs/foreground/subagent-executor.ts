@@ -1,7 +1,8 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "../../shared/tool-result.ts";
+import type { SubagentToolParams } from "../../extension/schemas.ts";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { AgentConfig, AgentScope } from "../../agents/agents.ts";
 import { getArtifactsDir, getProjectChainRunsDir } from "../../shared/artifacts.ts";
@@ -142,57 +143,15 @@ interface TaskParam {
 	toolBudget?: ToolBudgetConfig;
 }
 
-export interface SubagentParamsLike {
-	action?: string;
-	id?: string;
-	runId?: string;
-	dir?: string;
-	index?: number;
-	view?: "fleet" | "transcript";
-	lines?: number;
-	agent?: string;
-	task?: string;
-	message?: string;
-	steeringRecovery?: boolean;
-	chain?: ChainStep[];
-	tasks?: TaskParam[];
-	concurrency?: number;
-	worktree?: boolean;
-	context?: "fresh" | "fork";
-	async?: boolean;
-	foregroundOnly?: boolean;
-	timeoutMs?: number;
-	maxRuntimeMs?: number;
-	turnBudget?: TurnBudgetConfig;
+export type SubagentParamsLike = SubagentToolParams & {
 	/** Internal-only strict turn-boundary enforcement for versioned foreground delegation. */
 	enforceHardTurnLimit?: boolean;
-	toolBudget?: ToolBudgetConfig;
-	clarify?: boolean;
-	share?: boolean;
-	control?: ControlConfig;
-	sessionDir?: string;
-	cwd?: string;
+	foregroundOnly?: boolean;
 	maxOutput?: MaxOutputConfig;
-	artifacts?: boolean;
-	includeProgress?: boolean;
-	model?: string;
-	thinking?: string | false;
-	scope?: string;
-	target?: string;
-	skill?: string | string[] | boolean;
-	output?: string | boolean;
-	outputMode?: "inline" | "file-only";
-	outputSchema?: JsonSchemaObject;
-	agentScope?: unknown;
-	chainDir?: string;
-	acceptance?: AcceptanceInput;
-	agentContract?: AgentContract;
-	schedule?: string;
-	scheduleName?: string;
-	chainName?: string;
-	config?: unknown;
-	additional?: number;
-}
+	delegatedThinkingOverride?: AgentConfig["thinking"];
+	delegatedAllowZeroToolBudget?: true;
+	delegatedUiOwnerRunId?: string;
+};
 
 function rememberParentModel(state: { currentSessionId?: string | null; lastParentModel?: ParentModel }, sessionId: string | null, model: unknown): ParentModel | undefined {
 	if (state.currentSessionId !== sessionId) state.lastParentModel = undefined;
@@ -4295,17 +4254,12 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 		ctx: ExtensionContext,
 	): Promise<AgentToolResult<Details>> => {
 		const delegatedParams = { ...params };
-		const privateParams = delegatedParams as SubagentParamsLike & {
-			delegatedThinkingOverride?: AgentConfig["thinking"];
-			delegatedAllowZeroToolBudget?: true;
-			delegatedUiOwnerRunId?: string;
-		};
-		const thinkingOverride = privateParams.delegatedThinkingOverride;
-		const allowZeroToolBudget = privateParams.delegatedAllowZeroToolBudget === true;
-		const uiOwnerRunId = privateParams.delegatedUiOwnerRunId;
-		delete privateParams.delegatedThinkingOverride;
-		delete privateParams.delegatedAllowZeroToolBudget;
-		delete privateParams.delegatedUiOwnerRunId;
+		const thinkingOverride = delegatedParams.delegatedThinkingOverride;
+		const allowZeroToolBudget = delegatedParams.delegatedAllowZeroToolBudget === true;
+		const uiOwnerRunId = delegatedParams.delegatedUiOwnerRunId;
+		delete delegatedParams.delegatedThinkingOverride;
+		delete delegatedParams.delegatedAllowZeroToolBudget;
+		delete delegatedParams.delegatedUiOwnerRunId;
 		if (thinkingOverride !== undefined) delegatedThinkingOverrides.set(delegatedParams, thinkingOverride);
 		if (allowZeroToolBudget) delegatedZeroToolBudgets.add(delegatedParams);
 		if (uiOwnerRunId) delegatedUiOwnerRunIds.set(delegatedParams, uiOwnerRunId);

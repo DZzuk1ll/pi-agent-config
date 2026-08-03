@@ -1,4 +1,4 @@
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult } from "../../shared/tool-result.ts";
 import { snapshotBackgroundWork } from "../../api/background-work.ts";
 import { ASYNC_DIR, RESULTS_DIR, type Details, type SubagentState } from "../../shared/types.ts";
 import { listAsyncRuns } from "./async-status.ts";

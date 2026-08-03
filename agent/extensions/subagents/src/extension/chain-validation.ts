@@ -25,16 +25,22 @@ import {
 	DynamicCollectSchema,
 } from "./schemas.ts";
 
-type ObjectSchema = {
-	properties?: Record<string, unknown>;
-	additionalProperties?: unknown;
-};
+type ObjectSchema = object;
 
-function allowedKeysOf(schema: ObjectSchema | undefined): string[] {
-	return schema?.properties ? Object.keys(schema.properties) : [];
+function propertiesOf(schema: ObjectSchema | undefined): Record<string, unknown> | undefined {
+	if (!schema) return undefined;
+	const properties = Reflect.get(schema, "properties");
+	return properties && typeof properties === "object" && !Array.isArray(properties)
+		? properties as Record<string, unknown>
+		: undefined;
 }
 
-const ExpandFromSchema = (DynamicExpandSchema.properties?.from ?? {}) as ObjectSchema;
+function allowedKeysOf(schema: ObjectSchema | undefined): string[] {
+	return Object.keys(propertiesOf(schema) ?? {});
+}
+
+const expandFromSchema = propertiesOf(DynamicExpandSchema)?.from;
+const ExpandFromSchema: ObjectSchema = expandFromSchema && typeof expandFromSchema === "object" ? expandFromSchema : {};
 
 export const CHAIN_STEP_KEYS = allowedKeysOf(ChainItem);
 export const PARALLEL_TASK_KEYS = allowedKeysOf(ParallelTaskSchema);
@@ -96,7 +102,7 @@ function checkNoExtraKeys(
 	allowed: readonly string[],
 	example?: string,
 ): void {
-	if (schema.additionalProperties !== false) return;
+	if (Reflect.get(schema, "additionalProperties") !== false) return;
 	const extra = disallowedKeys(value, allowed);
 	if (extra.length > 0) {
 		throw new Error(disallowedMessage(path, extra, allowed, example));

@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
 import { SubagentWaitParams } from "../../extension/schemas.ts";
+import { registerSubagentTool } from "../../extension/tool-registration.ts";
 import type { Details, SubagentState } from "../../shared/types.ts";
 import { resolveWaitToolConfig, waitForSubagents } from "./subagent-wait.ts";
 
@@ -22,5 +23,5 @@ Provider jobs are session-scoped and identified exactly, so replacing one job wi
 			return waitForSubagents(params, signal, { state, events: pi.events, enabled, onUpdate });
 		},
 	};
-	pi.registerTool(tool);
+	registerSubagentTool(pi, tool);
 }
