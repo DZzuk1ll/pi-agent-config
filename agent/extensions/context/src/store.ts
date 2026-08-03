@@ -1,5 +1,5 @@
 import { redact_text } from '@personal-pi/redact';
-import { with_sqlite_transaction } from '@spences10/pi-sqlite-core';
+import { with_sqlite_transaction } from '@personal-pi/sqlite-core';
 import { createHash, randomUUID } from 'node:crypto';
 import { existsSync, mkdirSync } from 'node:fs';
 import { dirname } from 'node:path';

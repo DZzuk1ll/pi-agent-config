@@ -2,7 +2,7 @@ import {
 	SQLITE_CONNECTION_PRAGMAS,
 	SQLITE_PERSISTENT_PRAGMAS,
 	with_sqlite_transaction,
-} from '@spences10/pi-sqlite-core';
+} from '@personal-pi/sqlite-core';
 import { readFileSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 

@@ -1,4 +1,4 @@
-import { with_sqlite_busy_retry } from '@spences10/pi-sqlite-core';
+import { with_sqlite_busy_retry } from '@personal-pi/sqlite-core';
 import { existsSync, statSync } from 'node:fs';
 import type { DatabaseSync } from 'node:sqlite';
 import { parse_context_retention_policy } from '../policy.js';

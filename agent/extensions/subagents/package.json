@@ -1,14 +1,36 @@
 {
-  "name": "pi-subagents",
+  "name": "@personal-pi/subagents",
   "version": "0.38.0",
   "private": true,
   "type": "module",
   "exports": {
-    ".": "./index.ts",
-    "./background-work": "./src/api/background-work.ts",
-    "./delegation": "./src/api/delegation.ts",
-    "./transcript": "./src/api/transcript.ts",
-    "./capability-ceiling": "./src/api/capability-ceiling.ts",
-    "./preflight": "./src/api/preflight.ts"
+    ".": { "types": "./index.ts", "import": "./index.ts" },
+    "./background-work": { "types": "./src/api/background-work.ts", "import": "./src/api/background-work.ts" },
+    "./delegation": { "types": "./src/api/delegation.ts", "import": "./src/api/delegation.ts" },
+    "./transcript": { "types": "./src/api/transcript.ts", "import": "./src/api/transcript.ts" },
+    "./capability-ceiling": { "types": "./src/api/capability-ceiling.ts", "import": "./src/api/capability-ceiling.ts" },
+    "./preflight": { "types": "./src/api/preflight.ts", "import": "./src/api/preflight.ts" },
+    "./package.json": "./package.json"
+  },
+  "pi": {
+    "extensions": ["./index.ts"],
+    "prompts": ["./prompts/*.md"]
+  },
+  "dependencies": {
+    "typebox": "^1.1.38",
+    "yaml": "^2.8.3"
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-agent-core": ">=0.83.0",
+    "@earendil-works/pi-ai": ">=0.83.0",
+    "@earendil-works/pi-coding-agent": ">=0.83.0",
+    "@earendil-works/pi-tui": ">=0.83.0"
+  },
+  "engines": {
+    "node": ">=24.15.0"
+  },
+  "scripts": {
+	"check": "cd ../.. && npm run check",
+	"test": "cd ../.. && npm test"
   }
 }

@@ -12,16 +12,16 @@
     "test:extensions": "vitest run"
   },
   "dependencies": {
-    "@juicesharp/rpiv-config": "2.2.0",
     "@personal-pi/child-env": "file:extensions/_shared/packages/child-env",
+    "@personal-pi/config": "file:extensions/_shared/packages/config",
     "@personal-pi/project-trust": "file:extensions/_shared/packages/project-trust",
     "@personal-pi/redact": "file:extensions/_shared/packages/redact",
     "@personal-pi/settings": "file:extensions/_shared/packages/settings",
+    "@personal-pi/sqlite-core": "file:extensions/_shared/packages/sqlite-core",
     "@personal-pi/tui-kit": "file:extensions/_shared/packages/tui-kit",
     "@personal-pi/tui-modal": "file:extensions/_shared/packages/tui-modal",
     "@pierre/diffs": "1.2.12",
     "@shikijs/cli": "4.3.1",
-    "@spences10/pi-sqlite-core": "0.0.2",
     "beautiful-mermaid": "1.1.3",
     "diff": "9.0.0",
     "jiti": "2.7.0",

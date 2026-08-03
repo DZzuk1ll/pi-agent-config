@@ -1,4 +1,4 @@
-import { SqliteBusyError } from '@spences10/pi-sqlite-core';
+import { SqliteBusyError } from '@personal-pi/sqlite-core';
 import { existsSync, readFileSync } from 'node:fs';
 import { DatabaseSync } from 'node:sqlite';
 import {

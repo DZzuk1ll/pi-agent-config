@@ -1,4 +1,4 @@
-import { with_sqlite_busy_retry } from '@spences10/pi-sqlite-core';
+import { with_sqlite_busy_retry } from '@personal-pi/sqlite-core';
 import { mkdtempSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
