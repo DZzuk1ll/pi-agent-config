@@ -1,9 +1,7 @@
 import { fileURLToPath } from 'node:url';
-import { Type } from 'typebox';
 import {
 	LspClientStartError,
 	type LspDiagnostic,
-	type LspDocumentSymbol,
 	type LspHover,
 	type LspLocation,
 } from './client.js';
@@ -44,27 +42,6 @@ export class LspToolError extends Error {
 		this.details = details;
 	}
 }
-
-const SYMBOL_KIND_LABELS: Record<number, string> = {
-	2: 'module',
-	3: 'namespace',
-	5: 'class',
-	6: 'method',
-	7: 'property',
-	8: 'field',
-	9: 'constructor',
-	11: 'interface',
-	12: 'function',
-	13: 'variable',
-	14: 'constant',
-	23: 'struct',
-	24: 'event',
-};
-
-export const SYMBOL_KIND_NAMES = Object.values(SYMBOL_KIND_LABELS);
-export const SYMBOL_KIND_SCHEMA = Type.Union(
-	SYMBOL_KIND_NAMES.map((name) => Type.Literal(name)),
-);
 
 export function format_lsp_view(
 	view: string,
@@ -313,111 +290,6 @@ export function format_locations(
 			return `${path}:${loc.range.start.line + 1}:${loc.range.start.character + 1}`;
 		})
 		.join('\n');
-}
-
-export function format_document_symbols(
-	file: string,
-	symbols: LspDocumentSymbol[],
-): string {
-	if (symbols.length === 0) {
-		return `${file}: no symbols`;
-	}
-	const lines = [`${file}: ${symbols.length} top-level symbol(s)`];
-	append_symbol_lines(lines, symbols, 1);
-	return lines.join('\n');
-}
-
-export function find_symbol_matches(
-	symbols: LspDocumentSymbol[],
-	query: string,
-	options: {
-		max_results: number;
-		top_level_only: boolean;
-		exact_match: boolean;
-		kinds: ReadonlySet<string>;
-	},
-): Array<{ symbol: LspDocumentSymbol; depth: number }> {
-	const normalized = query.trim().toLowerCase();
-	if (!normalized) return [];
-	const matches: Array<{ symbol: LspDocumentSymbol; depth: number }> =
-		[];
-	const matches_query = (symbol: LspDocumentSymbol): boolean => {
-		const values = [symbol.name, symbol.detail ?? ''].map((value) =>
-			value.trim().toLowerCase(),
-		);
-		return options.exact_match
-			? values.some((value) => value === normalized)
-			: values.some((value) => value.includes(normalized));
-	};
-	const matches_kind = (symbol: LspDocumentSymbol): boolean => {
-		if (options.kinds.size === 0) return true;
-		return options.kinds.has(symbol_kind_label(symbol.kind));
-	};
-	const visit = (
-		entries: LspDocumentSymbol[],
-		depth: number,
-	): void => {
-		for (const symbol of entries) {
-			if (matches_kind(symbol) && matches_query(symbol)) {
-				matches.push({ symbol, depth });
-				if (matches.length >= options.max_results) {
-					return;
-				}
-			}
-			if (!options.top_level_only && symbol.children?.length) {
-				visit(symbol.children, depth + 1);
-				if (matches.length >= options.max_results) {
-					return;
-				}
-			}
-		}
-	};
-	visit(symbols, 1);
-	return matches;
-}
-
-export function format_symbol_matches(
-	file: string,
-	query: string,
-	matches: Array<{ symbol: LspDocumentSymbol; depth: number }>,
-): string {
-	if (matches.length === 0) {
-		return `${file}: no symbols matching "${query}"`;
-	}
-	const lines = [
-		`${file}: ${matches.length} symbol match(es) for "${query}"`,
-	];
-	for (const { symbol, depth } of matches) {
-		const indent = '  '.repeat(depth);
-		const detail = symbol.detail ? ` — ${symbol.detail}` : '';
-		const range = `${symbol.range.start.line + 1}:${symbol.range.start.character + 1}`;
-		lines.push(
-			`${indent}${symbol_kind_label(symbol.kind)} ${symbol.name}${detail} @ ${range}`,
-		);
-	}
-	return lines.join('\n');
-}
-
-function append_symbol_lines(
-	lines: string[],
-	symbols: LspDocumentSymbol[],
-	depth: number,
-): void {
-	for (const symbol of symbols) {
-		const indent = '  '.repeat(depth);
-		const detail = symbol.detail ? ` — ${symbol.detail}` : '';
-		const range = `${symbol.range.start.line + 1}:${symbol.range.start.character + 1}`;
-		lines.push(
-			`${indent}${symbol_kind_label(symbol.kind)} ${symbol.name}${detail} @ ${range}`,
-		);
-		if (symbol.children?.length) {
-			append_symbol_lines(lines, symbol.children, depth + 1);
-		}
-	}
-}
-
-function symbol_kind_label(kind: number): string {
-	return SYMBOL_KIND_LABELS[kind] ?? 'symbol';
 }
 
 function file_url_to_path_or_value(uri: string): string {

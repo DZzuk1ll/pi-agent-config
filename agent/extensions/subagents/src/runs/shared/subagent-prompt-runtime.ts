@@ -366,16 +366,9 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	} as unknown as SubagentState;
 	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolEnabled);
 	let nativeSupervisorClientRegistered = false;
-	let nativeSupervisorFallbackRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
 		if (nativeSupervisorClientRegistered) return;
 		nativeSupervisorClientRegistered = true;
-		registerNativeSupervisorClient(pi, { includeIntercomFallback: false });
-	};
-	const registerNativeSupervisorFallbackOnce = (): void => {
-		registerNativeSupervisorClientOnce();
-		if (nativeSupervisorFallbackRegistered) return;
-		nativeSupervisorFallbackRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
 	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
@@ -383,7 +376,6 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
 		registerNativeSupervisorClientOnce();
-		if (readRequiredChildTools()?.includes("intercom")) registerNativeSupervisorFallbackOnce();
 	});
 	onRuntimeEvent("agent_start", () => {
 		refreshChildToolDiagnostic(pi);
@@ -432,7 +424,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	});
 
 	onRuntimeEvent("before_agent_start", async (event: { systemPrompt: string }) => {
-		registerNativeSupervisorFallbackOnce();
+		registerNativeSupervisorClientOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
 		if (intercomSessionName && typeof pi.setSessionName === "function") {
 			pi.setSessionName(intercomSessionName);

@@ -156,10 +156,7 @@ describe('context_sidecar extension', () => {
 		expect([...fake.tools.keys()].sort()).toEqual([
 			'context_export',
 			'context_get',
-			'context_list',
-			'context_purge',
 			'context_search',
-			'context_stats',
 		]);
 		expect(fake.commands.has('context-stats')).toBe(true);
 		expect(fake.hooks.get('tool_result')).toHaveLength(1);
@@ -328,21 +325,6 @@ describe('context_sidecar extension', () => {
 		expect(global.content[0].text).toContain('scope-token-a');
 		expect(global.content[0].text).toContain('scope-token-b');
 
-		const list = await fake.tools
-			.get('context_list')!
-			.execute(
-				'call-3',
-				{ limit: 5 },
-				undefined,
-				undefined,
-				project_a,
-			);
-		expect(list.content[0].text).toContain('Project: /repo-a');
-		expect(list.content[0].text).toContain(
-			'Session: /sessions/a.jsonl',
-		);
-		expect(list.content[0].text).not.toContain('Project: /repo-b');
-		expect(list.details).toMatchObject({ count: 1 });
 	});
 
 	it('replaces oversized text tool results and leaves small, skipped, and non-text results alone', async () => {
@@ -424,7 +406,7 @@ describe('context_sidecar extension', () => {
 		).toHaveLength(1);
 	});
 
-	it('searches, retrieves, reports stats, purges, and notifies through registered tools', async () => {
+	it('searches, retrieves, exports, and reports stats through the command', async () => {
 		process.env.MY_PI_CONTEXT_DB = temp_db();
 		const fake = create_fake_pi();
 		context_sidecar(fake.pi);
@@ -444,12 +426,6 @@ describe('context_sidecar extension', () => {
 		expect(search.content[0].text).toContain('tool-token');
 		expect(search.details).toMatchObject({ count: 1 });
 
-		const list = await fake.tools
-			.get('context_list')!
-			.execute('call-list', { limit: 1 });
-		expect(list.content[0].text).toContain(source_id);
-		expect(list.content[0].text).toContain('Tool: bash');
-		expect(list.details).toMatchObject({ count: 1 });
 
 		const get = await fake.tools
 			.get('context_get')!
@@ -533,51 +509,6 @@ describe('context_sidecar extension', () => {
 		);
 		expect(missing_chunk.content[0].text).toContain('Try chunk_id:');
 
-		const stats = await fake.tools
-			.get('context_stats')!
-			.execute('call-3', {});
-		expect(stats.content[0].text).toContain('context-sidecar stats');
-		expect(stats.details).toMatchObject({ sources: 1, chunks: 1 });
-
-		get_context_store({
-			project_path: '/other/project',
-			session_id: '/sessions/other.jsonl',
-		}).store({
-			text: `${large_output('other-scope-token')}\n${'z '.repeat(100)}`,
-			tool_name: 'bash',
-			force: true,
-			project_path: '/other/project',
-			session_id: '/sessions/other.jsonl',
-		});
-
-		const scoped_stats = await fake.tools
-			.get('context_stats')!
-			.execute(
-				'call-3a',
-				{},
-				undefined,
-				undefined,
-				fake_context(process.cwd()),
-			);
-		expect(scoped_stats.details).toMatchObject({
-			sources: 1,
-			global_sources: 2,
-		});
-
-		const global_stats = await fake.tools
-			.get('context_stats')!
-			.execute(
-				'call-3b',
-				{ global: true },
-				undefined,
-				undefined,
-				fake_context('/tmp/project', '/sessions/current.jsonl'),
-			);
-		expect(global_stats.content[0].text).toContain('Scope: global');
-		expect(global_stats.details).toMatchObject({
-			sources: 2,
-			global_sources: 2,
-		});
 
 		const notifications: string[] = [];
 		await fake.commands.get('context-stats')!.handler('', {
@@ -590,25 +521,5 @@ describe('context_sidecar extension', () => {
 		expect(notifications[0]).toContain('info:Enabled: true');
 		expect(notifications[0]).toContain('Scope: global');
 
-		const purge = await fake.tools
-			.get('context_purge')!
-			.execute('call-4', {
-				source_id,
-			});
-		expect(purge.content[0].text).toContain(
-			'Deleted 1 context source(s).',
-		);
-		expect(purge.content[0].text).toContain(`source_id=${source_id}`);
-		expect(purge.details).toMatchObject({ deleted: 1, source_id });
-
-		const empty = await fake.tools
-			.get('context_get')!
-			.execute('call-5', {
-				source_id,
-			});
-		expect(empty.content[0].text).toContain(
-			`Source ${source_id} was not found`,
-		);
-		expect(empty.content[0].text).toContain('expired');
 	});
 });

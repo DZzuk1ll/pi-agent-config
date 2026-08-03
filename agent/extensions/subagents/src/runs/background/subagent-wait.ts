@@ -570,7 +570,7 @@ export async function waitForSubagents(
 
 	const relevantAttention = attention.filter((run) => initialAsyncIds.has(run.id));
 	const supervisorAttentionHint = relevantAttention.some(hasSupervisorTool)
-		? " Reply to any pending supervisor request. If subagent_supervisor({ action: \"pending\" }) is empty, check intercom({ action: \"pending\" }) because an external intercom tool may own the request."
+		? " Reply to any pending supervisor request with subagent_supervisor({ action: \"pending\" })."
 		: "";
 	const attentionNote = relevantAttention.length > 0
 		? ` ${relevantAttention.length} run(s) need attention: ${relevantAttention.map((run) => run.id).join(", ")} —${supervisorAttentionHint} inspect with subagent({ action: "status" }) then steer a top-level live async child, resume a paused/completed/failed child, or interrupt explicitly.`

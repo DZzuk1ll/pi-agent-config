@@ -123,7 +123,7 @@ describe('ContextStore', () => {
 			`First chunk id: ${stored!.source_id}_0001`,
 		);
 		expect(stored?.first_chunk_id).toBe(`${stored!.source_id}_0001`);
-		expect(stored?.receipt).toContain('context_list');
+		expect(stored?.receipt).toContain('/context list');
 		expect(stored?.receipt).toContain('Preview:');
 		expect(stored?.chunk_count).toBeGreaterThan(1);
 

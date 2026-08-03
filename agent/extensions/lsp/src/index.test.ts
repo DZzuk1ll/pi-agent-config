@@ -16,10 +16,7 @@ describe('lsp extension wiring', () => {
 
 		expect(Array.from(tools.keys()).sort()).toEqual([
 			'lsp_definition',
-			'lsp_diagnostics',
 			'lsp_diagnostics_many',
-			'lsp_document_symbols',
-			'lsp_find_symbol',
 			'lsp_hover',
 			'lsp_references',
 		]);
@@ -29,7 +26,6 @@ describe('lsp extension wiring', () => {
 		expect(constrained_tools.map((tool) => tool.name)).toEqual([
 			'lsp_hover',
 			'lsp_definition',
-			'lsp_document_symbols',
 		]);
 		expect(
 			constrained_tools.map((tool) => tool.constrainedSampling),

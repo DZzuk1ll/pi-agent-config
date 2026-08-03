@@ -16,12 +16,16 @@ describe('lsp diagnostics tools', () => {
 		});
 
 		const result = await tools
-			.get('lsp_diagnostics')
-			.execute('1', { file: 'notes.txt' });
+			.get('lsp_diagnostics_many')
+			.execute('1', { files: ['notes.txt'] });
 
-		expect(result.content[0].text).toBe(
+		expect(result.content[0].text).toContain(
 			'No language server configured for /repo/notes.txt',
 		);
+		expect(result.details).toMatchObject({
+			checked: 1,
+			error_count: 1,
+		});
 		expect(start).not.toHaveBeenCalled();
 	});
 
@@ -41,8 +45,8 @@ describe('lsp diagnostics tools', () => {
 			cwd: () => '/repo',
 		});
 
-		const result = await tools.get('lsp_diagnostics').execute('1', {
-			file: '/workspace/apps/website/src/routes/+page.svelte',
+		const result = await tools.get('lsp_diagnostics_many').execute('1', {
+			files: ['/workspace/apps/website/src/routes/+page.svelte'],
 		});
 
 		expect(result.content[0].text).toContain(
@@ -55,8 +59,8 @@ describe('lsp diagnostics tools', () => {
 			'Hint: Install Svelte LSP with: pnpm add -D svelte-language-server (or volta install svelte-language-server)',
 		);
 		await expect(
-			tools.get('lsp_diagnostics').execute('2', {
-				file: '/workspace/apps/website/src/routes/+page.svelte',
+			tools.get('lsp_diagnostics_many').execute('2', {
+				files: ['/workspace/apps/website/src/routes/+page.svelte'],
 			}),
 		).resolves.toMatchObject({
 			content: expect.any(Array),

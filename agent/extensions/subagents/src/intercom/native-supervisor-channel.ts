@@ -287,9 +287,8 @@ function hasTool(pi: ExtensionAPI, name: string): boolean {
 	}
 }
 
-export function registerNativeSupervisorClient(pi: ExtensionAPI, options: { includeIntercomFallback?: boolean } = {}): void {
+export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
 	if (!readChildMetadata()) return;
-	const includeIntercomFallback = options.includeIntercomFallback !== false;
 	if (!hasTool(pi, "contact_supervisor")) {
 		const tool: ToolDefinition<typeof ContactSupervisorParamsSchema, Record<string, unknown>> = {
 			name: "contact_supervisor",
@@ -298,23 +297,6 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI, options: { incl
 			parameters: ContactSupervisorParamsSchema,
 			execute(_id, params, signal) {
 				return sendSupervisorRequest(params as ContactSupervisorParams, signal);
-			},
-		};
-		pi.registerTool(tool);
-	}
-	if (includeIntercomFallback && !hasTool(pi, "intercom")) {
-		const tool: ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> = {
-			name: "intercom",
-			label: "Intercom",
-			description: "Native supervisor-channel intercom fallback for subagents. Prefer contact_supervisor when available.",
-			parameters: IntercomParamsSchema,
-			async execute(_id, params, signal) {
-				const action = (params as IntercomParams).action;
-				if (action === "status") return { content: [{ type: "text", text: "Native supervisor channel is active." }], details: { active: true } };
-				if (action === "list") return { content: [{ type: "text", text: "Supervisor session available through contact_supervisor." }], details: { sessions: [] } };
-				if (action === "send") return sendSupervisorRequest({ reason: "progress_update", message: (params as IntercomParams).message ?? "" }, signal);
-				if (action === "ask") return sendSupervisorRequest({ reason: "need_decision", message: (params as IntercomParams).message ?? "" }, signal);
-				throw new Error("Native child intercom supports status, list, send, and ask. Use parent intercom reply from the supervisor session.");
 			},
 		};
 		pi.registerTool(tool);
@@ -593,13 +575,11 @@ function publicPendingRequests(pending: Map<string, PendingSupervisorRequest>): 
 	}));
 }
 
-function buildParentIntercomTool(pending: Map<string, PendingSupervisorRequest>, state: SubagentState, name = "intercom"): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
+function buildParentSupervisorTool(pending: Map<string, PendingSupervisorRequest>, state: SubagentState): ToolDefinition<typeof IntercomParamsSchema, Record<string, unknown>> {
 	return {
-		name,
-		label: name === "intercom" ? "Intercom" : "Subagent Supervisor",
-		description: name === "intercom"
-			? "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests."
-			: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests without overriding pi-intercom.",
+		name: NATIVE_SUPERVISOR_TOOL_NAME,
+		label: "Subagent Supervisor",
+		description: "Native pi-subagents supervisor channel. Use reply/pending/status to answer child subagent requests.",
 		parameters: IntercomParamsSchema,
 		async execute(_id, params) {
 			refreshPendingRequests(pending, state, state.lastUiContext ?? undefined);
@@ -633,8 +613,7 @@ export function createNativeSupervisorChannel(pi: ExtensionAPI, state: SubagentS
 	let lastStaleCleanupAt = 0;
 
 	const registerParentTools = (): void => {
-		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentIntercomTool(pending, state, NATIVE_SUPERVISOR_TOOL_NAME));
-		if (!hasTool(pi, "intercom")) pi.registerTool(buildParentIntercomTool(pending, state));
+		if (!hasTool(pi, NATIVE_SUPERVISOR_TOOL_NAME)) pi.registerTool(buildParentSupervisorTool(pending, state));
 	};
 
 	const cleanupStaleChannelsIfDue = (): void => {

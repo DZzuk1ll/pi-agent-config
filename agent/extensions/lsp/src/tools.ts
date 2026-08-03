@@ -5,15 +5,10 @@ import {
 } from '@earendil-works/pi-coding-agent';
 import { Type } from 'typebox';
 import {
-	find_symbol_matches,
 	format_diagnostics,
-	format_document_symbols,
 	format_hover,
 	format_locations,
-	format_symbol_matches,
 	format_tool_error,
-	SYMBOL_KIND_NAMES,
-	SYMBOL_KIND_SCHEMA,
 	to_lsp_tool_error,
 	type LspToolErrorDetails,
 } from './format.js';
@@ -102,46 +97,16 @@ export function register_lsp_tools(
 ): void {
 	pi.registerTool(
 		defineTool({
-			name: 'lsp_diagnostics',
+			name: 'lsp_diagnostics_many',
 			label: 'LSP: diagnostics',
 			description:
-				'Get language server diagnostics (errors, warnings, hints) for a file. Uses the project language server and returns empty output if the file is clean.',
-			parameters: Type.Object({
-				file: Type.String({
-					description:
-						'Path to the file to check (relative to cwd or absolute).',
-				}),
-				wait_ms: Type.Optional(
-					Type.Number({
-						description:
-							'Max ms to wait for diagnostics after opening the file. Default 1500.',
-					}),
-				),
-			}),
-			execute: async (_id, params, _signal, _on_update, ctx) =>
-				with_file_state(manager, params.file, ctx, async (result) => {
-					const diagnostics =
-						await result.state.client.wait_for_diagnostics(
-							result.uri,
-							params.wait_ms ?? 1500,
-						);
-					return format_diagnostics(result.abs, diagnostics);
-				}),
-		}),
-	);
-
-	pi.registerTool(
-		defineTool({
-			name: 'lsp_diagnostics_many',
-			label: 'LSP: diagnostics many',
-			description:
-				'Get language server diagnostics for multiple files in one call. Useful for changed-file sweeps, package-level checks, and summarization.',
+				'Get language server diagnostics for one or more files. Use a single-item files array for a focused check or multiple files for a changed-file sweep.',
 			parameters: Type.Object({
 				files: Type.Array(Type.String(), {
 					minItems: 1,
 					maxItems: 100,
 					description:
-						'Files to check (relative to cwd or absolute).',
+						'One or more files to check (relative to cwd or absolute).',
 				}),
 				wait_ms: Type.Optional(
 					Type.Number({
@@ -235,63 +200,6 @@ export function register_lsp_tools(
 
 	pi.registerTool(
 		defineTool({
-			name: 'lsp_find_symbol',
-			label: 'LSP: find symbol',
-			description:
-				'Find symbols in a file by name or detail text using document symbols. Supports exact matching, kind filters, and top-level-only mode.',
-			parameters: Type.Object({
-				file: Type.String(),
-				query: Type.String({
-					description:
-						'Substring to match against symbol names/details.',
-				}),
-				max_results: Type.Optional(
-					Type.Number({
-						description:
-							'Max number of matches to return. Default 20.',
-					}),
-				),
-				top_level_only: Type.Optional(
-					Type.Boolean({
-						description:
-							'Only match top-level symbols. Default false.',
-					}),
-				),
-				exact_match: Type.Optional(
-					Type.Boolean({
-						description:
-							'Match whole symbol names/details exactly instead of substring matching. Default false.',
-					}),
-				),
-				kinds: Type.Optional(
-					Type.Array(SYMBOL_KIND_SCHEMA, {
-						minItems: 1,
-						maxItems: SYMBOL_KIND_NAMES.length,
-						description: 'Restrict matches to these symbol kinds.',
-					}),
-				),
-			}),
-			execute: async (_id, params, _signal, _on_update, ctx) =>
-				with_file_state(manager, params.file, ctx, async (result) => {
-					const symbols = await result.state.client.document_symbols(
-						result.uri,
-					);
-					return format_symbol_matches(
-						result.abs,
-						params.query,
-						find_symbol_matches(symbols, params.query, {
-							max_results: params.max_results ?? 20,
-							top_level_only: params.top_level_only ?? false,
-							exact_match: params.exact_match ?? false,
-							kinds: new Set(params.kinds ?? []),
-						}),
-					);
-				}),
-		}),
-	);
-
-	pi.registerTool(
-		defineTool({
 			name: 'lsp_hover',
 			label: 'LSP: hover',
 			constrainedSampling: { type: 'json_schema', strict: 'prefer' },
@@ -372,26 +280,4 @@ export function register_lsp_tools(
 		}),
 	);
 
-	pi.registerTool(
-		defineTool({
-			name: 'lsp_document_symbols',
-			label: 'LSP: document symbols',
-			constrainedSampling: { type: 'json_schema', strict: 'prefer' },
-			description:
-				'List symbols in a file (functions, classes, variables) using the language server.',
-			parameters: Type.Object(
-				{
-					file: Type.String(),
-				},
-				{ additionalProperties: false },
-			),
-			execute: async (_id, params, _signal, _on_update, ctx) =>
-				with_file_state(manager, params.file, ctx, async (result) => {
-					const symbols = await result.state.client.document_symbols(
-						result.uri,
-					);
-					return format_document_symbols(result.abs, symbols);
-				}),
-		}),
-	);
 }

@@ -21,9 +21,6 @@ describe('register_context_tools', () => {
 			'context_search',
 			'context_get',
 			'context_export',
-			'context_list',
-			'context_stats',
-			'context_purge',
 		]);
 		expect(
 			tools.every((tool) => tool.constrainedSampling === undefined),

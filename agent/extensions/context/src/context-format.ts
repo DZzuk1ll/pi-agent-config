@@ -64,7 +64,7 @@ export function format_get_result(
 		return [
 			`Source ${source_id} was not found in the context sidecar.`,
 			'It may have expired, been purged, or belonged to a different local context database.',
-			'Try context_list to inspect available sources, or rerun the original tool if the content is still needed.',
+			'Use /context list interactively to inspect available sources, or rerun the original tool if the content is still needed.',
 		].join('\n');
 	}
 

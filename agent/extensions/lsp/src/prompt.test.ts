@@ -15,7 +15,7 @@ describe('lsp prompt guidance', () => {
 
 		const result = await events.get('before_agent_start')({
 			systemPrompt: 'base prompt',
-			systemPromptOptions: { selectedTools: ['lsp_diagnostics'] },
+			systemPromptOptions: { selectedTools: ['lsp_diagnostics_many'] },
 		});
 
 		expect(result.systemPrompt).toContain('base prompt');
@@ -23,7 +23,7 @@ describe('lsp prompt guidance', () => {
 			'Language server support via LSP tools',
 		);
 		expect(result.systemPrompt).toContain(
-			'check changed files with LSP diagnostics before reporting completion or committing',
+			'check changed files with lsp_diagnostics_many before reporting completion or committing',
 		);
 		expect(result.systemPrompt).toContain(
 			'Prefer LSP diagnostics over guessing from build output',
