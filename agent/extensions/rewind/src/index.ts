@@ -15,7 +15,7 @@
  *   pi install github.com/arpagon/pi-rewind
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import {
   isGitRepo,
   getRepoRoot,
@@ -71,12 +71,18 @@ export default function (pi: ExtensionAPI) {
       return;
     }
 
-    state.repoRoot = await getRepoRoot(ctx.cwd);
-    state.sessionId = ctx.sessionManager.getSessionId();
+    const repoRoot = await getRepoRoot(ctx.cwd);
+    const sessionId = ctx.sessionManager.getSessionId();
+    state.repoRoot = repoRoot;
+    state.sessionId = sessionId;
+    if (!sessionId) {
+      if (ctx.hasUI) clearStatus(ctx);
+      return;
+    }
 
     // Rebuild checkpoint cache from existing git refs (for resumed sessions)
     try {
-      const existing = await loadAllCheckpoints(state.repoRoot, state.sessionId);
+      const existing = await loadAllCheckpoints(repoRoot, sessionId);
       for (const cp of existing) {
         state.checkpoints.set(cp.id, cp);
       }
@@ -86,11 +92,11 @@ export default function (pi: ExtensionAPI) {
 
     // Create resume checkpoint (snapshot of current state on session start)
     try {
-      const resumeId = `resume-${state.sessionId}-${Date.now()}`;
+      const resumeId = `resume-${sessionId}-${Date.now()}`;
       const cp = await createCheckpoint({
-        root: state.repoRoot,
+        root: repoRoot,
         id: resumeId,
-        sessionId: state.sessionId,
+        sessionId,
         trigger: "resume",
         turnIndex: 0,
         description: "Session start",

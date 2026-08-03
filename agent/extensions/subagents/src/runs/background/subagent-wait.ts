@@ -289,7 +289,7 @@ function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 
 	if (runs.length === 0 && providerFinishedCount === 0) return "";
 	const counts = { complete: 0, failed: 0, paused: 0 } as Record<string, number>;
 	for (const run of runs) {
-		if (run.state in counts) counts[run.state] += 1;
+		if (run.state in counts) counts[run.state] = (counts[run.state] ?? 0) + 1;
 	}
 	const parts: string[] = [];
 	if (counts.complete) parts.push(`${counts.complete} complete`);

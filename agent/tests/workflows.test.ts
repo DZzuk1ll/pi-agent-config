@@ -311,7 +311,9 @@ test("workflow admission atomically caps active workflow runs", () => {
 	const admission = new WorkflowAdmission(4);
 	const releases = Array.from({ length: 4 }, () => admission.acquire());
 	assert.throws(() => admission.acquire(), /At most 4/);
-	releases[0]();
+	const firstRelease = releases[0];
+	assert.ok(firstRelease);
+	firstRelease();
 	const release = admission.acquire();
 	release();
 	for (const dispose of releases) dispose();

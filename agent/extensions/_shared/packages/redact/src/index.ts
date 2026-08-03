@@ -389,6 +389,7 @@ export default async function filter_output(pi: ExtensionAPI) {
 		}
 
 		if (modified) return { content: new_content };
+		return undefined;
 	});
 
 	pi.registerCommand('redact-stats', {

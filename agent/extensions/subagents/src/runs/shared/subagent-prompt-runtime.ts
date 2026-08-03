@@ -371,7 +371,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		nativeSupervisorClientRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
+	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
 	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
@@ -417,13 +417,15 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		});
 	}
 
-	onRuntimeEvent("context", (event: { messages: unknown[] }) => {
+	onRuntimeEvent("context", (event: unknown) => {
+		if (!event || typeof event !== "object" || !("messages" in event) || !Array.isArray(event.messages)) return undefined;
 		const messages = stripParentOnlySubagentMessages(event.messages);
 		if (messages === event.messages) return undefined;
 		return { messages };
 	});
 
-	onRuntimeEvent("before_agent_start", async (event: { systemPrompt: string }) => {
+	onRuntimeEvent("before_agent_start", async (event: unknown) => {
+		if (!event || typeof event !== "object" || !("systemPrompt" in event) || typeof event.systemPrompt !== "string") return undefined;
 		registerNativeSupervisorClientOnce();
 		const intercomSessionName = process.env[SUBAGENT_INTERCOM_SESSION_NAME_ENV]?.trim();
 		if (intercomSessionName && typeof pi.setSessionName === "function") {
@@ -441,7 +443,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 				fanoutChild: fanoutChild === true,
 			});
 		}
-		if (rewritten === event.systemPrompt) return;
+		if (rewritten === event.systemPrompt) return undefined;
 		return { systemPrompt: rewritten };
 	});
 }

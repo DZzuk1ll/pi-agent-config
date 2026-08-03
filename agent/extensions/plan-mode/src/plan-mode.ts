@@ -321,6 +321,7 @@ export default function planMode(
 				reason: `Plan mode blocks mutating or non-allowlisted bash commands.\nCommand: ${command}`,
 			};
 		}
+		return undefined;
 	});
 
 	pi.on("context", async (event) => {

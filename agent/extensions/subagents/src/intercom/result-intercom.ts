@@ -294,10 +294,10 @@ export async function deliverSubagentIntercomMessageEvent(
 	to: string,
 	message: string,
 	timeoutMs = 500,
-	extra: Record<string, unknown> = {},
+	extra: object = {},
 ): Promise<boolean> {
 	if (typeof events.on !== "function" || typeof events.emit !== "function") return false;
-	const requestId = typeof extra.requestId === "string" ? extra.requestId : randomUUID();
+	const requestId = "requestId" in extra && typeof extra.requestId === "string" ? extra.requestId : randomUUID();
 	return new Promise((resolve) => {
 		let settled = false;
 		let unsubscribe: (() => void) | undefined;

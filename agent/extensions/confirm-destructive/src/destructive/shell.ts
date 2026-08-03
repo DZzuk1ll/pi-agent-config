@@ -68,7 +68,7 @@ function heredoc_delimiters(line: string): HeredocDelimiter[] {
 		if (single_quoted || double_quoted) continue;
 		if (
 			character === '#' &&
-			(index === 0 || /\s/.test(line[index - 1]))
+			(index === 0 || /\s/.test(line[index - 1] ?? ''))
 		)
 			break;
 		if (
@@ -88,11 +88,12 @@ function heredoc_delimiters(line: string): HeredocDelimiter[] {
 		let quoted: "'" | '"' | undefined;
 		for (; index < line.length; index += 1) {
 			const delimiter_character = line[index];
+			if (delimiter_character === undefined) break;
 			if (quoted) {
 				if (delimiter_character === quoted) {
 					quoted = undefined;
 				} else if (delimiter_character === '\\' && quoted === '"') {
-					if (index + 1 < line.length) value += line[++index];
+					if (index + 1 < line.length) value += line[++index] ?? '';
 				} else {
 					value += delimiter_character;
 				}
@@ -106,7 +107,7 @@ function heredoc_delimiters(line: string): HeredocDelimiter[] {
 				continue;
 			}
 			if (delimiter_character === '\\') {
-				if (index + 1 < line.length) value += line[++index];
+				if (index + 1 < line.length) value += line[++index] ?? '';
 				continue;
 			}
 			if (
@@ -153,18 +154,19 @@ function tokenize_shell(command: string): ShellToken[] {
 
 	for (let index = 0; index < command.length; index += 1) {
 		const character = command[index];
+		if (character === undefined) break;
 
 		if (character === "'" || character === '"') {
 			const quote = character;
 			for (index += 1; index < command.length; index += 1) {
 				const quoted = command[index];
-				if (quoted === quote) break;
+				if (quoted === undefined || quoted === quote) break;
 				if (
 					quote === '"' &&
 					quoted === '\\' &&
 					index + 1 < command.length
 				) {
-					word += command[index + 1];
+					word += command[index + 1] ?? '';
 					index += 1;
 					continue;
 				}
@@ -174,7 +176,7 @@ function tokenize_shell(command: string): ShellToken[] {
 		}
 
 		if (character === '\\' && index + 1 < command.length) {
-			word += command[index + 1];
+			word += command[index + 1] ?? '';
 			index += 1;
 			continue;
 		}
@@ -243,6 +245,7 @@ function skip_options(
 	let index = start;
 	while (index < words.length) {
 		const word = words[index];
+		if (word === undefined) break;
 		if (word === '--') return index + 1;
 		if (!word.startsWith('-') || word === '-') return index;
 		if (options_with_values.has(word)) index += 1;
@@ -255,16 +258,14 @@ function unwrap_command(
 	words: string[],
 ): ShellInvocation | undefined {
 	let index = 0;
-	while (
-		index < words.length &&
-		(LEADING_SHELL_KEYWORDS.has(words[index].toLowerCase()) ||
-			is_assignment(words[index]))
-	) {
+	while (index < words.length) {
+		const word = words[index];
+		if (!word || (!LEADING_SHELL_KEYWORDS.has(word.toLowerCase()) && !is_assignment(word))) break;
 		index += 1;
 	}
 
 	for (;;) {
-		while (index < words.length && is_assignment(words[index]))
+		while (index < words.length && is_assignment(words[index] ?? ''))
 			index += 1;
 		const current = command_name(words[index] ?? '');
 		if (!current) return undefined;
@@ -308,7 +309,7 @@ function unwrap_command(
 					'--unset',
 				]),
 			);
-			while (index < words.length && is_assignment(words[index]))
+			while (index < words.length && is_assignment(words[index] ?? ''))
 				index += 1;
 			continue;
 		}
@@ -395,7 +396,7 @@ function xargs_command(args: string[]): ShellInvocation | undefined {
 		0,
 		new Set(['-a', '-d', '-E', '-I', '-L', '-n', '-P', '-s']),
 	);
-	while (index < args.length && is_assignment(args[index]))
+	while (index < args.length && is_assignment(args[index] ?? ''))
 		index += 1;
 	return unwrap_command(args.slice(index));
 }
@@ -597,6 +598,7 @@ export function extract_overwrite_paths(command: string): string[] {
 	const paths: string[] = [];
 	for (let index = 0; index < tokens.length; index += 1) {
 		const token = tokens[index];
+		if (!token) continue;
 		if (
 			token.kind !== 'operator' ||
 			!REDIRECT_OPERATORS.has(token.value)

@@ -191,7 +191,8 @@ export class TodoOverlay {
 
 		if (layout.hiddenCompleted === 0 && layout.truncatedTail === 0) {
 			const last = lines.length - 1;
-			lines[last] = lines[last].replace("├─", "└─");
+			const lastLine = lines[last];
+			if (lastLine !== undefined) lines[last] = lastLine.replace("├─", "└─");
 			return this.withTrailingSpacer(lines);
 		}
 

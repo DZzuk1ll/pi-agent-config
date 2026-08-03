@@ -111,6 +111,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			const idx = state.tasks.findIndex((t) => t.id === params.id);
 			if (idx === -1) return errorResult(state, `#${params.id} not found`);
 			const current = state.tasks[idx];
+			if (!current) return errorResult(state, `#${params.id} not found`);
 
 			const hasMutation =
 				params.subject !== undefined ||
@@ -210,6 +211,7 @@ export function applyTaskMutation(state: TaskState, action: TaskAction, params: 
 			const idx = state.tasks.findIndex((t) => t.id === params.id);
 			if (idx === -1) return errorResult(state, `#${params.id} not found`);
 			const current = state.tasks[idx];
+			if (!current) return errorResult(state, `#${params.id} not found`);
 			if (current.status === "deleted") return errorResult(state, `#${current.id} is already deleted`);
 			const updated: Task = { ...current, status: "deleted" };
 			const newTasks = [...state.tasks];

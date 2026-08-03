@@ -441,7 +441,8 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 		},
 
 		execute(id, params, signal, onUpdate, ctx) {
-			return executeSubagentCollapsed(id, params, signal, onUpdate, ctx);
+			const view = params.view === "fleet" || params.view === "transcript" ? params.view : undefined;
+			return executeSubagentCollapsed(id, { ...params, view }, signal ?? new AbortController().signal, onUpdate, ctx);
 		},
 
 		renderCall(args, theme) {

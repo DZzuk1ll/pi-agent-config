@@ -26,8 +26,9 @@ export function register_lsp_command(
 				}));
 			}
 			if (parts.length <= 1) {
+				const candidate = parts[0] ?? '';
 				return subcommands
-					.filter((value) => value.startsWith(parts[0]))
+					.filter((value) => value.startsWith(candidate))
 					.map((value) => ({ value, label: value }));
 			}
 			if (parts[0] === 'restart') {
@@ -54,8 +55,9 @@ export async function handle_lsp_command(
 ): Promise<void> {
 	const parts = args.trim() ? args.trim().split(/\s+/, 2) : [];
 	if (parts.length === 0 && has_modal_ui(ctx)) {
-		let selected: string | undefined;
-		while ((selected = await show_lsp_home_modal(ctx, manager))) {
+		while (true) {
+			const selected = await show_lsp_home_modal(ctx, manager);
+			if (!selected) break;
 			if (selected === 'restart') {
 				await handle_lsp_restart_modal(ctx, manager);
 				continue;

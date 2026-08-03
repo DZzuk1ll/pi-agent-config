@@ -72,8 +72,8 @@ export function buildChainSummary(
 	const progressPath = path.join(chainDir, "progress.md");
 	const hasProgress = fs.existsSync(progressPath);
 	const allSkills = new Set<string>();
-	for (const r of results) {
-		if (r.skills) r.skills.forEach((s) => allSkills.add(s));
+	for (const result of results) {
+		for (const skill of result.skills ?? []) allSkills.add(skill);
 	}
 	const skillsLine = allSkills.size > 0 ? `🔧 Skills: ${[...allSkills].join(", ")}` : "";
 

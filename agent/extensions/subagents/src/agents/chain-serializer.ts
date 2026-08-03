@@ -17,8 +17,11 @@ function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 	for (const line of configLines) {
 		const match = line.match(/^([\w-]+):\s*(.*)$/);
 		if (!match) continue;
-		const key = match[1].trim().toLowerCase();
-		const rawValue = match[2].trim();
+		const keyCapture = match[1];
+		const valueCapture = match[2];
+		if (keyCapture === undefined || valueCapture === undefined) continue;
+		const key = keyCapture.trim().toLowerCase();
+		const rawValue = valueCapture.trim();
 
 		if (key === "output") {
 			if (rawValue === "false") step.output = false;

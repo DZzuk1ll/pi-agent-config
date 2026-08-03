@@ -304,16 +304,16 @@ async function delay(ms: number, signal: AbortSignal | undefined): Promise<void>
 
 function buildInput(options: StandaloneCommandsOptions): unknown[] {
   const texts: string[] = [];
-  options.searchQuery?.forEach((q) => texts.push(q.q));
-  options.imageQuery?.forEach((q) => texts.push(q.q));
-  options.open?.forEach((c) => texts.push(c.refId));
-  options.find?.forEach((c) => texts.push(`find "${c.pattern}" in ${c.refId}`));
-  options.click?.forEach((c) => texts.push(`click ${c.id} in ${c.refId}`));
-  options.screenshot?.forEach((c) => texts.push(`screenshot ${c.pageno} of ${c.refId}`));
-  options.finance?.forEach((c) => texts.push(`finance ${c.ticker} ${c.type} ${c.market ?? ""}`));
-  options.weather?.forEach((c) => texts.push(`weather ${c.location}`));
-  options.sports?.forEach((c) => texts.push(`sports ${c.fn} ${c.league}`));
-  options.time?.forEach((c) => texts.push(`time ${c.utc_offset}`));
+  for (const query of options.searchQuery ?? []) texts.push(query.q);
+  for (const query of options.imageQuery ?? []) texts.push(query.q);
+  for (const command of options.open ?? []) texts.push(command.refId);
+  for (const command of options.find ?? []) texts.push(`find "${command.pattern}" in ${command.refId}`);
+  for (const command of options.click ?? []) texts.push(`click ${command.id} in ${command.refId}`);
+  for (const command of options.screenshot ?? []) texts.push(`screenshot ${command.pageno} of ${command.refId}`);
+  for (const command of options.finance ?? []) texts.push(`finance ${command.ticker} ${command.type} ${command.market ?? ""}`);
+  for (const command of options.weather ?? []) texts.push(`weather ${command.location}`);
+  for (const command of options.sports ?? []) texts.push(`sports ${command.fn} ${command.league}`);
+  for (const command of options.time ?? []) texts.push(`time ${command.utc_offset}`);
 
   const prompt = texts.filter(Boolean).join("\n");
   return [
@@ -327,36 +327,26 @@ function buildInput(options: StandaloneCommandsOptions): unknown[] {
 
 function inferSearchCalls(options: StandaloneCommandsOptions): CodexSearchCall[] {
   const calls: CodexSearchCall[] = [];
-  options.searchQuery?.forEach((q) =>
-    calls.push({ status: "completed", query: q.q, actionType: "search_query" }),
-  );
-  options.imageQuery?.forEach((q) =>
-    calls.push({ status: "completed", query: q.q, actionType: "image_query" }),
-  );
-  options.open?.forEach((c) =>
-    calls.push({ status: "completed", refId: c.refId, actionType: "open_page" }),
-  );
-  options.find?.forEach((c) =>
-    calls.push({ status: "completed", refId: c.refId, actionType: "find_in_page" }),
-  );
-  options.click?.forEach((c) =>
-    calls.push({ status: "completed", refId: c.refId, actionType: "click" }),
-  );
-  options.screenshot?.forEach((c) =>
-    calls.push({ status: "completed", refId: c.refId, actionType: "screenshot" }),
-  );
-  options.finance?.forEach((c) =>
-    calls.push({ status: "completed", query: `${c.ticker}`, actionType: "finance" }),
-  );
-  options.weather?.forEach((c) =>
-    calls.push({ status: "completed", query: c.location, actionType: "weather" }),
-  );
-  options.sports?.forEach((c) =>
-    calls.push({ status: "completed", query: `${c.fn} ${c.league}`, actionType: "sports" }),
-  );
-  options.time?.forEach((c) =>
-    calls.push({ status: "completed", query: c.utc_offset, actionType: "time" }),
-  );
+  for (const query of options.searchQuery ?? [])
+    calls.push({ status: "completed", query: query.q, actionType: "search_query" });
+  for (const query of options.imageQuery ?? [])
+    calls.push({ status: "completed", query: query.q, actionType: "image_query" });
+  for (const command of options.open ?? [])
+    calls.push({ status: "completed", refId: command.refId, actionType: "open_page" });
+  for (const command of options.find ?? [])
+    calls.push({ status: "completed", refId: command.refId, actionType: "find_in_page" });
+  for (const command of options.click ?? [])
+    calls.push({ status: "completed", refId: command.refId, actionType: "click" });
+  for (const command of options.screenshot ?? [])
+    calls.push({ status: "completed", refId: command.refId, actionType: "screenshot" });
+  for (const command of options.finance ?? [])
+    calls.push({ status: "completed", query: `${command.ticker}`, actionType: "finance" });
+  for (const command of options.weather ?? [])
+    calls.push({ status: "completed", query: command.location, actionType: "weather" });
+  for (const command of options.sports ?? [])
+    calls.push({ status: "completed", query: `${command.fn} ${command.league}`, actionType: "sports" });
+  for (const command of options.time ?? [])
+    calls.push({ status: "completed", query: command.utc_offset, actionType: "time" });
   return calls;
 }
 

@@ -304,19 +304,21 @@ function parseSteerCapability(raw: unknown): SteerCapability | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const input = raw as Partial<SteerCapability>;
 	if (input.type !== "steer-capability" || input.protocolVersion !== 1) return undefined;
-	if (!Number.isInteger(input.index) || input.index < 0 || input.index > 1_000_000) return undefined;
-	if (!Number.isInteger(input.pid) || input.pid <= 0 || !Number.isFinite(input.readyAt) || input.readyAt <= 0 || typeof input.supported !== "boolean") return undefined;
-	return { type: "steer-capability", protocolVersion: 1, index: input.index, pid: input.pid, readyAt: input.readyAt, supported: input.supported };
+	const { index, pid, readyAt, supported } = input;
+	if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1_000_000) return undefined;
+	if (typeof pid !== "number" || !Number.isInteger(pid) || pid <= 0 || typeof readyAt !== "number" || !Number.isFinite(readyAt) || readyAt <= 0 || typeof supported !== "boolean") return undefined;
+	return { type: "steer-capability", protocolVersion: 1, index, pid, readyAt, supported };
 }
 
 function parseSteerAck(raw: unknown): SteerAck | undefined {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return undefined;
 	const input = raw as Partial<SteerAck>;
 	if (input.type !== "steer-ack" || input.protocolVersion !== 1 || typeof input.requestId !== "string" || !/^[^\s]+$/.test(input.requestId) || input.requestId.length > 256) return undefined;
-	if (!Number.isInteger(input.index) || input.index < 0 || input.index > 1_000_000 || !Number.isFinite(input.ts) || input.ts <= 0) return undefined;
+	const { index, ts } = input;
+	if (typeof index !== "number" || !Number.isInteger(index) || index < 0 || index > 1_000_000 || typeof ts !== "number" || !Number.isFinite(ts) || ts <= 0) return undefined;
 	if (input.state !== "delivered" && input.state !== "failed") return undefined;
 	if (typeof input.message !== "string" || !input.message.trim() || input.message.length > 1000) return undefined;
-	return { type: "steer-ack", protocolVersion: 1, requestId: input.requestId, index: input.index, ts: input.ts, state: input.state, message: input.message.trim() };
+	return { type: "steer-ack", protocolVersion: 1, requestId: input.requestId, index, ts, state: input.state, message: input.message.trim() };
 }
 
 export function readSteerCapability(asyncDir: string, index: number): SteerCapability | undefined {

@@ -71,7 +71,8 @@ function mcpClause(verb: string, count: number, servers: string[]): string {
 }
 
 function capitalize(text: string): string {
-	return text.length === 0 ? text : `${text[0].toUpperCase()}${text.slice(1)}`;
+	const first = text[0];
+	return first ? `${first.toUpperCase()}${text.slice(1)}` : text;
 }
 
 function countByKind(kinds: InspectionKind[]): Map<InspectionKind, number> {

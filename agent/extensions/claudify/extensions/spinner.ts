@@ -192,7 +192,7 @@ function scaleRgb({ r, g, b }: Rgb, factor: number): Rgb {
 
 /** Base verb/glyph color (RGB) + bold for the elapsed time — the one-way "wave". */
 export function shimmerBaseRgb(elapsedMs: number): { rgb: Rgb; bold: boolean } {
-	let stop = SHIMMER_STOPS[0];
+	let stop = SHIMMER_STOPS[0] ?? { atMs: 0, rgb: { r: 255, g: 255, b: 255 }, bold: false };
 	for (const candidate of SHIMMER_STOPS) {
 		if (elapsedMs >= candidate.atMs) stop = candidate;
 		else break;
@@ -566,7 +566,7 @@ export const DEFAULT_SPINNER_VERBS = [
 
 function pickVerb(): string {
 	const verbs = readSpinnerSettings().verbs;
-	return verbs[Math.floor(Math.random() * verbs.length)] ?? DEFAULT_SPINNER_VERBS[0];
+	return verbs[Math.floor(Math.random() * verbs.length)] ?? DEFAULT_SPINNER_VERBS[0] ?? "Working";
 }
 
 /** Format elapsed ms as compact duration: 5s, 1m 23s, 1h 2m 3s */

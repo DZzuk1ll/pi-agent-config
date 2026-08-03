@@ -132,7 +132,8 @@ export function formatWorkflowResult(
 	}
 	const usage = aggregateUsage(details);
 	if (usage.input || usage.output || usage.cacheRead || usage.cacheWrite || usage.cost) {
-		text += `\n  ${theme.fg("dim", `Total: ${usage.input + usage.cacheRead + usage.cacheWrite} input · ${usage.output} output · $${usage.cost.toFixed(4)}`)}`;
+		const totalInput = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
+		text += `\n  ${theme.fg("dim", `Total: ${totalInput} input · ${usage.output ?? 0} output · $${(usage.cost ?? 0).toFixed(4)}`)}`;
 	}
 	if (details.error) text += `\n  ${theme.fg("error", `Error: ${inlineText(details.error, 1_000)}`)}`;
 	if (options.expanded && details.result !== undefined) {

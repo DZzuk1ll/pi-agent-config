@@ -132,7 +132,6 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const steeringNoticeSeen = new Map<string, number>();
 	const rerenderWidget = (ctx: ExtensionContext, jobs = collectSubagentWidgetJobs(state)) => {
 		renderWidget(ctx, options.widgetEnabled === false ? [] : jobs);
-		ctx.ui.requestRender?.();
 	};
 	const rerenderLastWidget = (jobs = collectSubagentWidgetJobs(state)) => {
 		const ctx = state.lastUiContext;

@@ -1,6 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { AgentToolResult } from "@earendil-works/pi-agent-core";
+import type { AgentToolResult as CoreAgentToolResult } from "@earendil-works/pi-agent-core";
+
+type AgentToolResult<T> = CoreAgentToolResult<T> & { isError?: boolean };
 import { formatAsyncRunList, formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns } from "./async-status.ts";
 import { formatAsyncResultTranscript, formatAsyncRunTranscript, formatNestedRunTranscript, inspectSubagentFleet } from "./fleet-view.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
@@ -241,7 +243,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		}
 	}
 
-	let location;
+	let location: ReturnType<typeof resolveAsyncRunLocation>;
 	try {
 		const requestedId = params.id ?? params.runId;
 		if (!params.dir && requestedId) {
@@ -298,7 +300,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	}
 
 	if (asyncDir) {
-		let reconciliation;
+		let reconciliation: ReturnType<typeof reconcileAsyncRun>;
 		try {
 			reconciliation = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now });
 		} catch (error) {
@@ -354,11 +356,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			const steeringText = formatSteeringSummary(status);
 			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
 				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			const terminalReason = processTerminal?.state === "unknown" ? processTerminal.reason : undefined;
 
 			const lines = [
 				`Run: ${status.runId}`,
 				`State: ${status.state}`,
-				processTerminal ? `Process terminal: ${processTerminal.state}${processTerminal.reason ? ` (${processTerminal.reason})` : ""}` : undefined,
+				processTerminal ? `Process terminal: ${processTerminal.state}${terminalReason ? ` (${terminalReason})` : ""}` : undefined,
 				status.capabilityCeiling ? `Capability ceiling: ${status.capabilityCeiling.allowedTools === undefined ? "names unrestricted" : status.capabilityCeiling.allowedTools.length === 0 ? "none" : status.capabilityCeiling.allowedTools.join(", ")}\nExtensions denied: ${status.capabilityCeiling.denyExtensions ? "yes" : "no"} (sources: ${status.capabilityCeiling.sources.join(", ")})` : undefined,
 				status.capabilityAudit ? `Capability audit: ${status.capabilityAudit.removedTools.length} tools removed, ${status.capabilityAudit.removedExtensionCount} extension entries removed` : undefined,
 				status.error ? `Error: ${status.error}` : undefined,

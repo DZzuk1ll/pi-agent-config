@@ -108,7 +108,7 @@ export default function fastMode(pi: ExtensionAPI): void {
 
 	pi.on("before_provider_request", (event, ctx) => {
 		if (!enabled || !isEligible(ctx) || typeof event.payload !== "object" || event.payload === null) return;
-		if (event.payload.model !== ctx.model?.id || "service_tier" in event.payload) return;
+		if (!("model" in event.payload) || event.payload.model !== ctx.model?.id || "service_tier" in event.payload) return;
 		return { ...event.payload, service_tier: "priority" };
 	});
 }

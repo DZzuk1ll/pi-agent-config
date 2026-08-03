@@ -14,11 +14,21 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
-import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
-import { findNearestProjectRoot, type AgentConfig, type AgentMemoryConfig } from "./agents.ts";
+import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
+import type { AgentConfig, AgentMemoryConfig } from "./agents.ts";
 
 export const AGENT_MEMORY_DIR_NAME = "agent-memory";
 export const AGENT_MEMORY_FILE = "MEMORY.md";
+
+function findNearestProjectRoot(cwd: string): string | null {
+	let currentDir = path.resolve(cwd);
+	while (true) {
+		if (fs.existsSync(getProjectConfigDir(currentDir)) || fs.existsSync(path.join(currentDir, ".agents"))) return currentDir;
+		const parentDir = path.dirname(currentDir);
+		if (parentDir === currentDir) return null;
+		currentDir = parentDir;
+	}
+}
 export const MAX_MEMORY_LINES = 200;
 const MAX_MEMORY_BYTES = 16 * 1024;
 

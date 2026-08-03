@@ -426,9 +426,10 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 	fs.writeFileSync(cfgPath, JSON.stringify(launchConfig));
 	const runner = path.join(path.dirname(fileURLToPath(import.meta.url)), "subagent-runner.ts");
 	const nodeCommand = resolveAsyncRunnerNodeCommand();
-	const startupPath = typeof (launchConfig as { revivalLease?: unknown; asyncDir?: unknown }).revivalLease === "object"
-		&& typeof (launchConfig as { asyncDir?: unknown }).asyncDir === "string"
-		? path.join((launchConfig as { asyncDir: string }).asyncDir, "runner-startup.json")
+	const launchMetadata = launchConfig as { revivalLease?: unknown; asyncDir?: unknown };
+	const launchAsyncDir = launchMetadata.asyncDir;
+	const startupPath = typeof launchMetadata.revivalLease === "object" && typeof launchAsyncDir === "string"
+		? path.join(launchAsyncDir, "runner-startup.json")
 		: undefined;
 	const startupAckPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-ack.json") : undefined;
 	const startupProceedPath = startupPath ? path.join(path.dirname(startupPath), "runner-startup-proceed.json") : undefined;
@@ -484,7 +485,7 @@ function spawnRunner(cfg: object, suffix: string, cwd: string, onProcessTerminal
 							runId,
 							mode: "single",
 							state: persisted.state === "observed" ? "complete" : "failed",
-							startedAt: persisted.observedAt ?? Date.now(),
+							startedAt: persisted.state === "observed" ? persisted.observedAt : Date.now(),
 							lastUpdate: Date.now(),
 							processTerminal: persisted,
 						};
@@ -641,11 +642,12 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 		const stepCwd = resolveChildCwd(runnerCwd, s.cwd);
 		const instructionCwd = behaviorCwd ?? stepCwd;
 		let behavior = suppressProgressForReadOnlyTask(resolvedBehavior ?? resolveStepBehavior(a, buildStepOverrides(s), chainSkills), s.task, originalTask);
-		const inheritedRelativeParallelOutput = parallelOutputNamespace && s.output === undefined && typeof behavior.output === "string" && !path.isAbsolute(behavior.output);
+		const relativeOutput = typeof behavior.output === "string" ? behavior.output : undefined;
+		const inheritedRelativeParallelOutput = parallelOutputNamespace && s.output === undefined && relativeOutput !== undefined && !path.isAbsolute(relativeOutput);
 		if (inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex !== undefined) {
 			behavior = {
 				...behavior,
-				output: path.join(`parallel-${parallelOutputNamespace.stepIndex}`, `${parallelOutputNamespace.taskIndex}-${s.agent}`, behavior.output),
+				output: path.join(`parallel-${parallelOutputNamespace.stepIndex}`, `${parallelOutputNamespace.taskIndex}-${s.agent}`, relativeOutput),
 			};
 		}
 		const namespaceOutputPath = Boolean(inheritedRelativeParallelOutput && parallelOutputNamespace.taskIndex === undefined);
@@ -709,9 +711,9 @@ export function buildAsyncRunnerSteps(id: string, params: AsyncRunnerStepBuildPa
 			cwd: stepCwd,
 			model,
 			thinking: resolveEffectiveThinking(model, effectiveThinking),
-			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-				applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined),
-			),
+			modelCandidates: buildModelCandidates(primaryModel, a.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+				.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, thinkingOverride !== undefined))
+				.filter((candidate): candidate is string => candidate !== undefined),
 			tools: a.tools,
 			extensions: a.extensions,
 			subagentOnlyExtensions: a.subagentOnlyExtensions,
@@ -963,6 +965,8 @@ export function executeAsyncChain(
 		}
 		return [childIntercomTarget(step.agent, childTargetIndex++)];
 	}) : undefined;
+	const eventFirstStep = eventChain[0];
+	if (!eventFirstStep) return formatAsyncStartError(resultMode, "Async chains must contain at least one step.");
 
 	let spawnResult: { pid?: number; error?: string } = {};
 	try {
@@ -1019,7 +1023,6 @@ export function executeAsyncChain(
 	}
 
 	if (spawnResult.pid) {
-		const eventFirstStep = eventChain[0];
 		const firstAgents = isParallelStep(eventFirstStep)
 			? eventFirstStep.parallel.map((t) => t.agent)
 			: isDynamicParallelStep(eventFirstStep)
@@ -1217,9 +1220,9 @@ export function executeAsyncSingle(
 	const structuredOutput = params.structuredOutputSchema
 		? createStructuredOutputRuntime(params.structuredOutputSchema, path.join(asyncDir, "structured-output"))
 		: undefined;
-	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope }).map((candidate) =>
-		applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined),
-	);
+	const modelCandidates = buildModelCandidates(primaryModel, agentConfig.fallbackModels, availableModels, ctx.currentModelProvider, { scope: ctx.modelScope })
+		.map((candidate) => applyThinkingSuffix(candidate, effectiveThinking, params.thinkingOverride !== undefined))
+		.filter((candidate): candidate is string => candidate !== undefined);
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(systemPrompt, params.turnBudget);
 	const toolPlan = resolvePiLaunchToolPlan({
 		tools: agentConfig.tools,

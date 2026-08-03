@@ -487,8 +487,8 @@ export class ChainClarifyComponent implements Component {
 			this.filteredSkills = [...this.availableSkills];
 			const current = this.getEffectiveBehavior(this.selectedStep).skills;
 			this.skillSelectedNames.clear();
-			if (current !== false && current.length > 0) {
-				current.forEach((skillName) => this.skillSelectedNames.add(skillName));
+			if (current !== false) {
+				for (const skillName of current) this.skillSelectedNames.add(skillName);
 			}
 			this.tui.requestRender();
 			return;
@@ -775,22 +775,22 @@ export class ChainClarifyComponent implements Component {
 
 	private handleEditInput(data: string): void {
 		const textWidth = this.width - 4; // Must match render: innerW - 2 = (width - 2) - 2
-		if (matchesKey(data, "shift+up") || matchesKey(data, "pageup")) {
+		if (matchesKey(data, "shift+up") || matchesKey(data, "pageUp")) {
 			const { lines: wrapped, starts } = wrapText(this.editState.buffer, textWidth);
 			const cursorPos = getCursorDisplayPos(this.editState.cursor, starts);
 			const targetLine = Math.max(0, cursorPos.line - this.EDIT_VIEWPORT_HEIGHT);
 			const targetCol = Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0);
-			this.editState = { ...this.editState, cursor: starts[targetLine] + targetCol };
+			this.editState = { ...this.editState, cursor: (starts[targetLine] ?? this.editState.cursor) + targetCol };
 			this.tui.requestRender();
 			return;
 		}
 
-		if (matchesKey(data, "shift+down") || matchesKey(data, "pagedown")) {
+		if (matchesKey(data, "shift+down") || matchesKey(data, "pageDown")) {
 			const { lines: wrapped, starts } = wrapText(this.editState.buffer, textWidth);
 			const cursorPos = getCursorDisplayPos(this.editState.cursor, starts);
 			const targetLine = Math.min(wrapped.length - 1, cursorPos.line + this.EDIT_VIEWPORT_HEIGHT);
 			const targetCol = Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0);
-			this.editState = { ...this.editState, cursor: starts[targetLine] + targetCol };
+			this.editState = { ...this.editState, cursor: (starts[targetLine] ?? this.editState.cursor) + targetCol };
 			this.tui.requestRender();
 			return;
 		}

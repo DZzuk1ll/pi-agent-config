@@ -35,9 +35,11 @@ type I18nSDK = { scope: (namespace: string) => ScopeFn };
 // Top-level await is required so a synchronous `t(...)` call from any
 // downstream module sees the resolved scope; ESM module loading awaits this
 // before evaluating any importer.
+const I18N_SDK_PACKAGE = "@juicesharp/rpiv-i18n";
+
 let scopeImpl: ScopeFn;
 try {
-	const sdk = (await import("@juicesharp/rpiv-i18n")) as I18nSDK;
+	const sdk = (await import(I18N_SDK_PACKAGE)) as I18nSDK;
 	scopeImpl = sdk.scope(I18N_NAMESPACE);
 } catch {
 	scopeImpl = (_key, fallback) => fallback;

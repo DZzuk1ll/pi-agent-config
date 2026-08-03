@@ -153,8 +153,8 @@ function validateProof(raw: unknown, asyncDir: string, fallback?: { runId?: stri
 export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: string; runnerProcessInstanceId?: string }, label = "status"): ProcessTerminalV1 | undefined {
 	if (value === undefined) return undefined;
 	try {
-		validateProof(value, label, fallback);
-		return value;
+		if (validateProof(value, label, fallback)) return value;
+		return undefined;
 	} catch (error) {
 		return unknownProof(fallback.runId ?? label, fallback.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));
 	}
@@ -163,8 +163,8 @@ export function sanitizeProcessTerminal(value: unknown, fallback: { runId?: stri
 export function readProcessTerminal(asyncDir: string, fallback?: { runId?: string; runnerProcessInstanceId?: string }): ProcessTerminalV1 | undefined {
 	try {
 		const raw = JSON.parse(fs.readFileSync(processTerminalPath(asyncDir), "utf-8")) as unknown;
-		validateProof(raw, asyncDir, fallback);
-		return raw;
+		if (validateProof(raw, asyncDir, fallback)) return raw;
+		return undefined;
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
 		return unknownProof(fallback?.runId ?? path.basename(asyncDir), fallback?.runnerProcessInstanceId ?? "unknown", "proof-write-failed", errorMessage(error));

@@ -329,8 +329,8 @@ async function getFilesToAdd(root: string): Promise<FilesToAddResult> {
     .filter((p) => !isPathWithinAny(p, largeDirsSet));
 
   const all = new Set<string>();
-  status.trackedPaths.forEach((p) => all.add(p));
-  untrackedForIndex.forEach((p) => all.add(p));
+  for (const trackedPath of status.trackedPaths) all.add(trackedPath);
+  for (const untrackedPath of untrackedForIndex) all.add(untrackedPath);
 
   return {
     filtered: [...all],

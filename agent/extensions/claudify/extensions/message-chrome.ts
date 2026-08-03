@@ -168,9 +168,9 @@ export function resolveMessageChromeSettings(input: MessageChromeInput = {}): Me
 
 function normalizeTranscriptRenderedLines(lines: string[], spacing: MessageSpacing): string[] {
 	let start = 0;
-	while (start < lines.length && isBlankLine(lines[start])) start++;
+	while (start < lines.length && isBlankLine(lines[start] ?? "")) start++;
 	let end = lines.length - 1;
-	while (end >= start && isBlankLine(lines[end])) end--;
+	while (end >= start && isBlankLine(lines[end] ?? "")) end--;
 	if (start > end) return [];
 
 	const normalized: string[] = [];

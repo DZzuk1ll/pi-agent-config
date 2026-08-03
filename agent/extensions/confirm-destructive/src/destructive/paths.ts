@@ -22,7 +22,7 @@ export function is_agent_temp_path(path: string): boolean {
 		/[\\/]+/,
 	)[0];
 	return /^my-pi-(audit|sandbox|temp|tmp|work|session)-/.test(
-		first_segment,
+		first_segment ?? '',
 	);
 }
 

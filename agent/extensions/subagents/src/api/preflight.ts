@@ -13,7 +13,7 @@ import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
 import { resolveEffectiveThinking } from "../shared/model-info.ts";
 import { SUBAGENT_LIFECYCLE_ARTIFACT_VERSION, type ArtifactDirPreference, type ArtifactPaths, type JsonSchemaObject, type OutputMode } from "../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../runs/shared/capability-ceiling.ts";
-import { appendTurnBudgetSystemPrompt } from "../runs/shared/turn-budget.ts";
+import { appendTurnBudgetSystemPrompt, resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import type { ResolvedTurnBudget } from "../shared/types.ts";
 import type { ResolvedMcpDirectToolSelection } from "../runs/shared/mcp-direct-tool-allowlist.ts";
 import { resolveStepBehavior } from "../shared/settings.ts";
@@ -307,7 +307,12 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const memoryInjection = buildAgentMemoryInjection(agent, effectiveCwd);
 	if (memoryInjection) effectiveSystemPrompt = effectiveSystemPrompt ? `${effectiveSystemPrompt}\n\n${memoryInjection}` : memoryInjection;
 	effectiveSystemPrompt = injectOutputPathSystemPrompt(effectiveSystemPrompt, outputPath, agent);
-	const turnBudget = input.turnBudget ?? agent.defaultTurnBudget;
+	const turnBudgetResult = resolveTurnBudgetConfig(input.turnBudget ?? agent.defaultTurnBudget);
+	if (turnBudgetResult.error) {
+		diagnostics.push({ code: "unsupported_mode", severity: "error", message: turnBudgetResult.error });
+		return { ok: false, code: "unsupported_mode", message: turnBudgetResult.error, diagnostics };
+	}
+	const turnBudget = turnBudgetResult.turnBudget;
 	effectiveSystemPrompt = appendTurnBudgetSystemPrompt(effectiveSystemPrompt, turnBudget);
 	const candidates = candidateList(input.agent, agent, effectiveCwd);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);

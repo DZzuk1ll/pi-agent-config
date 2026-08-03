@@ -124,10 +124,10 @@ function piAuthPath(): string {
 
 function decodeJwtPayload(token: string | undefined): Record<string, any> | undefined {
   if (!token) return undefined;
-  const parts = token.split(".");
-  if (parts.length < 2) return undefined;
+  const payload = token.split(".")[1];
+  if (!payload) return undefined;
   try {
-    return JSON.parse(Buffer.from(parts[1], "base64url").toString("utf8")) as Record<string, any>;
+    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, any>;
   } catch {
     return undefined;
   }
@@ -549,8 +549,11 @@ function zaiUsageAdapter(providerId: string, usageUrl: string, displayName: stri
 
       // The limit with the nearest reset is the 5-hour rolling window;
       // the next one (if present) is the weekly window.
-      const fiveHour = zaiLimitToUsageWindow(tokenLimits[0]);
-      const weekly = tokenLimits.length >= 2 ? zaiLimitToUsageWindow(tokenLimits[1]) : undefined;
+      const firstTokenLimit = tokenLimits[0];
+      if (!firstTokenLimit) throw new Error(`No TOKENS_LIMIT entries in ${displayName} usage response`);
+      const fiveHour = zaiLimitToUsageWindow(firstTokenLimit);
+      const weeklyTokenLimit = tokenLimits[1];
+      const weekly = weeklyTokenLimit ? zaiLimitToUsageWindow(weeklyTokenLimit) : undefined;
       const mcpMonthly = timeLimit ? zaiLimitToUsageWindow(timeLimit) : undefined;
 
       // Best-effort: per-model tokens + per-tool calls. Any failure is silent; the
@@ -764,11 +767,11 @@ function buildDetails(snapshot: SubscriptionUsageSnapshot | undefined, state: St
     widths[col.key] = Math.max(col.label.length, ...snapshot.accounts.map((a) => col.get(a).length));
   }
 
-  const headerCols = columns.map((c) => pad(c.label, widths[c.key]));
+  const headerCols = columns.map((c) => pad(c.label, widths[c.key] ?? c.label.length));
   const header = `  ${headerCols.join("  ")}  LAST ACTIVITY`;
   const sep = "-".repeat(header.length);
   const body = rows.map((row) => {
-    const cols = columns.map((c) => pad(c.get(row.snapshot), widths[c.key]));
+    const cols = columns.map((c) => pad(c.get(row.snapshot), widths[c.key] ?? c.label.length));
     return `${row.active} ${cols.join("  ")}  ${row.snapshot.lastActivity ?? ""}`;
   });
 

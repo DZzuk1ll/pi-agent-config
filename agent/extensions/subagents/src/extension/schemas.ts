@@ -3,6 +3,8 @@
  */
 
 import { Type } from "typebox";
+import type { AcceptanceInput } from "../shared/types.ts";
+import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -77,7 +79,7 @@ const AcceptanceEvidenceKinds = [
 	"manual-notes",
 ];
 
-const AcceptanceOverride = Type.Unsafe({
+const AcceptanceOverride = Type.Unsafe<AcceptanceInput>({
 	anyOf: [
 		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
 		{
@@ -333,7 +335,7 @@ const SubagentParamsSchema = Type.Object({
 	acceptance: Type.Optional(AcceptanceOverride),
 });
 
-export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
+export const SubagentParams = Type.Unsafe<SubagentParamsLike>(keepTopLevelParameterDescriptions(SubagentParamsSchema));
 
 const SubagentWaitParamsSchema = Type.Object({
 	id: Type.Optional(Type.String({

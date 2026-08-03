@@ -497,14 +497,38 @@ export class SubagentFleetComponent implements Component {
 			this.done(undefined);
 			return;
 		}
-		if (matchesKey(data, Key.shift("k"))) return this.scrollDetail(-1);
-		if (matchesKey(data, Key.shift("j"))) return this.scrollDetail(1);
-		if (matchesKey(data, "up") || matchesKey(data, "k")) return this.moveSelection(-1);
-		if (matchesKey(data, "down") || matchesKey(data, "j")) return this.moveSelection(1);
-		if (matchesKey(data, "home")) return this.moveSelection(-this.snapshot.items.length);
-		if (matchesKey(data, "end")) return this.moveSelection(this.snapshot.items.length);
-		if (matchesKey(data, "pageUp")) return this.scrollDetail(-this.detailViewportHeight);
-		if (matchesKey(data, "pageDown")) return this.scrollDetail(this.detailViewportHeight);
+		if (matchesKey(data, Key.shift("k"))) {
+			this.scrollDetail(-1);
+			return;
+		}
+		if (matchesKey(data, Key.shift("j"))) {
+			this.scrollDetail(1);
+			return;
+		}
+		if (matchesKey(data, "up") || matchesKey(data, "k")) {
+			this.moveSelection(-1);
+			return;
+		}
+		if (matchesKey(data, "down") || matchesKey(data, "j")) {
+			this.moveSelection(1);
+			return;
+		}
+		if (matchesKey(data, "home")) {
+			this.moveSelection(-this.snapshot.items.length);
+			return;
+		}
+		if (matchesKey(data, "end")) {
+			this.moveSelection(this.snapshot.items.length);
+			return;
+		}
+		if (matchesKey(data, "pageUp")) {
+			this.scrollDetail(-this.detailViewportHeight);
+			return;
+		}
+		if (matchesKey(data, "pageDown")) {
+			this.scrollDetail(this.detailViewportHeight);
+			return;
+		}
 		if (data.toLowerCase() === "r") {
 			this.transcriptCache = undefined;
 			this.refresh();

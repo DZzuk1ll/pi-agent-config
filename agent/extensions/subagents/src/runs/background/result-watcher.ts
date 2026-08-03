@@ -215,7 +215,7 @@ export function createResultWatcher(
 					mode,
 					source: "async",
 					children: normalizedChildren,
-					asyncId: data.id,
+					asyncId: data.id ?? undefined,
 					asyncDir: data.asyncDir,
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
 				}));
@@ -297,9 +297,9 @@ export function createResultWatcher(
 	const primeExistingResults = (options: { triggerTurn?: boolean } = {}) => {
 		try {
 			const triggerTurn = options.triggerTurn !== false;
-			fsApi.readdirSync(resultsDir)
-				.filter((f) => f.endsWith(".json"))
-				.forEach((file) => scheduleResult(file, triggerTurn));
+			for (const file of fsApi.readdirSync(resultsDir).filter((entry) => entry.endsWith(".json"))) {
+				scheduleResult(file, triggerTurn);
+			}
 		} catch (error) {
 			if (!isNotFound(error)) console.error(`Failed to scan subagent result directory '${resultsDir}':`, error);
 		}

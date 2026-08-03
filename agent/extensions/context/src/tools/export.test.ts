@@ -70,7 +70,7 @@ describe('context_export tool', () => {
 		expect(tool.description).toContain('broad/full JSON/log/script');
 		expect(tool.description).toContain('full source offline');
 		expect(tool.promptSnippet).toContain('offline rg/jq/Python');
-		expect(tool.parameters.properties.chunk_id.description).toContain(
+		expect(tool.parameters.properties.chunk_id!.description).toContain(
 			'full source for offline processing',
 		);
 
@@ -80,8 +80,8 @@ describe('context_export tool', () => {
 			global: true,
 		});
 
-		expect(result.content[0].text).toContain('Exported 1 chunk(s)');
-		expect(result.content[0].text).not.toContain('export-token');
+		expect(result.content[0]!.text).toContain('Exported 1 chunk(s)');
+		expect(result.content[0]!.text).not.toContain('export-token');
 		expect(readFileSync(output, 'utf8')).toContain('export-token');
 		expect(result.details).toMatchObject({
 			count: 1,
@@ -104,7 +104,7 @@ describe('context_export tool', () => {
 			global: true,
 		});
 
-		expect(result.content[0].text).toContain(
+		expect(result.content[0]!.text).toContain(
 			'Source ctx_missing was not found',
 		);
 		expect(result.details).toMatchObject({

@@ -252,6 +252,7 @@ export function cycle_setting_value(
 		(start_index + direction + item.values.length) %
 		item.values.length;
 	const new_value = item.values[next_index];
+	if (new_value === undefined) return undefined;
 	item.currentValue = new_value;
 	return new_value;
 }

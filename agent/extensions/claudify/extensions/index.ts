@@ -31,6 +31,7 @@ import {
 	deleteAllKittyImages,
 	getCapabilities,
 	getImageDimensions,
+	type ImageDimensions,
 	imageFallback,
 	Markdown,
 	Spacer,
@@ -252,18 +253,21 @@ function themeFgKeys(theme: unknown): string[] {
 
 function colorToRgb(value: string): { r: number; g: number; b: number } | null {
 	const hex = /^#([0-9a-fA-F]{6})$/.exec(value);
-	if (hex) {
+	const hexDigits = hex?.[1];
+	if (hexDigits) {
 		return {
-			r: Number.parseInt(hex[1].slice(0, 2), 16),
-			g: Number.parseInt(hex[1].slice(2, 4), 16),
-			b: Number.parseInt(hex[1].slice(4, 6), 16),
+			r: Number.parseInt(hexDigits.slice(0, 2), 16),
+			g: Number.parseInt(hexDigits.slice(2, 4), 16),
+			b: Number.parseInt(hexDigits.slice(4, 6), 16),
 		};
 	}
 	const truecolor = /38;2;(\d+);(\d+);(\d+)/.exec(value);
-	if (truecolor) return { r: +truecolor[1], g: +truecolor[2], b: +truecolor[3] };
+	const [, red, green, blue] = truecolor ?? [];
+	if (red && green && blue) return { r: +red, g: +green, b: +blue };
 	const indexed = /38;5;(\d+)/.exec(value);
-	if (!indexed) return null;
-	const n = +indexed[1];
+	const indexText = indexed?.[1];
+	if (!indexText) return null;
+	const n = +indexText;
 	if (n >= 232 && n <= 255) {
 		const v = 8 + 10 * (n - 232);
 		return { r: v, g: v, b: v };
@@ -271,7 +275,10 @@ function colorToRgb(value: string): { r: number; g: number; b: number } | null {
 	if (n >= 16 && n <= 231) {
 		const cube = [0, 95, 135, 175, 215, 255];
 		const c = n - 16;
-		return { r: cube[Math.floor(c / 36)], g: cube[Math.floor(c / 6) % 6], b: cube[c % 6] };
+		const r = cube[Math.floor(c / 36)];
+		const g = cube[Math.floor(c / 6) % 6];
+		const b = cube[c % 6];
+		return r === undefined || g === undefined || b === undefined ? null : { r, g, b };
 	}
 	return null;
 }
@@ -356,11 +363,11 @@ function getThemeBg(theme: unknown, key: string): string | undefined {
 }
 
 function bgAnsiFromHex(hex: string): string | null {
-	const match = /^#([0-9a-fA-F]{6})$/.exec(hex);
-	if (!match) return null;
-	const r = Number.parseInt(match[1].slice(0, 2), 16);
-	const g = Number.parseInt(match[1].slice(2, 4), 16);
-	const b = Number.parseInt(match[1].slice(4, 6), 16);
+	const digits = /^#([0-9a-fA-F]{6})$/.exec(hex)?.[1];
+	if (!digits) return null;
+	const r = Number.parseInt(digits.slice(0, 2), 16);
+	const g = Number.parseInt(digits.slice(2, 4), 16);
+	const b = Number.parseInt(digits.slice(4, 6), 16);
 	return `\x1b[48;2;${r};${g};${b}m`;
 }
 
@@ -536,7 +543,7 @@ function uniqueLeadingGrepFiles(text: string, limit: number): string[] {
 		const match = /^(.+?)(?::\d+:|-\d+-)/.exec(line);
 		if (!match) continue;
 		const file = match[1];
-		if (seen.has(file)) continue;
+		if (!file || seen.has(file)) continue;
 		seen.add(file);
 		files.push(file);
 		if (files.length >= limit + 1) break;
@@ -757,7 +764,8 @@ function hasConsecutiveBashToolChildren(children: unknown[]): boolean {
 }
 
 function dropLeadingSpacerLine(lines: string[]): string[] {
-	return lines.length > 0 && isBlankLine(lines[0]) ? lines.slice(1) : lines;
+	const first = lines[0];
+	return first !== undefined && isBlankLine(first) ? lines.slice(1) : lines;
 }
 
 function renderWithStackedConsecutiveBash(container: any, width: number): string[] | null {
@@ -788,7 +796,11 @@ function firstImageBlockStart(lines: string[]): number {
 	const imageLineIndex = lines.findIndex(isTerminalImageLine);
 	if (imageLineIndex === -1) return -1;
 	let start = imageLineIndex;
-	while (start > 0 && isBlankLine(lines[start - 1])) start--;
+	while (start > 0) {
+		const previous = lines[start - 1];
+		if (previous === undefined || !isBlankLine(previous)) break;
+		start--;
+	}
 	return start;
 }
 
@@ -796,7 +808,11 @@ function splitRenderedImageBlock(lines: string[]): { textLines: string[]; imageL
 	const imageStart = firstImageBlockStart(lines);
 	if (imageStart === -1) return { textLines: lines, imageLines: [] };
 	const textLines = lines.slice(0, imageStart);
-	while (textLines.length > 0 && isBlankLine(textLines[textLines.length - 1])) textLines.pop();
+	while (textLines.length > 0) {
+		const last = textLines[textLines.length - 1];
+		if (last === undefined || !isBlankLine(last)) break;
+		textLines.pop();
+	}
 	return { textLines, imageLines: lines.slice(imageStart) };
 }
 
@@ -1212,7 +1228,8 @@ function stripBackgroundAnsi(text: string): string {
 				continue;
 			}
 			if (code === 49 || (code >= 40 && code <= 47) || (code >= 100 && code <= 107)) continue;
-			kept.push(params[i]);
+			const param = params[i];
+			if (param !== undefined) kept.push(param);
 		}
 		return kept.length === 0 ? "" : `\x1b[${kept.join(";")}m`;
 	});
@@ -1268,11 +1285,12 @@ export function applyUserMessageBox(lines: string[], mode: Exclude<UserMessageBo
 	if (contentIndexes.length === 0) return lines;
 	const first = contentIndexes[0];
 	const last = contentIndexes[contentIndexes.length - 1];
+	if (first === undefined || last === undefined) return lines;
 	// The +1 right padding must never push a full-width line past the render
 	// width — pi's TUI throws on overflow instead of clipping.
 	const boxWidth = Math.min(
 		Math.max(1, maxWidth),
-		Math.max(...contentIndexes.map((index) => visibleWidth(lines[index]))) + 1,
+		Math.max(...contentIndexes.map((index) => visibleWidth(lines[index] ?? ""))) + 1,
 	);
 	return lines.map((line, index) => {
 		if (index < first || index > last) return line;
@@ -2072,6 +2090,7 @@ function tokenizeShellCommand(command: string): string[] | null {
 
 	for (let i = 0; i < command.length; i++) {
 		const char = command[i];
+		if (char === undefined) break;
 		if (escaping) {
 			current += char;
 			escaping = false;
@@ -2135,7 +2154,7 @@ function isOptionToken(token: string): boolean {
 
 function singlePathArg(tokens: readonly string[]): string | null {
 	const paths = tokens.filter((token) => token !== "--" && token !== "-" && !isOptionToken(token));
-	return paths.length === 1 ? paths[0] : null;
+	return paths.length === 1 ? paths[0] ?? null : null;
 }
 
 function formatSedRangeLabel(script: string | undefined): string | undefined {
@@ -2144,6 +2163,7 @@ function formatSedRangeLabel(script: string | undefined): string | undefined {
 	if (!match) return undefined;
 	const start = match[1];
 	const end = match[2];
+	if (!start) return undefined;
 	if (!end || end === start) return `line ${start}`;
 	return `lines ${start}-${end}`;
 }
@@ -2200,7 +2220,7 @@ function classifyHeadTailRead(tokens: readonly string[]): BashDisplayInfo | null
 	const pathCandidates: string[] = [];
 	for (let i = 0; i < args.length; i++) {
 		const token = args[i];
-		if (token === "--") continue;
+		if (!token || token === "--") continue;
 		if (token === "-n" && args[i + 1]) {
 			count = args[i + 1];
 			i++;
@@ -2217,7 +2237,8 @@ function classifyHeadTailRead(tokens: readonly string[]): BashDisplayInfo | null
 	if (pathCandidates.length !== 1) return null;
 	const amount = count && /^\d+$/.test(count) ? count : "10";
 	const rangeLabel = `${command === "head" ? "first" : "last"} ${amount} lines`;
-	return { kind: "read", label: "Read", path: pathCandidates[0], rangeLabel, suppressCollapsedHint: true };
+	const path = pathCandidates[0];
+	return path ? { kind: "read", label: "Read", path, rangeLabel, suppressCollapsedHint: true } : null;
 }
 
 export function classifyBashCommandForDisplay(command: string): BashDisplayInfo | null {
@@ -2359,16 +2380,17 @@ function xterm256ToRgb(index: number): { r: number; g: number; b: number } | nul
 			[128, 128, 128], [255, 0, 0], [0, 255, 0], [255, 255, 0],
 			[0, 0, 255], [255, 0, 255], [0, 255, 255], [255, 255, 255],
 		];
-		const [r, g, b] = basic[index];
+		const color = basic[index];
+		if (!color) return null;
+		const [r, g, b] = color;
 		return { r, g, b };
 	}
 	if (index < 232) {
 		const i = index - 16;
-		return {
-			r: CUBE_VALUES[Math.floor(i / 36) % 6],
-			g: CUBE_VALUES[Math.floor(i / 6) % 6],
-			b: CUBE_VALUES[i % 6],
-		};
+		const r = CUBE_VALUES[Math.floor(i / 36) % 6];
+		const g = CUBE_VALUES[Math.floor(i / 6) % 6];
+		const b = CUBE_VALUES[i % 6];
+		return r === undefined || g === undefined || b === undefined ? null : { r, g, b };
 	}
 	const level = 8 + (index - 232) * 10;
 	return { r: level, g: level, b: level };
@@ -2379,10 +2401,11 @@ function parseAnsiRgb(ansi: string): { r: number; g: number; b: number } | null 
 	const esc = "\u001b";
 	// Truecolor: \e[38;2;R;G;Bm or \e[48;2;R;G;Bm
 	const tc = ansi.match(new RegExp(`${esc}\\[(?:38|48);2;(\\d+);(\\d+);(\\d+)m`));
-	if (tc) return { r: +tc[1], g: +tc[2], b: +tc[3] };
+	const [, red, green, blue] = tc ?? [];
+	if (red && green && blue) return { r: +red, g: +green, b: +blue };
 	// 256-color: \e[38;5;Nm or \e[48;5;Nm — happens on Apple Terminal, screen, etc.
-	const idx = ansi.match(new RegExp(`${esc}\\[(?:38|48);5;(\\d+)m`));
-	if (idx) return xterm256ToRgb(+idx[1]);
+	const indexText = ansi.match(new RegExp(`${esc}\\[(?:38|48);5;(\\d+)m`))?.[1];
+	if (indexText) return xterm256ToRgb(+indexText);
 	return null;
 }
 
@@ -2837,6 +2860,7 @@ function normalizeShikiContrast(ansi: string): string {
 		const parts = params.split(";").map(Number);
 		if (parts.length !== 5 || parts.some((n) => !Number.isFinite(n))) return seq;
 		const [, , r, g, b] = parts;
+		if (r === undefined || g === undefined || b === undefined) return seq;
 		const luminance = 0.2126 * r + 0.7152 * g + 0.0722 * b;
 		return luminance < 72 ? FG_SAFE_MUTED : seq;
 	});
@@ -2851,7 +2875,9 @@ function tokenizeAnsiForWrap(text: string): AnsiWrapToken[] {
 	const tokens: AnsiWrapToken[] = [];
 	let i = 0;
 	while (i < text.length) {
-		if (text[i] === "\x1b") {
+		const char = text[i];
+		if (char === undefined) break;
+		if (char === "\x1b") {
 			const sgr = sgrAtStartRegex.exec(text.slice(i))?.[0];
 			if (sgr) {
 				tokens.push({ value: sgr, width: 0 });
@@ -2859,9 +2885,9 @@ function tokenizeAnsiForWrap(text: string): AnsiWrapToken[] {
 				continue;
 			}
 		}
-		if (text[i] === "\x1b") {
+		if (char === "\x1b") {
 			// Preserve unknown escape bytes without treating them as visible cells.
-			tokens.push({ value: text[i], width: 0 });
+			tokens.push({ value: char, width: 0 });
 			i++;
 			continue;
 		}
@@ -2897,6 +2923,7 @@ function wrapAnsi(text: string, width: number, maxRows = adaptiveWrapRows(), fil
 			effectiveWidth = width > 2 ? width - 1 : width;
 		}
 		const token = tokens[tokenIndex];
+		if (!token) break;
 		if (token.width === 0) {
 			row += token.value;
 			tokenIndex++;
@@ -3112,12 +3139,15 @@ export function parseDiff(oldContent: string, newContent: string, ctxLines = 3):
 	let added = 0;
 	let removed = 0;
 	for (let hi = 0; hi < patch.hunks.length; hi++) {
+		const hunk = patch.hunks[hi];
+		if (!hunk) continue;
 		if (hi > 0) {
 			const prev = patch.hunks[hi - 1];
-			const gap = patch.hunks[hi].oldStart - (prev.oldStart + prev.oldLines);
-			lines.push({ type: "sep", oldNum: null, newNum: gap > 0 ? gap : null, content: "" });
+			if (prev) {
+				const gap = hunk.oldStart - (prev.oldStart + prev.oldLines);
+				lines.push({ type: "sep", oldNum: null, newNum: gap > 0 ? gap : null, content: "" });
+			}
 		}
-		const hunk = patch.hunks[hi];
 		let oldLine = hunk.oldStart;
 		let newLine = hunk.newStart;
 		for (const raw of hunk.lines) {
@@ -3197,8 +3227,12 @@ function injectBg(ansiLine: string, ranges: Array<[number, number]>, baseBg: str
 				continue;
 			}
 		}
-		while (rangeIndex < ranges.length && vis >= ranges[rangeIndex][1]) rangeIndex++;
-		const want = rangeIndex < ranges.length && vis >= ranges[rangeIndex][0] && vis < ranges[rangeIndex][1];
+		let range = ranges[rangeIndex];
+		while (range && vis >= range[1]) {
+			rangeIndex++;
+			range = ranges[rangeIndex];
+		}
+		const want = range !== undefined && vis >= range[0] && vis < range[1];
 		if (want !== inHL) {
 			inHL = want;
 			out += inHL ? hlBg : baseBg;
@@ -3251,8 +3285,10 @@ export async function renderFileListing(
 	const out: string[] = [];
 	for (let i = 0; i < vis.length; i++) {
 		const gutter = `${D_DIM} ${lnumPlain(i + 1, nw)} ${D_RST}`;
-		const rows = wrapAnsi(tabs(highlighted[i] ?? vis[i]), cw, adaptiveWrapRows(), "");
-		out.push(`${gutter}${rows[0]}${D_RST}`);
+		const source = highlighted[i] ?? vis[i];
+		if (source === undefined) continue;
+		const rows = wrapAnsi(tabs(source), cw, adaptiveWrapRows(), "");
+		out.push(`${gutter}${rows[0] ?? ""}${D_RST}`);
 		for (let r = 1; r < rows.length; r++) out.push(`${" ".repeat(nw + 2)}${rows[r]}${D_RST}`);
 	}
 	if (all.length > vis.length) {
@@ -3324,6 +3360,7 @@ export async function renderUnified(
 
 	while (index < vis.length) {
 		const line = vis[index];
+		if (!line) break;
 		if (line.type === "sep") {
 			const gap = line.newNum;
 			if (claude) {
@@ -3354,15 +3391,19 @@ export async function renderUnified(
 		// Claude Code does not syntax-highlight removed lines — they render in the
 		// plain foreground, and only additions and context keep their tokens.
 		const dels: Array<{ l: DiffLine; hl: string }> = [];
-		while (index < vis.length && vis[index].type === "del") {
-			const plain = vis[index].content;
-			dels.push({ l: vis[index], hl: claude ? plain : (oldHL[oldIndex] ?? plain) });
+		while (index < vis.length) {
+			const candidate = vis[index];
+			if (!candidate || candidate.type !== "del") break;
+			const plain = candidate.content;
+			dels.push({ l: candidate, hl: claude ? plain : (oldHL[oldIndex] ?? plain) });
 			oldIndex++;
 			index++;
 		}
 		const adds: Array<{ l: DiffLine; hl: string }> = [];
-		while (index < vis.length && vis[index].type === "add") {
-			adds.push({ l: vis[index], hl: newHL[newIndex] ?? vis[index].content });
+		while (index < vis.length) {
+			const candidate = vis[index];
+			if (!candidate || candidate.type !== "add") break;
+			adds.push({ l: candidate, hl: newHL[newIndex] ?? candidate.content });
 			newIndex++;
 			index++;
 		}
@@ -3372,7 +3413,10 @@ export async function renderUnified(
 		// still emit as all-removals-then-all-additions.
 		const pairable = dels.length > 0 && dels.length === adds.length;
 		const pairs = pairable
-			? dels.map((d, i) => ({ d, a: adds[i], wd: wordDiffAnalysis(d.l.content, adds[i].l.content) }))
+			? dels.flatMap((d, i) => {
+				const a = adds[i];
+				return a ? [{ d, a, wd: wordDiffAnalysis(d.l.content, a.l.content) }] : [];
+			})
 			: [];
 		const emphasized = pairable && pairs.every((p) => p.wd && p.wd.similarity >= WORD_DIFF_MIN_SIM);
 
@@ -3420,6 +3464,7 @@ async function renderSplit(
 	let i = 0;
 	while (i < diff.lines.length) {
 		const line = diff.lines[i];
+		if (!line) break;
 		if (line.type === "sep" || line.type === "ctx") {
 			rows.push({ left: line, right: line });
 			i++;
@@ -3427,8 +3472,18 @@ async function renderSplit(
 		}
 		const dels: DiffLine[] = [];
 		const adds: DiffLine[] = [];
-		while (i < diff.lines.length && diff.lines[i].type === "del") dels.push(diff.lines[i++]);
-		while (i < diff.lines.length && diff.lines[i].type === "add") adds.push(diff.lines[i++]);
+		while (i < diff.lines.length) {
+			const candidate = diff.lines[i];
+			if (!candidate || candidate.type !== "del") break;
+			dels.push(candidate);
+			i++;
+		}
+		while (i < diff.lines.length) {
+			const candidate = diff.lines[i];
+			if (!candidate || candidate.type !== "add") break;
+			adds.push(candidate);
+			i++;
+		}
 		const n = Math.max(dels.length, adds.length);
 		for (let j = 0; j < n; j++) rows.push({ left: dels[j] ?? null, right: adds[j] ?? null });
 	}
@@ -3642,6 +3697,7 @@ function getFirstChangedNewLine(diff: ParsedDiff): number {
 	let currentNewLine = 0;
 	for (let i = 0; i < diff.lines.length; i++) {
 		const line = diff.lines[i];
+		if (!line) continue;
 		if (line.type === "sep") {
 			currentNewLine = 0;
 			continue;
@@ -3683,7 +3739,7 @@ async function computeLocalizedEditDiffs(filePath: string, operations: Array<{ o
 		for (let i = 1; i < ordered.length; i++) {
 			const prev = ordered[i - 1];
 			const current = ordered[i];
-			if (prev.matchIndex + prev.matchLength > current.matchIndex) return null;
+			if (!prev || !current || prev.matchIndex + prev.matchLength > current.matchIndex) return null;
 		}
 		const localized: Array<LocalizedEditDiff | null> = Array(operations.length).fill(null);
 		let lineDelta = 0;
@@ -3715,6 +3771,7 @@ function renderEditPreviewBody(
 	const branchWidth = branchDiffWidth();
 	if (operations.length === 1) {
 		const [diff] = diffs;
+		if (!diff) return;
 		const line = lines[0] ?? getFirstChangedNewLine(diff);
 		renderSplit(diff, language, ctx.expanded ? MAX_PREVIEW_LINES : 32, dc, branchWidth)
 			.then((rendered) => {
@@ -4204,8 +4261,10 @@ function parseApplyPatchUpdateDiff(lines: string[], sourceContent?: string): Par
 			}
 			const match = rawLine.match(/^@@\s*-(\d+)(?:,\d+)?\s+\+(\d+)(?:,\d+)?\s*@@/);
 			const inferred = inferredStarts[hunkIndex] ?? { oldStart: null, newStart: null };
-			oldLine = match ? Number.parseInt(match[1], 10) : inferred.oldStart;
-			newLine = match ? Number.parseInt(match[2], 10) : inferred.newStart;
+			const oldStart = match?.[1];
+			const newStart = match?.[2];
+			oldLine = oldStart ? Number.parseInt(oldStart, 10) : inferred.oldStart;
+			newLine = newStart ? Number.parseInt(newStart, 10) : inferred.newStart;
 			hunkIndex++;
 			inHunk = true;
 			continue;
@@ -4269,19 +4328,27 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 			continue;
 		}
 
-		const kind = header[1].toLowerCase() as ApplyPatchChangePreview["kind"];
-		const path = header[2].trim();
+		const kindText = header[1];
+		const pathText = header[2];
+		if (!kindText || !pathText) {
+			index++;
+			continue;
+		}
+		const kind = kindText.toLowerCase() as ApplyPatchChangePreview["kind"];
+		const path = pathText.trim();
 		index++;
 
 		let moveTo: string | undefined;
 		const body: string[] = [];
-		while (index < lines.length && !fileHeader.test(lines[index]) && !endHeader.test(lines[index])) {
-			if (lines[index].startsWith("*** Move to: ")) {
-				moveTo = lines[index].slice("*** Move to: ".length).trim();
+		while (index < lines.length) {
+			const bodyLine = lines[index];
+			if (bodyLine === undefined || fileHeader.test(bodyLine) || endHeader.test(bodyLine)) break;
+			if (bodyLine.startsWith("*** Move to: ")) {
+				moveTo = bodyLine.slice("*** Move to: ".length).trim();
 				index++;
 				continue;
 			}
-			body.push(lines[index]);
+			body.push(bodyLine);
 			index++;
 		}
 
@@ -4390,6 +4457,7 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 		const dc = resolveDiffColors(theme);
 		if (preview.changes.length === 1) {
 			const [change] = preview.changes;
+			if (!change) return makeText(ctx.lastComponent, hdr);
 			renderSplit(change.diff, change.language, ctx.expanded ? MAX_PREVIEW_LINES : 32, dc, diffWidth)
 				.then((rendered) => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
@@ -4449,7 +4517,7 @@ function renderApplyPatchResult(result: any, isPartial: boolean, theme: Theme, c
 
 	if (ctx.isError) {
 		const raw = getTextContent(result).trim();
-		const firstLine = raw ? raw.split("\n")[0] : "Apply patch failed";
+		const firstLine = raw ? raw.split("\n")[0] ?? "Apply patch failed" : "Apply patch failed";
 		return makeText(ctx.lastComponent, withBranch(theme.fg("error", firstLine), theme));
 	}
 
@@ -4518,7 +4586,7 @@ export function mcpServerName(toolName: unknown, args: any): string {
 
 	// MCP tools exposed as mcp__<server>__<tool>.
 	const qualified = /^mcp__(.+?)__/.exec(name);
-	if (qualified) return qualified[1];
+	if (qualified?.[1]) return qualified[1];
 
 	// The proxy tool: the server is explicit, or inferable from the operand.
 	const explicit = getStringArg(args, "server", "connect");
@@ -4591,7 +4659,7 @@ function renderMcpToolResult(result: any, expanded: boolean, isPartial: boolean,
 	}
 
 	if (mode === "summary") {
-		const statusText = ctx.isError ? theme.fg("error", lines[0]) : resultSentence(theme, `${plural(lines.length, "line")} returned`);
+		const statusText = ctx.isError ? theme.fg("error", lines[0] ?? "Failed") : resultSentence(theme, `${plural(lines.length, "line")} returned`);
 		return makeText(ctx.lastComponent, withBranch(statusText, theme));
 	}
 
@@ -4613,8 +4681,10 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			const patchText = getStringArg(args, "patchText", "patch_text");
 			const files = extractApplyPatchFiles(patchText);
 			if (files.length === 0) return theme.fg("muted", "patch");
-			if (files.length === 1) return sp(files[0]);
-			return `${sp(files[0])} ${theme.fg("muted", `(+${files.length - 1} files)`)}`;
+			const firstFile = files[0];
+			if (!firstFile) return theme.fg("muted", "patch");
+			if (files.length === 1) return sp(firstFile);
+			return `${sp(firstFile)} ${theme.fg("muted", `(+${files.length - 1} files)`)}`;
 		}
 		case "webfetch":
 			return getStringArg(args, "url") || theme.fg("muted", "fetch page");
@@ -4623,8 +4693,10 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			if (url) return url;
 			const urls = getStringArrayArg(args, "urls");
 			if (urls.length === 0) return theme.fg("muted", "fetch content");
-			if (urls.length === 1) return urls[0];
-			return `${urls[0]} ${theme.fg("muted", `(+${urls.length - 1} urls)`)}`;
+			const firstUrl = urls[0];
+			if (!firstUrl) return theme.fg("muted", "fetch content");
+			if (urls.length === 1) return firstUrl;
+			return `${firstUrl} ${theme.fg("muted", `(+${urls.length - 1} urls)`)}`;
 		}
 		case "get_search_content":
 			return getStringArg(args, "responseId", "response_id") || theme.fg("muted", "load cached content");
@@ -4633,8 +4705,10 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 			if (query) return `"${summarizeText(query, 72)}"`;
 			const queries = getStringArrayArg(args, "queries");
 			if (queries.length === 0) return theme.fg("muted", "search web");
-			if (queries.length === 1) return summarizeText(queries[0], 72);
-			return `${summarizeText(queries[0], 48)} ${theme.fg("muted", `(+${queries.length - 1} queries)`)}`;
+			const firstQuery = queries[0];
+			if (!firstQuery) return theme.fg("muted", "search web");
+			if (queries.length === 1) return summarizeText(firstQuery, 72);
+			return `${summarizeText(firstQuery, 48)} ${theme.fg("muted", `(+${queries.length - 1} queries)`)}`;
 		}
 		case "code_search":
 			return summarizeText(getStringArg(args, "query") || "search code", 72);
@@ -4685,7 +4759,9 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 		case "TaskExecute": {
 			const taskIds = getStringArrayArg(args, "task_ids", "taskIds");
 			if (taskIds.length === 0) return theme.fg("muted", "start tasks");
-			return taskIds.length === 1 ? taskIds[0] : `${taskIds[0]} ${theme.fg("muted", `(+${taskIds.length - 1} tasks)`)}`;
+			const firstTaskId = taskIds[0];
+			if (!firstTaskId) return theme.fg("muted", "start tasks");
+			return taskIds.length === 1 ? firstTaskId : `${firstTaskId} ${theme.fg("muted", `(+${taskIds.length - 1} tasks)`)}`;
 		}
 		default:
 			return summarizeText(
@@ -4704,11 +4780,8 @@ interface ParsedTaskListLine {
 function parseTaskListLine(line: string): ParsedTaskListLine | null {
 	const match = line.match(/^#(\d+) \[([^\]]+)\] (.+)$/);
 	if (!match) return null;
-	return {
-		id: match[1],
-		status: match[2],
-		subject: match[3],
-	};
+	const [, id, status, subject] = match;
+	return id && status && subject ? { id, status, subject } : null;
 }
 
 function formatTaskStatus(status: string, theme: Theme): string {
@@ -4723,14 +4796,14 @@ function formatOpenAiSuccessLine(name: string, line: string, theme: Theme): stri
 
 	if (name === "TaskCreate") {
 		const match = trimmed.match(/^Task #(\d+) created successfully: (.+)$/);
-		if (match) {
+		if (match?.[1] && match[2]) {
 			return `${theme.fg("success", "Created task")} ${theme.fg("accent", `#${match[1]}`)} ${theme.fg("muted", match[2])}`;
 		}
 	}
 
 	if (name === "TaskUpdate") {
 		const match = trimmed.match(/^Updated task #(\d+) (.+)$/);
-		if (match) {
+		if (match?.[1] && match[2]) {
 			return `${theme.fg("success", "Updated task")} ${theme.fg("accent", `#${match[1]}`)} ${theme.fg("muted", match[2])}`;
 		}
 	}
@@ -4741,7 +4814,7 @@ function formatOpenAiSuccessLine(name: string, line: string, theme: Theme): stri
 
 	if (name === "context_tag") {
 		const match = trimmed.match(/^Created tag '([^']+)' at (.+)$/);
-		if (match) {
+		if (match?.[1] && match[2]) {
 			return `${theme.fg("success", "Created tag")} ${theme.fg("accent", match[1])} ${theme.fg("muted", match[2])}`;
 		}
 	}
@@ -4793,7 +4866,7 @@ function getFirstImageBlock(result: any): { data: string; mimeType: string } | u
 function getReadImageFallback(result: any, ctx: any): string {
 	const image = getFirstImageBlock(result);
 	if (!image) return "";
-	let dimensions;
+	let dimensions: ImageDimensions | undefined;
 	try {
 		dimensions = getImageDimensions(image.data, image.mimeType) ?? undefined;
 	} catch {
@@ -4868,19 +4941,20 @@ function renderOpenAiToolResult(name: string, result: any, expanded: boolean, is
 		return renderTaskListResult(lines, expanded, theme, ctx);
 	}
 
+	const firstLine = lines[0] ?? "";
 	const statusText = ctx.isError
-		? theme.fg("error", lines[0])
+		? theme.fg("error", firstLine)
 		: theme.fg("muted", `${lines.length} line${lines.length === 1 ? "" : "s"} returned`);
 	if (!expanded) {
 		return makeText(ctx.lastComponent, withBranch(statusText, theme));
 	}
 
 	if (!ctx.isError && lines.length === 1) {
-		return makeText(ctx.lastComponent, withBranch(formatOpenAiSuccessLine(name, lines[0], theme), theme));
+		return makeText(ctx.lastComponent, withBranch(formatOpenAiSuccessLine(name, firstLine, theme), theme));
 	}
 
 	const preview = lines.length === 1
-		? theme.fg(ctx.isError ? "error" : "dim", lines[0])
+		? theme.fg(ctx.isError ? "error" : "dim", firstLine)
 		: buildPreviewText(lines.map((line) => theme.fg(ctx.isError ? "error" : "dim", line || " ")), true, theme, previewLimit());
 	return makeText(ctx.lastComponent, withBranch(`${statusText}\n${preview}`, theme));
 }
@@ -5071,8 +5145,8 @@ export default function (pi: ExtensionAPI): void {
 			}
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
-			const exitMatch = output.match(/(?:exit code:|exited with code)\s+(\d+)/i);
-			const exitCode = exitMatch ? Number.parseInt(exitMatch[1], 10) : null;
+			const exitCodeText = output.match(/(?:exit code:|exited with code)\s+(\d+)/i)?.[1];
+			const exitCode = exitCodeText ? Number.parseInt(exitCodeText, 10) : null;
 			const isError = ctx.isError || (exitCode !== null && exitCode !== 0);
 			let text = isError
 				? theme.fg("error", exitCode !== null ? `Exit ${exitCode}` : "Failed")
@@ -5175,7 +5249,8 @@ export default function (pi: ExtensionAPI): void {
 			const shown = items.slice(0, maxShow);
 			const findLines: string[] = [];
 			for (let i = 0; i < shown.length; i++) {
-				const item = shown[i].trim();
+				const item = shown[i]?.trim();
+				if (!item) continue;
 				const icon = fileIcon(item);
 				findLines.push(`  ${icon}${theme.fg("dim", item)}`);
 			}
@@ -5221,6 +5296,7 @@ export default function (pi: ExtensionAPI): void {
 			const treeLines: string[] = [];
 			for (let i = 0; i < shown.length; i++) {
 				const item = shown[i];
+				if (!item) continue;
 				const isDir = item.endsWith("/");
 				const isLast = i === shown.length - 1 && items.length <= maxShow;
 				const prefix = isLast ? `${FG_RULE}\u2514\u2500\u2500${D_RST} ` : `${FG_RULE}\u251c\u2500\u2500${D_RST} `;
@@ -5370,6 +5446,7 @@ export default function (pi: ExtensionAPI): void {
 				const localized = localizedDiffs?.[0];
 				const editLine = localized?.line ?? (typeof baseDetails.firstChangedLine === "number" ? baseDetails.firstChangedLine : 0);
 				const diff = localized?.diff ?? diffs[0];
+				if (!diff) return result;
 				(result as any).details = {
 					...baseDetails,
 					_type: "editInfo",

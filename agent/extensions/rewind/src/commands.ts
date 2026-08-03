@@ -1,14 +1,14 @@
 /**
- * pi-rewind — /rewind command and Esc+Esc shortcut
+ * pi-rewind — /rewind command
  *
  * Registers the user-facing rewind command which presents a checkpoint
  * browser and restore options.
  */
 
-import type { ExtensionAPI } from "@mariozechner/pi-coding-agent";
+import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import type { RewindState } from "./state.js";
 import type { CheckpointData } from "./core.js";
-import { restoreCheckpoint, createCheckpoint, diffCheckpoints, sanitizeForRef, git } from "./core.js";
+import { restoreCheckpoint, createCheckpoint, diffCheckpoints, git } from "./core.js";
 
 // ============================================================================
 // Helpers
@@ -53,7 +53,7 @@ const RESTORE_OPTIONS: { label: string; value: RestoreMode }[] = [
 
 async function runRewindFlow(
   state: RewindState,
-  ctx: import("@mariozechner/pi-coding-agent").ExtensionCommandContext,
+  ctx: import("@earendil-works/pi-coding-agent").ExtensionCommandContext,
 ): Promise<void> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) {
     ctx.ui.notify("Rewind not available (no git repo or session)", "warning");
@@ -73,13 +73,14 @@ async function runRewindFlow(
 
   // Build picker items
   const items: string[] = [];
-  const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
+  const repoRoot = state.repoRoot;
+  const currentBranch = await git("rev-parse --abbrev-ref HEAD", repoRoot).catch(() => "unknown");
   const undoRef = state.redoStack.length > 0 ? state.redoStack[state.redoStack.length - 1] : null;
   if (undoRef) {
     items.push("↩ Undo last rewind");
   }
-  for (let i = 0; i < checkpoints.length; i++) {
-    items.push(formatCheckpointLabel(checkpoints[i], i, state, currentBranch));
+  for (const [index, checkpoint] of checkpoints.entries()) {
+    items.push(formatCheckpointLabel(checkpoint, index, state, currentBranch));
   }
 
   const choice = await ctx.ui.select("Rewind to checkpoint:", items);
@@ -100,6 +101,7 @@ async function runRewindFlow(
   const idx = items.indexOf(choice) - (undoRef ? 1 : 0);
   if (idx < 0 || idx >= checkpoints.length) return;
   const target = checkpoints[idx];
+  if (!target) return;
 
   // Show diff preview
   let diffText = "";
@@ -306,39 +308,6 @@ export function registerCommands(pi: ExtensionAPI, state: RewindState): void {
     description: "Rewind file changes and/or conversation to a checkpoint",
     handler: async (_args, ctx) => {
       await runRewindFlow(state, ctx);
-    },
-  });
-
-  // Esc+Esc shortcut — register as double-escape
-  pi.registerShortcut("escape escape", {
-    description: "Rewind (same as /rewind)",
-    handler: async (ctx) => {
-      // Shortcut handler gets ExtensionContext, not CommandContext.
-      // We can't call navigateTree from here, so do files-only quick rewind.
-      if (!state.gitAvailable || !state.repoRoot || !state.sessionId) {
-        ctx.ui.notify("Rewind not available", "warning");
-        return;
-      }
-
-      const checkpoints = [...state.checkpoints.values()]
-        .sort((a, b) => b.timestamp - a.timestamp)
-        .slice(0, 25);
-
-      if (checkpoints.length === 0) {
-        ctx.ui.notify("No checkpoints available", "warning");
-        return;
-      }
-
-      const currentBranch = await git("rev-parse --abbrev-ref HEAD", state.root).catch(() => "unknown");
-      const items = checkpoints.map((cp, i) => formatCheckpointLabel(cp, i, state, currentBranch));
-      const choice = await ctx.ui.select("Quick rewind (files only):", items);
-      if (!choice) return;
-
-      const idx = items.indexOf(choice);
-      if (idx < 0) return;
-
-      await performRestore(state, { ui: ctx.ui }, checkpoints[idx], "files");
-      ctx.ui.notify(`Files rewound to checkpoint #${idx + 1}`, "info");
     },
   });
 }

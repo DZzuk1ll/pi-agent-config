@@ -49,10 +49,11 @@ function summaryLine(details: WorkflowDetails): string {
 
 function resultText(details: WorkflowDetails, directory: string): string {
 	const usage = aggregateUsage(details);
+	const totalInput = (usage.input ?? 0) + (usage.cacheRead ?? 0) + (usage.cacheWrite ?? 0);
 	const sections = [
 		summaryLine(details),
 		`artifacts: ${directory}`,
-		`usage: ${usage.input + usage.cacheRead + usage.cacheWrite} input · ${usage.output} output · $${usage.cost.toFixed(4)}`,
+		`usage: ${totalInput} input · ${usage.output ?? 0} output · $${(usage.cost ?? 0).toFixed(4)}`,
 		...(details.error ? [`error: ${sanitizeForDisplay(details.error)}`] : []),
 		...(details.result !== undefined ? ["", "result:", sanitizeForDisplay(JSON.stringify(details.result, null, 2))] : []),
 	];

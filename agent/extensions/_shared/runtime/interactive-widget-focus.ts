@@ -6,7 +6,11 @@ type FocusState = {
 
 function focusState(): FocusState {
 	const globalRecord = globalThis as typeof globalThis & { [FOCUS_STATE_KEY]?: FocusState };
-	return globalRecord[FOCUS_STATE_KEY] ??= {};
+	const existing = globalRecord[FOCUS_STATE_KEY];
+	if (existing) return existing;
+	const created: FocusState = {};
+	globalRecord[FOCUS_STATE_KEY] = created;
+	return created;
 }
 
 export function claimInteractiveWidgetFocus(owner: string): boolean {

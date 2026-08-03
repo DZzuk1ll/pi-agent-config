@@ -468,7 +468,7 @@ function stopAsyncRun(
 	assertSubagentParams({ action: "status", ...target }, "RPC stop target params");
 	const asyncDirRoot = options.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = options.resultsDir ?? RESULTS_DIR;
-	let location;
+	let location: ReturnType<typeof resolveAsyncRunLocation>;
 	try {
 		location = resolveAsyncRunLocation(target, asyncDirRoot, resultsDir);
 	} catch (error) {
@@ -486,7 +486,7 @@ function stopAsyncRun(
 		throw new SubagentRpcError("not_found", `Async run '${initialRunId}' was not found in the active session.`);
 	}
 
-	let status;
+	let status: ReturnType<typeof reconcileAsyncRun>["status"];
 	try {
 		status = reconcileAsyncRun(location.asyncDir, { resultsDir, kill: options.kill, now: options.now }).status;
 	} catch (error) {

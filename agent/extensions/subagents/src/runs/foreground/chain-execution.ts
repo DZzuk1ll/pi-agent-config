@@ -864,7 +864,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? step.agentContract ?? params.agentContract) && (task?.gateOn ?? step.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
 				if (acceptanceFailures.length > 0) {
 					const acceptanceSummary = acceptanceFailures
-						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+						.map(({ result, originalIndex }) => `- Task ${originalIndex + 1} (${result.agent}): ${result.acceptance ? acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected" : "acceptance rejected"}`)
 						.join("\n");
 					const errorMsg = `Parallel step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
 					const summary = buildChainSummary(chainSteps, results, chainDir, "failed", { index: stepIndex, error: errorMsg });
@@ -939,7 +939,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 					agent: step.parallel.agent,
 					stepIndex,
 				};
-				dynamicGroupStatuses[stepIndex] = { status: "completed" };
+				const emptyGroupStatus: NonNullable<ChainExecutionDetailsInput["dynamicGroupStatuses"]>[number] = { status: "completed" };
+				dynamicGroupStatuses[stepIndex] = emptyGroupStatus;
 				if (step.acceptance !== undefined) {
 					const effectiveGroupAcceptance = resolveEffectiveAcceptance({
 						explicit: step.acceptance,
@@ -960,7 +961,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 						cwd: cwd ?? ctx.cwd,
 						reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 					});
-					dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
+					emptyGroupStatus.acceptance = groupAcceptance;
 					const groupAcceptanceFailure = !isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance" ? acceptanceFailureMessage(groupAcceptance) : undefined;
 					if (groupAcceptanceFailure) {
 						dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };
@@ -1106,7 +1107,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				.filter(({ result, task }) => isAgentContractV1(task?.agentContract ?? dynamicParallelStep.agentContract ?? params.agentContract) && (task?.gateOn ?? dynamicParallelStep.gateOn) === "acceptance" && result.acceptance?.status === "rejected");
 			if (acceptanceFailures.length > 0) {
 				const acceptanceSummary = acceptanceFailures
-					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected"}`)
+					.map(({ result, originalIndex }) => `- Item ${originalIndex + 1} (${result.agent}, key ${materialized.items[originalIndex]?.key ?? originalIndex}): ${result.acceptance ? acceptanceFailureMessage(result.acceptance) ?? "acceptance rejected" : "acceptance rejected"}`)
 					.join("\n");
 				const errorMsg = `Dynamic step ${stepIndex + 1} acceptance gate failed:\n${acceptanceSummary}`;
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: errorMsg };
@@ -1130,7 +1131,8 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				agent: step.parallel.agent,
 				stepIndex,
 			};
-			dynamicGroupStatuses[stepIndex] = { status: "completed" };
+			const completedGroupStatus: NonNullable<ChainExecutionDetailsInput["dynamicGroupStatuses"]>[number] = { status: "completed" };
+			dynamicGroupStatuses[stepIndex] = completedGroupStatus;
 			const effectiveGroupAcceptance = resolveEffectiveAcceptance({
 				explicit: step.acceptance,
 				agentName: step.parallel.agent,
@@ -1152,7 +1154,7 @@ export async function executeChain(params: ChainExecutionParams): Promise<ChainE
 				cwd: cwd ?? ctx.cwd,
 				reportOptional: isAgentContractV1(step.agentContract ?? params.agentContract),
 			});
-			dynamicGroupStatuses[stepIndex].acceptance = groupAcceptance;
+			completedGroupStatus.acceptance = groupAcceptance;
 			const groupAcceptanceFailure = effectiveGroupAcceptance.explicit && (!isAgentContractV1(step.agentContract ?? params.agentContract) || step.gateOn === "acceptance") ? acceptanceFailureMessage(groupAcceptance) : undefined;
 			if (groupAcceptanceFailure) {
 				dynamicGroupStatuses[stepIndex] = { status: "failed", error: groupAcceptanceFailure, acceptance: groupAcceptance };

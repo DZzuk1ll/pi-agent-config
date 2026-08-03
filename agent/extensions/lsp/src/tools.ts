@@ -39,16 +39,16 @@ async function map_with_concurrency<T, R>(
 	mapper: (item: T, index: number) => Promise<R>,
 ): Promise<R[]> {
 	const results: R[] = [];
-	let next_index = 0;
+	const entries = items.entries();
 	const worker_count = Math.min(concurrency, items.length);
 
 	await Promise.all(
 		Array.from({ length: worker_count }, async () => {
 			while (true) {
-				const index = next_index;
-				next_index += 1;
-				if (index >= items.length) return;
-				results[index] = await mapper(items[index], index);
+				const next = entries.next();
+				if (next.done) return;
+				const [index, item] = next.value;
+				results[index] = await mapper(item, index);
 			}
 		}),
 	);

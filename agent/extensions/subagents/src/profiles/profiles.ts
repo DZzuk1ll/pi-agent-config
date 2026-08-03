@@ -509,12 +509,12 @@ export async function refreshProviderModelCatalog(
 
 	const observedModels = [] as Array<{
 		rawModel: typeof availableModels[number];
-		modelRecord: Record<string, unknown> & { provider: string; id: string; name?: string };
+		modelRecord: typeof availableModels[number];
 		fullId: string;
 		probe: { status: ProbeStatus; message?: string };
 	}>;
 	for (const rawModel of availableModels) {
-		const modelRecord = rawModel as Record<string, unknown> & { provider: string; id: string; name?: string };
+		const modelRecord = rawModel;
 		const fullId = `${modelRecord.provider}/${modelRecord.id}`;
 		const probe = options.probe === false
 			? { status: "skipped" as const, message: "Live probing disabled." }

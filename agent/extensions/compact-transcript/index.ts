@@ -117,13 +117,13 @@ function patchToolGrouping(): void {
 
 function isEmptyToolRoundAssistant(child: any): boolean {
 	if (!(child instanceof AssistantMessageComponent)) return false;
-	const content = child.lastMessage?.content;
+	const content = (child as any).lastMessage?.content;
 	if (!Array.isArray(content)) return false;
 	const hasToolCall = content.some((block: any) => block?.type === "toolCall");
 	const hasVisibleAssistantContent = content.some((block: any) =>
 		(block?.type === "text" && typeof block.text === "string" && block.text.trim())
 		|| (
-			child.hideThinkingBlock !== true
+			(child as any).hideThinkingBlock !== true
 			&& block?.type === "thinking"
 			&& typeof block.thinking === "string"
 			&& block.thinking.trim()

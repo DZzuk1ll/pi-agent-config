@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "scripts": {
+    "typecheck": "tsc -p tsconfig.json --pretty false",
+    "lint": "biome lint extensions tests vitest.config.ts",
+    "lint:imports": "depcruise --config dependency-cruiser.config.js extensions tests",
+    "check": "npm run typecheck && npm run lint && npm run lint:imports && npm test",
     "test": "npm run test:core && npm run test:extensions",
     "test:core": "node --test tests/*.test.ts",
     "test:extensions": "vitest run"
@@ -27,7 +31,13 @@
     "yaml": "2.8.3"
   },
   "devDependencies": {
+    "@biomejs/biome": "2.5.6",
+    "@earendil-works/pi-agent-core": "0.83.0",
+    "@earendil-works/pi-ai": "0.83.0",
+    "@earendil-works/pi-coding-agent": "0.83.0",
+    "@earendil-works/pi-tui": "0.83.0",
     "@types/node": "^26.1.2",
+    "dependency-cruiser": "18.1.1",
     "typescript": "5.9.3",
     "typescript-language-server": "5.3.0",
     "vitest": "^4.1.10"

@@ -104,7 +104,9 @@ export function wrapFetchWithCookies(fetchImpl: FetchLike): FetchLike {
     );
     const cookieHeader = SHARED_STORE.cookiesForUrl(url);
     const headers = new Headers(input instanceof Request ? input.headers : undefined);
-    new Headers(init?.headers).forEach((value, key) => headers.set(key, value));
+    new Headers(init?.headers).forEach((value, key) => {
+      headers.set(key, value);
+    });
     if (cookieHeader) {
       const existing = headers.get("cookie");
       headers.set("cookie", existing ? `${existing}; ${cookieHeader}` : cookieHeader);

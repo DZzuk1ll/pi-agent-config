@@ -1,7 +1,4 @@
-export type ThemeOverrideTarget = {
-	bgColors?: unknown;
-	fgColors?: unknown;
-};
+export type ThemeOverrideTarget = object;
 
 export type ThemeOverrideApplier = (theme: ThemeOverrideTarget) => void;
 
@@ -30,9 +27,10 @@ function syncState(): ThemeOverrideSyncState {
 
 export function themeOverrideIdentity(theme: ThemeOverrideTarget | undefined): object | undefined {
 	if (!theme) return undefined;
-	if (theme.bgColors && typeof theme.bgColors === "object") return theme.bgColors as object;
-	if (theme.fgColors && typeof theme.fgColors === "object") return theme.fgColors as object;
-	return typeof theme === "object" ? theme : undefined;
+	const colors = theme as { bgColors?: unknown; fgColors?: unknown };
+	if (colors.bgColors && typeof colors.bgColors === "object") return colors.bgColors as object;
+	if (colors.fgColors && typeof colors.fgColors === "object") return colors.fgColors as object;
+	return theme;
 }
 
 export function ensureThemeOverrides(): ThemeOverrideSyncSnapshot {

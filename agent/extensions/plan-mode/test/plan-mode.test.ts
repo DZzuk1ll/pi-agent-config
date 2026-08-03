@@ -538,23 +538,23 @@ test("plan implement-new hands the exact plan to a linked replacement session", 
 
 	assert.equal(newSessionOptions?.parentSession, "/tmp/parent-session.jsonl");
 	assert.equal(replacementEntries.length, 1);
-	assert.equal(replacementEntries[0]?.customType, "plan-mode-state");
-	assert.deepEqual(replacementEntries[0]?.data, {
+	const replacementEntry = replacementEntries[0];
+	assert.ok(replacementEntry);
+	const implementation = (replacementEntry.data as {
+		activeImplementation: { id: string; startedAt: number };
+	}).activeImplementation;
+	assert.equal(replacementEntry.customType, "plan-mode-state");
+	assert.deepEqual(replacementEntry.data, {
 		enabled: false,
 		awaitingAction: false,
 		activeImplementation: {
-			id: (replacementEntries[0]?.data as { activeImplementation: { id: string } })
-				.activeImplementation.id,
+			id: implementation.id,
 			plan: "# Fresh\n\n- preserve this exact text",
 			source: "plan_mode_complete",
-			startedAt: (replacementEntries[0]?.data as { activeImplementation: { startedAt: number } })
-				.activeImplementation.startedAt,
+			startedAt: implementation.startedAt,
 		},
 	});
-	assert.match(
-		(replacementEntries[0]?.data as { activeImplementation: { id: string } }).activeImplementation.id,
-		/^[A-Za-z0-9-]+$/,
-	);
+	assert.match(implementation.id, /^[A-Za-z0-9-]+$/);
 	assert.deepEqual(replacementMessages, [
 		"Plan mode is now disabled. Full tool access is restored. Implement this proposed plan now:\n\n# Fresh\n\n- preserve this exact text",
 	]);

@@ -572,9 +572,10 @@ test("pi-subagents transcript API derives completed-run paths and paginates stab
 			}]]),
 		} as never);
 		bus.emit("prompt-template:subagent:transcript:request", { version: 1, requestId: "request-2", runId, childIndex: 0, cursor: 0, limit: 1 });
-		assert.equal(response?.status, "ok");
-		assert.equal(response?.nextCursor, 1);
-		assert.equal(((response?.events as Array<{ text?: string }>)[0]?.text), "first");
+		assert.ok(response);
+		assert.equal(response.status, "ok");
+		assert.equal(response.nextCursor, 1);
+		assert.equal((response.events as Array<{ text?: string }>)[0]?.text, "first");
 		api.dispose();
 	} finally {
 		fs.rmSync(cwd, { recursive: true, force: true });

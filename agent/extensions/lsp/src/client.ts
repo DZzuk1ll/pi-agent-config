@@ -546,9 +546,10 @@ export function normalize_document_symbol_result(
 		| null,
 ): LspDocumentSymbol[] {
 	if (!result) return [];
+	const first = result[0];
 	if (
-		result.length === 0 ||
-		('range' in result[0] && 'selectionRange' in result[0])
+		first === undefined ||
+		('range' in first && 'selectionRange' in first)
 	) {
 		return result as LspDocumentSymbol[];
 	}

@@ -71,7 +71,7 @@ export interface DynamicRunnerGroup {
 	phase?: string;
 	label?: string;
 	sessionFiles?: (string | undefined)[];
-	thinkingOverrides?: (string | undefined)[];
+	thinkingOverrides?: (string | false | undefined)[];
 	effectiveAcceptance?: import("../../shared/types.ts").ResolvedAcceptanceConfig;
 	acceptanceInput?: import("../../shared/types.ts").AcceptanceInput;
 	acceptanceRole?: import("../../shared/types.ts").AcceptanceRole;
@@ -147,20 +147,20 @@ export async function mapConcurrent<T, R>(
 ): Promise<R[]> {
 	const safeLimit = Math.max(1, Math.floor(limit) || 1);
 	const results: R[] = new Array(items.length);
-	let next = 0;
+	const entries = items.entries();
 
 	async function worker(_workerIndex: number): Promise<void> {
-		while (next < items.length) {
-			const i = next++;
+		for (let next = entries.next(); !next.done; next = entries.next()) {
+			const [index, item] = next.value;
 			if (globalSemaphore) {
 				await globalSemaphore.acquire();
 				try {
-					results[i] = await fn(items[i], i);
+					results[index] = await fn(item, index);
 				} finally {
 					globalSemaphore.release();
 				}
 			} else {
-				results[i] = await fn(items[i], i);
+				results[index] = await fn(item, index);
 			}
 		}
 	}

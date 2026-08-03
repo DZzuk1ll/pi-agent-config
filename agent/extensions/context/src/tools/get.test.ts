@@ -68,7 +68,7 @@ describe('context_get tool', () => {
 		expect(tool.promptSnippet).toContain(
 			'avoid full-source chat retrieval',
 		);
-		expect(tool.parameters.properties.chunk_id.description).toContain(
+		expect(tool.parameters.properties.chunk_id!.description).toContain(
 			'exceptional full-source chat retrieval',
 		);
 
@@ -76,7 +76,7 @@ describe('context_get tool', () => {
 			source_id: stored!.source_id,
 			global: true,
 		});
-		expect(found.content[0].text).toContain('get-token');
+		expect(found.content[0]!.text).toContain('get-token');
 		expect(found.details).toMatchObject({ count: 1 });
 
 		const missing = await tool.execute('call', {
@@ -84,7 +84,7 @@ describe('context_get tool', () => {
 			chunk_id: 'missing',
 			global: true,
 		});
-		expect(missing.content[0].text).toContain('No chunk found');
+		expect(missing.content[0]!.text).toContain('No chunk found');
 		expect(missing.details).toMatchObject({ count: 0 });
 	});
 });

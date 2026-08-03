@@ -238,7 +238,8 @@ function getUnixProcessInfo(pid: number): ProcessInfo | null {
     if (!match) return null;
     const ppid = Number(match[1]);
     if (!Number.isFinite(ppid) || ppid <= 0) return null;
-    const rawName = match[2].trim();
+    const rawName = match[2]?.trim();
+    if (!rawName) return null;
     return { pid, ppid: Math.floor(ppid), name: normalizeProcessName(rawName), rawName };
   } catch {
     return null;

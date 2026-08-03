@@ -336,14 +336,38 @@ export class WorkflowDashboard {
 			this.closeDashboard();
 			return;
 		}
-		if (matchesKey(data, Key.shift("k"))) return this.scrollDetail(-1);
-		if (matchesKey(data, Key.shift("j"))) return this.scrollDetail(1);
-		if (up) return this.moveSelection(-1);
-		if (down) return this.moveSelection(1);
-		if (matchesKey(data, "home")) return this.moveSelection(-this.rosterItems().length);
-		if (matchesKey(data, "end")) return this.moveSelection(this.rosterItems().length);
-		if (matchesKey(data, "pageUp")) return this.scrollDetail(-this.detailViewportHeight);
-		if (matchesKey(data, "pageDown")) return this.scrollDetail(this.detailViewportHeight);
+		if (matchesKey(data, Key.shift("k"))) {
+			this.scrollDetail(-1);
+			return;
+		}
+		if (matchesKey(data, Key.shift("j"))) {
+			this.scrollDetail(1);
+			return;
+		}
+		if (up) {
+			this.moveSelection(-1);
+			return;
+		}
+		if (down) {
+			this.moveSelection(1);
+			return;
+		}
+		if (matchesKey(data, "home")) {
+			this.moveSelection(-this.rosterItems().length);
+			return;
+		}
+		if (matchesKey(data, "end")) {
+			this.moveSelection(this.rosterItems().length);
+			return;
+		}
+		if (matchesKey(data, "pageUp")) {
+			this.scrollDetail(-this.detailViewportHeight);
+			return;
+		}
+		if (matchesKey(data, "pageDown")) {
+			this.scrollDetail(this.detailViewportHeight);
+			return;
+		}
 		if (data === "c") {
 			this.cancelSelected();
 			this.tui.requestRender();

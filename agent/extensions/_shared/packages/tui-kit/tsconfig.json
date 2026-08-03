@@ -1,15 +1,8 @@
 {
+  "extends": "../../../../tsconfig.base.json",
   "compilerOptions": {
-    "target": "ES2022",
-    "module": "nodenext",
-    "moduleResolution": "nodenext",
-    "strict": true,
     "rootDir": "./src",
-    "outDir": "./dist",
-    "esModuleInterop": true,
-    "allowSyntheticDefaultImports": true,
-    "skipLibCheck": true,
-    "types": ["node", "vitest/globals"]
+    "outDir": "./dist"
   },
   "include": ["src/**/*"],
   "exclude": ["node_modules", "dist"]

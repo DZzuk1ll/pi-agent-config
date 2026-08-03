@@ -157,7 +157,8 @@ function isMutableSource(source: AgentSource): source is ManagementScope {
 function unknownChainAgents(cwd: string, steps: ChainStepConfig[]): string[] {
 	const d = discoverAgentsAll(cwd);
 	const known = new Set(allAgents(d).map((a) => a.name));
-	return [...new Set(steps.map((s) => s.agent).filter((a) => !known.has(a)))].sort((a, b) => a.localeCompare(b));
+	const referencedAgents = steps.map((step) => step.agent).filter((agent): agent is string => typeof agent === "string");
+	return [...new Set(referencedAgents.filter((agent) => !known.has(agent)))].sort((a, b) => a.localeCompare(b));
 }
 
 function chainStepWarnings(ctx: ManagementContext, steps: ChainStepConfig[]): string[] {
@@ -862,6 +863,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		const targetOrError = resolveTarget("agent", params.agent, findAgents(params.agent, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
 		if ("content" in targetOrError) return targetOrError;
 		const target = targetOrError;
+		if (!isMutableSource(target.source)) return result(`Agent '${target.name}' is not editable from source '${target.source}'.`, true);
 		const updated = editableAgentConfig(target);
 		const oldName = target.name;
 		if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);
@@ -915,6 +917,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
+	if (!isMutableSource(target.source)) return result(`Chain '${target.name}' is not editable from source '${target.source}'.`, true);
 	const updated: ChainConfig = { ...target, steps: [...target.steps] };
 	const oldName = target.name;
 	if (hasKey(cfg, "name") && (typeof cfg.name !== "string" || !cfg.name.trim())) return result("config.name must be a non-empty string when provided.", true);

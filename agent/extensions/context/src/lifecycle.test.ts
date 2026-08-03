@@ -56,7 +56,7 @@ describe('register_context_lifecycle', () => {
 		expect(hooks.get('session_shutdown')).toHaveLength(1);
 		expect(hooks.get('tool_result')).toHaveLength(1);
 
-		await hooks.get('session_shutdown')![0]({}, {});
+		await hooks.get('session_shutdown')![0]!({}, {});
 		expect(is_context_sidecar_enabled()).toBe(false);
 	});
 
@@ -64,11 +64,11 @@ describe('register_context_lifecycle', () => {
 		process.env.MY_PI_CONTEXT_DB = temp_db();
 		const { pi, hooks } = fake_pi();
 		register_context_lifecycle(pi);
-		await hooks.get('session_start')![0](
+		await hooks.get('session_start')![0]!(
 			{},
 			{ cwd: '/repo', sessionManager: { getSessionId: () => 's1' } },
 		);
-		const tool_result = hooks.get('tool_result')![0];
+		const tool_result = hooks.get('tool_result')![0]!;
 
 		expect(
 			await tool_result({
@@ -99,7 +99,7 @@ describe('register_context_lifecycle', () => {
 			{ cwd: '/repo', sessionManager: { getSessionId: () => 's1' } },
 		)) as { content: Array<{ text: string }> };
 
-		expect(replacement.content[0].text).toContain(
+		expect(replacement.content[0]!.text).toContain(
 			'[context-sidecar]',
 		);
 		expect(

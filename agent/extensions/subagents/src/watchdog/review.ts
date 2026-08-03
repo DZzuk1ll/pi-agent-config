@@ -93,6 +93,9 @@ function resolveConfiguredModel(ctx: ExtensionContext, rawModel: string): { mode
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const preferredProvider = typeof ctx.model?.provider === "string" ? ctx.model.provider : undefined;
 	const resolved = resolveModelCandidate(rawModel, availableModels, preferredProvider);
+	if (!resolved) {
+		throw new Error(`Configured watchdog model '${rawModel}' did not match exactly one authenticated available model.`);
+	}
 	const { baseModel } = splitKnownThinkingSuffix(resolved);
 	const named = splitProviderModel(baseModel);
 	if (!named) {
@@ -276,7 +279,7 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 				tools,
 			},
 			convertToLlm,
-			streamFunction: streamFn,
+			streamFn,
 			getApiKey: (providerName) => providerName === selection.model.provider ? auth.apiKey : undefined,
 			beforeToolCall: async ({ toolCall }) => WATCHDOG_ALLOWED_TOOL_NAMES.has(toolCall.name)
 				? undefined

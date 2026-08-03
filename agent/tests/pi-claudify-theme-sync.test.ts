@@ -26,7 +26,9 @@ test("theme overrides follow the live theme proxy across reload", () => {
 	let applications = 0;
 	const apply = (target: ThemeOverrideTarget) => {
 		applications++;
-		(target.bgColors as Map<string, string>).set("toolSuccessBg", "transparent");
+		const bgColors: unknown = Reflect.get(target, "bgColors");
+		if (!(bgColors instanceof Map)) throw new Error("theme is missing bgColors");
+		bgColors.set("toolSuccessBg", "transparent");
 	};
 
 	const initial = activateThemeOverrides(owner, proxy, apply);

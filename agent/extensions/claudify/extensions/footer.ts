@@ -72,7 +72,8 @@ const OPENAI_PLACEHOLDERS: readonly UsageWindowData[] = [
 /** Accepts "#RRGGBB" or "RRGGBB" (any case); returns canonical "#RRGGBB" or null. */
 export function normalizeHexColor(raw: string): string | null {
 	const match = /^#?([0-9a-fA-F]{6})$/.exec(raw.trim());
-	return match ? `#${match[1].toUpperCase()}` : null;
+	const hex = match?.[1];
+	return hex ? `#${hex.toUpperCase()}` : null;
 }
 
 function hexToAnsi(hex: string): string {

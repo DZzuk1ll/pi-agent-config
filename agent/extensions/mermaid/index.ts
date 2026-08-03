@@ -1,6 +1,6 @@
-import type { ExtensionAPI, ExtensionContext, MessageRenderer, SessionEntry } from "@mariozechner/pi-coding-agent";
-import { getMarkdownTheme, keyHint } from "@mariozechner/pi-coding-agent";
-import { Box, Spacer, Text, type Component, truncateToWidth, visibleWidth } from "@mariozechner/pi-tui";
+import type { ExtensionAPI, ExtensionContext, MessageRenderer, SessionEntry } from "@earendil-works/pi-coding-agent";
+import { getMarkdownTheme, keyHint } from "@earendil-works/pi-coding-agent";
+import { Box, Spacer, Text, type Component, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import { createHash } from "node:crypto";
 import { renderMermaidAscii } from "beautiful-mermaid";
 
@@ -142,8 +142,9 @@ function extractText(content: unknown): string {
 function extractMermaidBlocks(text: string, maxBlocks = Infinity): string[] {
 	const blocks: string[] = [];
 	MERMAID_BLOCK_RE.lastIndex = 0;
-	let match: RegExpExecArray | null = null;
-	while ((match = MERMAID_BLOCK_RE.exec(text)) !== null) {
+	while (true) {
+		const match = MERMAID_BLOCK_RE.exec(text);
+		if (!match) break;
 		const code = match[1]?.trim();
 		if (code) blocks.push(code);
 		if (blocks.length >= maxBlocks) break;
@@ -253,8 +254,8 @@ function selectAsciiVariant(
 				return { ...variant, clipped: false };
 			}
 		}
-		const tightest = variants[variants.length - 1];
-		return { ...tightest, clipped: tightest.maxLineWidth > safeWidth };
+		const tightest = variants.at(-1);
+		if (tightest) return { ...tightest, clipped: tightest.maxLineWidth > safeWidth };
 	}
 
 	const maxLineWidth = maxAsciiLineWidth(fallbackAscii);
@@ -273,12 +274,16 @@ function splitIssuesFromContent(text: string): { ascii: string; issues: MermaidI
 
 	while (i < lines.length) {
 		const line = lines[i];
+		if (line === undefined) break;
 		const match = line.match(ISSUE_LINE_RE);
 
 		if (match) {
 			inIssues = true;
 			if (current) issues.push(current);
-			current = { severity: match[1] as MermaidIssue["severity"], message: match[2] };
+			const severity = match[1];
+			const message = match[2];
+			if (!severity || message === undefined) break;
+			current = { severity: severity as MermaidIssue["severity"], message };
 			i++;
 			continue;
 		}
@@ -309,8 +314,8 @@ function splitIssuesFromContent(text: string): { ascii: string; issues: MermaidI
 function getLastAssistantText(entries: SessionEntry[]): string | null {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
-		if (entry.type !== "message") continue;
-		if (entry.message.role !== "assistant") continue;
+		if (!entry || entry.type !== "message" || !("message" in entry)) continue;
+		if (entry.message.role !== "assistant" || !("content" in entry.message)) continue;
 		const text = extractText(entry.message.content);
 		if (text.trim()) return text;
 	}
@@ -378,8 +383,10 @@ async function processBlock(
 			if (variants.length === 0) {
 				throw new Error("No ASCII variants rendered");
 			}
-			ascii = variants[0].ascii;
-			lineCount = variants[0].lineCount;
+			const firstVariant = variants[0];
+			if (!firstVariant) throw new Error("No ASCII variants rendered");
+			ascii = firstVariant.ascii;
+			lineCount = firstVariant.lineCount;
 		} catch (error) {
 			const errorMessage = error instanceof Error ? error.message : String(error);
 			const message = `Mermaid render failed${blockLabel}: ${errorMessage}`;
@@ -436,7 +443,7 @@ export default function (pi: ExtensionAPI) {
 
 				if (hasOverflow && !isExpanded) {
 					const remainingLines = selection.lineCount - COLLAPSED_LINES;
-					const hintText = `... (${remainingLines} more lines, ${keyHint("expandTools", "to expand")})`;
+					const hintText = `... (${remainingLines} more lines, ${keyHint("app.tools.expand", "to expand")})`;
 					lines.push(truncateToWidth(theme.fg("muted", hintText), contentWidth));
 				}
 
@@ -562,7 +569,7 @@ export default function (pi: ExtensionAPI) {
 		let assistantText = "";
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const msg = event.messages[i];
-			if (msg.role !== "assistant") continue;
+			if (!msg || msg.role !== "assistant" || !("content" in msg)) continue;
 			assistantText = extractText(msg.content);
 			if (assistantText.trim()) break;
 		}

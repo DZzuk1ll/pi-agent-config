@@ -189,6 +189,8 @@ export interface SubagentParamsLike {
 	agentContract?: AgentContract;
 	schedule?: string;
 	scheduleName?: string;
+	chainName?: string;
+	config?: unknown;
 	additional?: number;
 }
 
@@ -1099,7 +1101,7 @@ async function directNestedAsyncSteer(input: { target: ResolvedSubagentRunId & {
 	} catch (error) {
 		return { content: [{ type: "text", text: `Failed to queue steering for nested async run ${run.id}: ${error instanceof Error ? error.message : String(error)}` }], isError: true, details: { mode: "management", results: [] } };
 	}
-	const targets = targetIndexes.map((index) => ({ index, state: steps[index]?.status === "pending" ? "scheduled" as const : "pending" as const }));
+	const targets = targetIndexes.map((index) => ({ index, state: steps[index]?.status === "pending" ? "scheduled" as const : "routed" as const }));
 	if (targets.every((target) => target.state === "scheduled")) {
 		const scheduled = { requestId, state: "scheduled" as const, sourceRunId: run.id, targets };
 		return { content: [{ type: "text", text: `Steering scheduled for nested async run ${run.id} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
@@ -1345,12 +1347,28 @@ async function resumeAsyncRun(input: {
 		return { content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }], details: result.details };
 	}
 
+	const sessionFile = target.sessionFile;
+	if (!sessionFile) {
+		return {
+			content: [{ type: "text", text: `Run '${target.runId}' has no persisted session file to resume.` }],
+			isError: true,
+			details: { mode: "management", results: [] },
+		};
+	}
 	const runId = randomUUID().slice(0, 8);
 	const recoveryAgentConfig = recoveryDescriptor ? applySteeringRecoveryAgentConfig(agentConfig, recoveryDescriptor) : agentConfig;
 	const artifactConfig: ArtifactConfig = recoveryDescriptor?.artifactConfig ?? { ...DEFAULT_ARTIFACT_CONFIG, enabled: input.params.artifacts !== false, dir: input.deps.config.artifactDir ?? DEFAULT_ARTIFACT_CONFIG.dir };
 	const artifactsDir = recoveryDescriptor?.artifactsDir ?? getArtifactsDir(parentSessionFile, effectiveCwd, artifactConfig.dir);
 	const availableModels = input.ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const parentModel = input.parentModel;
+	const resumeTurnBudget = resolveTurnBudgetConfig(input.params.turnBudget ?? recoveryDescriptor?.initialTurnBudget);
+	if (resumeTurnBudget.error) {
+		return { content: [{ type: "text", text: resumeTurnBudget.error }], isError: true, details: { mode: "management", results: [] } };
+	}
+	const resumeToolBudget = validateToolBudgetConfig(input.params.toolBudget ?? recoveryDescriptor?.initialToolBudget, "resume.toolBudget");
+	if (resumeToolBudget.error) {
+		return { content: [{ type: "text", text: resumeToolBudget.error }], isError: true, details: { mode: "management", results: [] } };
+	}
 	const result = executeAsyncSingle(runId, {
 		agent: target.agent,
 		task: buildRevivedAsyncTask(target, followUp),
@@ -1373,15 +1391,15 @@ async function resumeAsyncRun(input: {
 		shareEnabled: recoveryDescriptor?.share ?? input.params.share === true,
 		sessionRoot: input.deps.getSubagentSessionRoot(parentSessionFile),
 		...(recoveryDescriptor?.sessionDir ? { sessionDir: recoveryDescriptor.sessionDir } : {}),
-		sessionFile: target.sessionFile,
+		sessionFile,
 		revivalLease: {
-			sessionFile: target.sessionFile,
+			sessionFile,
 			runId,
 			sourceRunId: target.runId,
 			...(input.deps.state.currentSessionId ? { parentSessionId: input.deps.state.currentSessionId } : {}),
 		},
-		modelOverride: recoveryDescriptor?.model ?? target.model,
-		thinkingOverride: recoveryDescriptor?.thinking ?? target.thinking,
+		modelOverride: recoveryDescriptor?.model ?? (target.source === "nested" ? undefined : target.model),
+		thinkingOverride: recoveryDescriptor?.thinking ?? (target.source === "nested" ? undefined : target.thinking),
 		outputBaseDir: resolveSingleRunOutputBaseDir(input.deps, artifactsDir, runId),
 		maxSubagentDepth: recoveryDescriptor?.maxSubagentDepth ?? resolveCurrentMaxSubagentDepth(input.deps.config.maxSubagentDepth),
 		waitToolEnabled: input.deps.waitToolEnabled,
@@ -1400,8 +1418,8 @@ async function resumeAsyncRun(input: {
 		...(recoveryDescriptor?.acceptance !== undefined && input.params.acceptance === undefined ? { acceptance: recoveryDescriptor.acceptance } : {}),
 		...(input.params.timeoutMs !== undefined ? { timeoutMs: input.params.timeoutMs } : {}),
 		...(input.absoluteDeadlineAt !== undefined ? { absoluteDeadlineAt: input.absoluteDeadlineAt } : {}),
-		...(input.params.turnBudget !== undefined ? { turnBudget: input.params.turnBudget } : {}),
-		...(input.params.toolBudget !== undefined ? { toolBudget: input.params.toolBudget } : {}),
+		...(resumeTurnBudget.turnBudget !== undefined ? { turnBudget: resumeTurnBudget.turnBudget } : {}),
+		...(resumeToolBudget.budget !== undefined ? { toolBudget: resumeToolBudget.budget } : {}),
 		capabilityCeiling: intersectSubagentCapabilityCeilings("capabilityCeiling" in target ? target.capabilityCeiling : undefined, recoveryDescriptor?.capabilityCeiling, resolveCurrentSubagentCapabilityCeiling(input.deps.state.currentSessionId)),
 	});
 	if (result.isError) return result;
@@ -1413,7 +1431,7 @@ async function resumeAsyncRun(input: {
 		`Revived ${sourceLabel} subagent from ${target.runId}.`,
 		`Revived run: ${revivedId}`,
 		`Agent: ${target.agent}`,
-		`Session: ${target.sessionFile}`,
+		`Session: ${sessionFile}`,
 		result.details.asyncDir ? `Async dir: ${result.details.asyncDir}` : undefined,
 		revivedTarget ? `Intercom target: ${revivedTarget} (if registered)` : undefined,
 		`Status if needed: subagent({ action: "status", id: "${revivedId}" })`,
@@ -1422,7 +1440,7 @@ async function resumeAsyncRun(input: {
 		content: [{ type: "text", text: formatAsyncStartedMessage(lines.join("\n"), input.ctx.hasUI) }],
 		details: {
 			...result.details,
-			...(target.launchContractDigest ? { sourceLaunchContractDigest: target.launchContractDigest } : {}),
+			...(target.source !== "nested" && target.launchContractDigest ? { sourceLaunchContractDigest: target.launchContractDigest } : {}),
 		},
 	};
 }
@@ -2288,7 +2306,7 @@ async function runChainPath(data: ExecutionContextData, deps: ExecutorDeps): Pro
 	const chainSkills = normalized === false ? [] : (normalized ?? []);
 	const chain = wrapChainTasksForFork(params.chain as ChainStep[], contextPolicy);
 	const currentMaxSubagentDepth = resolveCurrentMaxSubagentDepth(deps.config.maxSubagentDepth);
-	const chainCtx = normalizeParentModel(ctx.model) || !data.parentModel ? ctx : { ...ctx, model: data.parentModel };
+	const chainCtx = ctx;
 	const chainResult = await executeChain({
 		chain,
 		task: params.task,
@@ -3270,7 +3288,6 @@ async function runSinglePath(data: ExecutionContextData, deps: ExecutorDeps): Pr
 				timeoutMs: data.timeoutMs,
 				turnBudget: data.turnBudget,
 				toolBudget: effectiveToolBudget.toolBudget,
-				allowZeroToolBudget: data.allowZeroToolBudget && effectiveToolBudget.toolBudget === data.toolBudget,
 			});
 		}
 	}
@@ -3652,8 +3669,17 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				const targetRunId = paramsWithResolvedCwd.id ?? paramsWithResolvedCwd.runId;
 				const nestedScope = nestedResolutionScopeForExecutor(deps);
 				const sessionRoots = trustedSessionRootsForStatus(ctx, deps);
+				const statusParams = {
+					action: "status" as const,
+					id: paramsWithResolvedCwd.id,
+					runId: paramsWithResolvedCwd.runId,
+					dir: paramsWithResolvedCwd.dir,
+					index: paramsWithResolvedCwd.index,
+					view: paramsWithResolvedCwd.view,
+					lines: paramsWithResolvedCwd.lines,
+				};
 				if (paramsWithResolvedCwd.view === "fleet") {
-					return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots }));
+					return withBudget(inspectSubagentStatus(statusParams, { state: deps.state, nested: nestedScope, sessionRoots }));
 				}
 				if (targetRunId) {
 					try {
@@ -3684,7 +3710,7 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 						});
 					}
 				}
-				return withBudget(inspectSubagentStatus(paramsWithResolvedCwd, { state: deps.state, nested: nestedScope, sessionRoots }));
+				return withBudget(inspectSubagentStatus(statusParams, { state: deps.state, nested: nestedScope, sessionRoots }));
 			}
 			if (action === "resume") {
 				return resumeAsyncRun({ params: paramsWithResolvedCwd, requestCwd, ctx, deps, parentModel: requestParentModel });
@@ -3773,7 +3799,9 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 				if (paramsWithResolvedCwd.dir) {
 					try {
 						const location = resolveAsyncRunLocation(paramsWithResolvedCwd, ASYNC_DIR, RESULTS_DIR);
-						return stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
+						const stopResult = stopAsyncRun(deps.state, location.resolvedId ?? targetRunId ?? path.basename(location.asyncDir ?? paramsWithResolvedCwd.dir), deps.kill, location);
+						if (stopResult) return stopResult;
+						return { content: [{ type: "text", text: "No stoppable async run found at the provided directory." }], isError: true, details: { mode: "management", results: [] } };
 					} catch (error) {
 						const text = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text }], isError: true, details: { mode: "management", results: [] } };
@@ -3857,7 +3885,13 @@ export function createSubagentExecutor(deps: ExecutorDeps): {
 					details: { mode: "management" as const, results: [] },
 				};
 			}
-			return handleManagementAction(action, paramsWithResolvedCwd, {
+			return handleManagementAction(action, {
+				action,
+				agent: paramsWithResolvedCwd.agent,
+				chainName: paramsWithResolvedCwd.chainName,
+				agentScope: typeof paramsWithResolvedCwd.agentScope === "string" ? paramsWithResolvedCwd.agentScope : undefined,
+				config: paramsWithResolvedCwd.config,
+			}, {
 				...ctx,
 				cwd: requestCwd,
 				config: deps.config,

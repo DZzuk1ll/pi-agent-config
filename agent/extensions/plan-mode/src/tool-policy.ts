@@ -582,6 +582,7 @@ function hasGhJsonOutput(args: string[]) {
 	let hasJson = false;
 	for (let index = 0; index < args.length; index += 1) {
 		const argument = args[index];
+		if (argument === undefined) continue;
 		if (argument === "--json") {
 			const value = args[index + 1];
 			if (!value || value.startsWith("-")) return false;

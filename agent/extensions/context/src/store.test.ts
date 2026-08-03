@@ -135,16 +135,16 @@ describe('ContextStore', () => {
 			source_id: stored!.source_id,
 			tool_name: 'bash',
 		});
-		expect(results[0].content).toContain('needle-at-end');
-		expect(results[0].snippet).toBe(true);
+		expect(results[0]!.content).toContain('needle-at-end');
+		expect(results[0]!.snippet).toBe(true);
 
 		const full_results = store.search('needle', {
 			source_id: stored!.source_id,
 			full_content: true,
 		});
-		expect(full_results[0].snippet).toBe(false);
-		expect(full_results[0].content.length).toBeGreaterThanOrEqual(
-			results[0].content.length,
+		expect(full_results[0]!.snippet).toBe(false);
+		expect(full_results[0]!.content.length).toBeGreaterThanOrEqual(
+			results[0]!.content.length,
 		);
 
 		const chunks = store.get(stored!.source_id);
@@ -171,19 +171,19 @@ describe('ContextStore', () => {
 			)[0]!.id,
 		).toBe(chunks[0]!.id);
 
-		const exact = store.get(stored!.source_id, results[0].chunk_id);
+		const exact = store.get(stored!.source_id, results[0]!.chunk_id);
 		expect(exact).toHaveLength(1);
-		expect(exact[0].id).toBe(results[0].chunk_id);
-		expect(exact[0].content).toContain('needle-at-end');
+		expect(exact[0]!.id).toBe(results[0]!.chunk_id);
+		expect(exact[0]!.content).toContain('needle-at-end');
 
 		const surrounding = store.get(
 			stored!.source_id,
-			results[0].chunk_id,
+			results[0]!.chunk_id,
 			{ before: 1, after: 1 },
 		);
 		expect(surrounding.length).toBeGreaterThanOrEqual(2);
 		expect(surrounding.map((chunk) => chunk.id)).toContain(
-			results[0].chunk_id,
+			results[0]!.chunk_id,
 		);
 		expect(surrounding.map((chunk) => chunk.ordinal)).toEqual(
 			[...surrounding]
@@ -260,21 +260,21 @@ describe('ContextStore', () => {
 			source_id: stored!.source_id,
 		});
 		expect(results).toHaveLength(1);
-		expect(results[0].content).toContain(
+		expect(results[0]!.content).toContain(
 			'1173: TARGET_VALUE=chunk-test-value',
 		);
 		expect(
-			Buffer.byteLength(results[0].content, 'utf8'),
+			Buffer.byteLength(results[0]!.content, 'utf8'),
 		).toBeLessThanOrEqual(4096);
 
 		const clamped_range = store.get(
 			stored!.source_id,
-			results[0].chunk_id,
+			results[0]!.chunk_id,
 			{ before: 99, after: 99 },
 		);
 		expect(clamped_range).toHaveLength(7);
 		expect(clamped_range.map((chunk) => chunk.id)).toContain(
-			results[0].chunk_id,
+			results[0]!.chunk_id,
 		);
 	});
 
@@ -295,8 +295,8 @@ describe('ContextStore', () => {
 		expect(forced!.receipt).not.toContain(secret);
 
 		const chunks = store.get(forced!.source_id);
-		expect(chunks[0].content).toContain('[REDACTED:');
-		expect(chunks[0].content).not.toContain(secret);
+		expect(chunks[0]!.content).toContain('[REDACTED:');
+		expect(chunks[0]!.content).not.toContain(secret);
 
 		const db = new DatabaseSync(store.db_path, {
 			enableForeignKeyConstraints: true,
@@ -430,14 +430,14 @@ describe('ContextStore', () => {
 
 		const scoped = store.search('shared-token');
 		expect(scoped).toHaveLength(1);
-		expect(scoped[0].content).toContain('current-session');
+		expect(scoped[0]!.content).toContain('current-session');
 		expect(store.get(other!.source_id)).toEqual([]);
 		expect(
 			store.get(other!.source_id, undefined, { global: true }),
 		).toHaveLength(other!.chunk_count);
 
 		store.configure({ session_id: 'session-b' });
-		expect(store.search('shared-token')[0].content).toContain(
+		expect(store.search('shared-token')[0]!.content).toContain(
 			'other-session',
 		);
 		expect(
@@ -475,7 +475,7 @@ describe('ContextStore', () => {
 
 		const scoped = store.search('overlap-token');
 		expect(scoped).toHaveLength(1);
-		expect(scoped[0].content).toContain('project-a');
+		expect(scoped[0]!.content).toContain('project-a');
 		expect(
 			store.search('overlap-token', { global: true }),
 		).toHaveLength(2);
@@ -496,14 +496,14 @@ describe('ContextStore', () => {
 			store.search('needle', { source_id: bash!.source_id }),
 		).toHaveLength(1);
 		expect(
-			store.search('needle', { source_id: read!.source_id })[0]
+			store.search('needle', { source_id: read!.source_id })[0]!
 				.content,
 		).toContain('read-only');
 		expect(
 			store.search('needle', { tool_name: 'bash' }),
 		).toHaveLength(1);
 		expect(
-			store.search('needle', { tool_name: 'bash' })[0].content,
+			store.search('needle', { tool_name: 'bash' })[0]!.content,
 		).toContain('bash-only');
 
 		for (let index = 0; index < 30; index++) {

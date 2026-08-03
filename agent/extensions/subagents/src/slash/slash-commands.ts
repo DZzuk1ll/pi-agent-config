@@ -166,7 +166,7 @@ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (pre
 	const segment = prefix.slice(segStart);
 	if (segment.includes(" -- ") || segment.includes('"') || segment.includes("'")) return null;
 
-	const lastWord = (segment.match(/(\S*)$/) || ["", ""])[1];
+	const lastWord = segment.match(/(\S*)$/)?.[1] ?? "";
 	let beforeLastWord = prefix.slice(0, prefix.length - lastWord.length);
 	// A bare `->` or `|` just typed (no trailing space) needs a separating space;
 	// `(` glues naturally to the agent name.
@@ -319,6 +319,8 @@ class SubagentsStopSelector implements Component {
 		this.targets = targets;
 		this.done = done;
 	}
+
+	invalidate(): void {}
 
 	handleInput(data: string): void {
 		if (matchesKey(data, "escape") || matchesKey(data, "ctrl+c")) {
@@ -541,7 +543,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			...(step.label ? { label: step.label } : {}),
 			...(step.as ? { as: step.as } : {}),
 			...(outputSchema ? { outputSchema } : {}),
-			...((step as { acceptance?: unknown }).acceptance !== undefined ? { acceptance: (step as { acceptance?: unknown }).acceptance } : {}),
+			...(step.acceptance !== undefined ? { acceptance: step.acceptance } : {}),
 			output: step.output,
 			outputMode: step.outputMode,
 			reads: step.reads,
@@ -1003,12 +1005,12 @@ type ChainStepObject = {
 	cwd?: string;
 	count?: number;
 	outputSchema?: JsonSchemaObject;
-	acceptance?: string;
+	acceptance?: "auto" | "attested" | "checked";
 };
 
-const INLINE_ACCEPTANCE_LEVELS = new Set(["auto", "attested", "checked"]);
+const INLINE_ACCEPTANCE_LEVELS = new Set<string>(["auto", "attested", "checked"]);
 
-function validateInlineAcceptanceInput(value: string, agent: string): void {
+function validateInlineAcceptanceInput(value: string, agent: string): asserts value is "auto" | "attested" | "checked" {
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
 	if (errors.length > 0) throw new SlashParseError(errors[0]!);
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
@@ -1040,7 +1042,8 @@ const mapParsedTaskToStepObject = (
 	opts: { baseCwd: string; inGroup: boolean },
 ): ChainStepObject => {
 	const { name, config, task: stepTask } = step;
-	if (config.acceptance !== undefined) validateInlineAcceptanceInput(config.acceptance, name);
+	const acceptance = config.acceptance;
+	if (acceptance !== undefined) validateInlineAcceptanceInput(acceptance, name);
 	return {
 		agent: name,
 		...(stepTask ? { task: stepTask } : isFirst && fallbackTask ? { task: fallbackTask } : {}),
@@ -1056,7 +1059,7 @@ const mapParsedTaskToStepObject = (
 		...(config.cwd ? { cwd: config.cwd } : {}),
 		...(opts.inGroup && config.count !== undefined ? { count: config.count } : {}),
 		...(config.outputSchema ? { outputSchema: loadInlineOutputSchema(opts.baseCwd, name, config.outputSchema) } : {}),
-		...(config.acceptance ? { acceptance: config.acceptance } : {}),
+		...(acceptance ? { acceptance } : {}),
 	};
 };
 

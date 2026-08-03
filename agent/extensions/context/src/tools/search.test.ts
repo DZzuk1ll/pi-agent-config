@@ -80,10 +80,10 @@ describe('context_search tool', () => {
 		expect(tool.description).toContain('not broad retrieval');
 		expect(tool.promptSnippet).toContain('export broad results');
 		expect(
-			tool.parameters.properties.full_content.description,
+			tool.parameters.properties.full_content!.description,
 		).toContain('Last resort for small matches');
-		expect(result.content[0].text).toContain('alpha-token');
-		expect(result.content[0].text).toContain('beta-token');
+		expect(result.content[0]!.text).toContain('alpha-token');
+		expect(result.content[0]!.text).toContain('beta-token');
 		expect(result.details.count).toBe(2);
 	});
 });
