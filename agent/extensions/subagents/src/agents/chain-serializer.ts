@@ -6,6 +6,8 @@ import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import { validateToolBudgetConfig } from "../runs/shared/tool-budget.ts";
 import type { ChainStep } from "../shared/settings.ts";
 import type { AgentSource } from "./agents.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 	const lines = sectionBody.split("\n");
@@ -94,7 +96,8 @@ function parseStepBody(agent: string, sectionBody: string): ChainStepConfig {
 			}
 			const validation = validateToolBudgetConfig(parsed, `toolBudget for step '${agent}'`);
 			if (validation.error) throw new Error(validation.error);
-			step.toolBudget = parsed as ChainStepConfig["toolBudget"];
+			if (!validation.budget) throw new Error(`Invalid toolBudget for step '${agent}'.`);
+			step.toolBudget = validation.budget;
 		}
 	}
 
@@ -111,11 +114,11 @@ export function parseChain(content: string, source: AgentSource, filePath: strin
 	const steps: ChainStepConfig[] = [];
 
 	for (let i = 0; i < matches.length; i++) {
-		const match = matches[i]!;
-		const agent = match[1]!.trim();
-		const lineEndOffset = body[match.index! + match[0].length] === "\n" ? 1 : 0;
-		const sectionStart = match.index! + match[0].length + lineEndOffset;
-		const sectionEnd = i + 1 < matches.length ? matches[i + 1]!.index! : body.length;
+		const match = requirePresent(matches[i]);
+		const agent = requirePresent(match[1]).trim();
+		const lineEndOffset = body[requirePresent(match.index) + match[0].length] === "\n" ? 1 : 0;
+		const sectionStart = requirePresent(match.index) + match[0].length + lineEndOffset;
+		const sectionEnd = i + 1 < matches.length ? requirePresent(requirePresent(matches[i + 1]).index) : body.length;
 		const sectionBody = body.slice(sectionStart, sectionEnd).trimEnd();
 		steps.push(parseStepBody(agent, sectionBody));
 	}
@@ -133,12 +136,12 @@ export function parseChain(content: string, source: AgentSource, filePath: strin
 	return {
 		name: buildRuntimeName(localName, packageName),
 		localName,
-		packageName,
+		...(packageName === undefined ? {} : { packageName }),
 		description: frontmatter.description,
 		source,
 		filePath,
 		steps,
-		extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+		...(Object.keys(extraFields).length > 0 ? { extraFields } : {}),
 	};
 }
 
@@ -216,12 +219,12 @@ export function parseJsonChain(content: string, source: AgentSource, filePath: s
 	return {
 		name: buildRuntimeName(input.name.trim(), parsedPackage.packageName),
 		localName: input.name.trim(),
-		packageName: parsedPackage.packageName,
+		...(parsedPackage.packageName === undefined ? {} : { packageName: parsedPackage.packageName }),
 		description: input.description.trim(),
 		source,
 		filePath,
 		steps: input.chain as ChainStepConfig[],
-		extraFields: Object.keys(extraFields).length > 0 ? extraFields : undefined,
+		...(Object.keys(extraFields).length > 0 ? { extraFields } : {}),
 	};
 }
 
@@ -255,7 +258,7 @@ export function serializeChain(config: ChainConfig): string {
 	lines.push("");
 
 	for (let i = 0; i < config.steps.length; i++) {
-		const step = config.steps[i]!;
+		const step = requirePresent(config.steps[i]);
 		lines.push(`## ${step.agent}`);
 		if (step.output === false) lines.push("output: false");
 		else if (step.output) lines.push(`output: ${step.output}`);

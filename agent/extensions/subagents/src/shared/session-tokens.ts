@@ -26,12 +26,19 @@ export function parseSessionTokens(sessionDir: string): TokenUsage | null {
 		for (const line of content.split("\n")) {
 			if (!line.trim()) continue;
 			try {
-				const entry = JSON.parse(line);
-				const usage = entry.usage ?? entry.message?.usage;
-				if (usage) {
-					input += usage.inputTokens ?? usage.input ?? 0;
-					output += usage.outputTokens ?? usage.output ?? 0;
-				}
+				const parsed: unknown = JSON.parse(line);
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+				const entry = parsed as Record<string, unknown>;
+				const message = entry.message && typeof entry.message === "object" && !Array.isArray(entry.message)
+					? entry.message as Record<string, unknown>
+					: undefined;
+				const rawUsage = entry.usage ?? message?.usage;
+				if (!rawUsage || typeof rawUsage !== "object" || Array.isArray(rawUsage)) continue;
+				const usage = rawUsage as Record<string, unknown>;
+				const inputValue = typeof usage.inputTokens === "number" ? usage.inputTokens : typeof usage.input === "number" ? usage.input : 0;
+				const outputValue = typeof usage.outputTokens === "number" ? usage.outputTokens : typeof usage.output === "number" ? usage.output : 0;
+				if (Number.isFinite(inputValue)) input += inputValue;
+				if (Number.isFinite(outputValue)) output += outputValue;
 			} catch {
 				// Ignore malformed lines while scanning usage entries.
 			}

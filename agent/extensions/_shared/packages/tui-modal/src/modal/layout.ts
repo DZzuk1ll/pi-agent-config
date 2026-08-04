@@ -1,5 +1,5 @@
 import {
-	SettingsList,
+	type SettingsList,
 	wrapTextWithAnsi,
 	type Focusable,
 	type OverlayOptions,

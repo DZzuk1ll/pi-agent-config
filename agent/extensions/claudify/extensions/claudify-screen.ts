@@ -290,7 +290,7 @@ const TOOL_OUTPUT_ROWS: readonly ImmediateRowDefinition[] = [
 		description: "Hides MCP results, shows a status summary, or previews their payload.",
 		values: ["hidden", "summary", "preview"],
 		defaultValue: "preview",
-		claudeValue: CLAUDE_AUTHENTIC.mcpOutputMode,
+		...(CLAUDE_AUTHENTIC.mcpOutputMode !== undefined ? { claudeValue: CLAUDE_AUTHENTIC.mcpOutputMode } : {}),
 	},
 	{
 		kind: "enum",
@@ -467,7 +467,7 @@ function messageRows(settings: SettingsFile): SettingRow[] {
 			description: "Switches assistant and thinking rows between classic and Claude chrome.",
 			value: resolved.messageStyle,
 			values: ["classic", "claude"],
-			claudeValue: CLAUDE_AUTHENTIC.messageStyle,
+			...(CLAUDE_AUTHENTIC.messageStyle !== undefined ? { claudeValue: CLAUDE_AUTHENTIC.messageStyle } : {}),
 		},
 		{
 			kind: "text",
@@ -490,7 +490,7 @@ function messageRows(settings: SettingsFile): SettingRow[] {
 			description: "Preserves or removes blank lines inside assistant and thinking messages.",
 			value: resolved.messageSpacing,
 			values: ["compact", "comfortable"],
-			claudeValue: CLAUDE_AUTHENTIC.messageSpacing,
+			...(CLAUDE_AUTHENTIC.messageSpacing !== undefined ? { claudeValue: CLAUDE_AUTHENTIC.messageSpacing } : {}),
 		},
 		{
 			kind: "text",
@@ -626,10 +626,10 @@ export class ClaudifyScreen extends Container implements Focusable {
 	private readonly theme: Theme;
 	private readonly keybindings: ScreenKeybindings;
 	private readonly onClose: () => void;
-	private readonly onSettingChange?: SettingChangeHandler;
-	private readonly onSettingPreview?: SettingPreviewHandler;
+	private readonly onSettingChange: SettingChangeHandler | undefined;
+	private readonly onSettingPreview: SettingPreviewHandler | undefined;
 	private readonly pickerCandidates: ClaudifyPickerCandidates;
-	private readonly onNotify?: NotifyHandler;
+	private readonly onNotify: NotifyHandler | undefined;
 	private state: ClaudifyScreenState = { kind: "hub", selectedIndex: 0 };
 	private input: IndentedInput | null = null;
 	private activePreviewKey: PickerSettingsKey | null = null;
@@ -770,7 +770,7 @@ export class ClaudifyScreen extends Container implements Focusable {
 		if (this.state.kind !== "section" || !this.state.verbEditor) return;
 		const rows = sectionRows(this.state.section, this.pickerCandidates);
 		const row = rows[this.state.verbEditor.rowIndex];
-		if (!row || row.kind !== "verbs") return;
+		if (row?.kind !== "verbs") return;
 
 		if (this.state.verbEditor.adding) {
 			this.handleVerbTextInput(data, row);
@@ -849,7 +849,7 @@ export class ClaudifyScreen extends Container implements Focusable {
 		if (this.state.kind !== "section" || !this.state.picker) return;
 		const rows = sectionRows(this.state.section, this.pickerCandidates);
 		const row = rows[this.state.picker.rowIndex];
-		if (!row || row.kind !== "picker") return;
+		if (row?.kind !== "picker") return;
 		if (this.keybindings.matches(data, "tui.select.cancel")) {
 			this.finishPicker();
 			return;
@@ -1043,7 +1043,7 @@ export class ClaudifyScreen extends Container implements Focusable {
 	private submitTextInput(rawValue: string): void {
 		if (this.state.kind !== "section") return;
 		const row = sectionRows(this.state.section, this.pickerCandidates)[this.state.selectedIndex];
-		if (!row || row.kind !== "text") return;
+		if (row?.kind !== "text") return;
 		// An empty/whitespace-only submit cancels rather than resetting to the
 		// built-in default: opening a text row (Enter) then a reflexive second
 		// Enter must not silently wipe the user's customized prefix/label.

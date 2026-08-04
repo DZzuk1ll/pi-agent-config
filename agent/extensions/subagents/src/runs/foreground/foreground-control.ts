@@ -39,7 +39,8 @@ function syncCurrentChild(control: ForegroundRunControl, child: ForegroundChildC
 	control.model = child.model;
 	control.thinking = child.thinking;
 	control.toolCount = child.toolCount;
-	control.interrupt = child.interrupt;
+	if (child.interrupt === undefined) delete control.interrupt;
+	else control.interrupt = child.interrupt;
 	control.updatedAt = child.updatedAt;
 }
 
@@ -58,7 +59,7 @@ function clearCurrentChild(control: ForegroundRunControl): void {
 	control.model = undefined;
 	control.thinking = undefined;
 	control.toolCount = undefined;
-	control.interrupt = undefined;
+	delete control.interrupt;
 }
 
 export function beginForegroundChild(control: ForegroundRunControl, input: BeginForegroundChildInput): void {

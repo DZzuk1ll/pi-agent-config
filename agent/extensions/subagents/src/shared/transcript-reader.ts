@@ -199,12 +199,15 @@ function parseTranscriptLines(lines: string[], conversationStarted = false): { e
 		}
 		if (recordType === "tool_start") {
 			const name = stringValue(record.toolName) ?? "tool";
+			const toolCallId = stringValue(record.toolCallId);
+			const args = stringValue(record.argsPreview);
+			const argsPayload = stringValue(record.argsPayload);
 			events.push({
 				kind: "tool",
-				...(stringValue(record.toolCallId) ? { toolCallId: stringValue(record.toolCallId) } : {}),
+				...(toolCallId ? { toolCallId } : {}),
 				name,
-				...(stringValue(record.argsPreview) ? { args: stringValue(record.argsPreview) } : {}),
-				...(stringValue(record.argsPayload) ? { argsPayload: stringValue(record.argsPayload) } : {}),
+				...(args ? { args } : {}),
+				...(argsPayload ? { argsPayload } : {}),
 				status: "running",
 				...(timestamp !== undefined ? { timestamp, startedAt: timestamp } : {}),
 			});
@@ -255,8 +258,9 @@ function parseTranscriptLines(lines: string[], conversationStarted = false): { e
 		}
 		if (role === "assistant") {
 			assistantSeen = true;
+			const model = stringValue(record.model);
 			if (text) appendTextEvent(events, "assistant", text, {
-				...(stringValue(record.model) ? { model: stringValue(record.model) } : {}),
+				...(model ? { model } : {}),
 				...(timestamp !== undefined ? { timestamp } : {}),
 			});
 			continue;

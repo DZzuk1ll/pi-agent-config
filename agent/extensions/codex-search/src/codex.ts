@@ -52,6 +52,20 @@ export {
 } from "./cookies.ts";
 export type { FetchLike } from "./cookies.ts";
 
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { omitUndefined } from "../../_shared/runtime/omit-undefined.ts";
+
+const CodexModelsResponseSchema = Type.Object({
+  models: Type.Optional(Type.Array(Type.Object({
+    slug: Type.Optional(Type.String()),
+    id: Type.Optional(Type.String()),
+    model: Type.Optional(Type.String()),
+    display_name: Type.Optional(Type.String()),
+    is_default: Type.Optional(Type.Boolean()),
+  }, { additionalProperties: true }))),
+}, { additionalProperties: true });
+
 export interface FetchCodexModelsOptions {
   token: string;
   accountId: string;
@@ -66,12 +80,12 @@ export async function fetchCodexModels(
 ): Promise<import("./modes/types.ts").CodexModel[]> {
   const { CodexError, classifyHttpStatus } = await import("./errors.ts");
   const { createTransport } = await import("./transport.ts");
-  const transport = createTransport({
+  const transport = createTransport(omitUndefined({
     token: options.token,
     accountId: options.accountId,
     baseUrl: options.baseUrl,
-    fetchImpl: options.fetchImpl as typeof fetch,
-  });
+    fetchImpl: options.fetchImpl,
+  }));
 
   const endpoint = new URL(transport.resolveEndpoint("models"));
   endpoint.searchParams.set(
@@ -79,10 +93,10 @@ export async function fetchCodexModels(
     options.clientVersion ?? process.env.PI_CODEX_WEB_SEARCH_CLIENT_VERSION ?? "1.0.0",
   );
 
-  const response = await transport.fetch(endpoint.toString(), {
+  const response = await transport.fetch(endpoint.toString(), omitUndefined({
     headers: transport.buildHeaders("application/json"),
     signal: options.signal,
-  });
+  }));
 
   if (!response.ok) {
     const status = response.status;
@@ -94,17 +108,18 @@ export async function fetchCodexModels(
     );
   }
 
-  const data = (await response.json()) as {
-    models?: Array<{
-      slug?: string;
-      id?: string;
-      model?: string;
-      display_name?: string;
-      is_default?: boolean;
-    }>;
-  };
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch (error) {
+    throw new CodexError("schema", `Codex models response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Value.Check(CodexModelsResponseSchema, raw)) {
+    throw new CodexError("schema", "Codex models response did not match the expected schema.");
+  }
+  const data = raw;
   return (data.models ?? [])
-    .map((model) => ({
+    .map((model) => omitUndefined({
       id: model.slug ?? model.id ?? model.model ?? "",
       name: model.display_name,
       isDefault: model.is_default,
@@ -123,10 +138,11 @@ export function extractAccountIdFromToken(token: string): string | undefined {
   if (parts.length !== 3) return undefined;
 
   try {
-    const payload = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8")) as {
-      "https://api.openai.com/auth"?: { chatgpt_account_id?: unknown };
-    };
-    const accountId = payload["https://api.openai.com/auth"]?.chatgpt_account_id;
+    const payload: unknown = JSON.parse(Buffer.from(parts[1] ?? "", "base64url").toString("utf8"));
+    if (!payload || typeof payload !== "object" || Array.isArray(payload)) return undefined;
+    const auth = Reflect.get(payload, "https://api.openai.com/auth");
+    if (!auth || typeof auth !== "object" || Array.isArray(auth)) return undefined;
+    const accountId = Reflect.get(auth, "chatgpt_account_id");
     return typeof accountId === "string" && accountId.length > 0 ? accountId : undefined;
   } catch {
     return undefined;

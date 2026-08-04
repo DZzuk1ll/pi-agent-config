@@ -54,7 +54,7 @@ export async function drainOutstandingWork(deps: AutoDrainDeps): Promise<void> {
 			undefined,
 			{
 				state: deps.state,
-				events: deps.events,
+				...(deps.events === undefined ? {} : { events: deps.events }),
 				now,
 				stopOnAttention: false,
 				failOnFailedRuns: true,

@@ -5,8 +5,21 @@ import * as http from "node:http";
 import * as os from "node:os";
 import * as path from "node:path";
 import coreModule from "./pi-extension-core.js";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
 
-const core = ((coreModule as any).default || coreModule) as any;
+
+interface ClawdCore {
+  attach(pi: ExtensionAPI, options: {
+    shouldReport(ctx: ExtensionContext): unknown;
+    buildPayload(input: { state: string; event: string; nativeEvent: ExtensionEvent; ctx: ExtensionContext }): unknown;
+    postState(payload: Record<string, unknown>): Promise<boolean>;
+  }): void;
+  shouldReport(ctx: ExtensionContext): unknown;
+  buildPayload(input: Record<string, unknown>): Record<string, unknown>;
+}
+
+const coreRecord = coreModule as unknown as Record<string, unknown>;
+const core = (coreRecord.default ?? coreModule) as ClawdCore;
 
 const CLAWD_SERVER_ID = "clawd-on-desk";
 const CLAWD_SERVER_HEADER = "x-clawd-server";
@@ -103,8 +116,8 @@ function normalizePort(value: unknown): number | null {
 
 function readRuntimePort(): number | null {
   try {
-    const raw = JSON.parse(fs.readFileSync(RUNTIME_CONFIG_PATH, "utf8"));
-    return normalizePort(raw && raw.port);
+    const raw: unknown = JSON.parse(fs.readFileSync(RUNTIME_CONFIG_PATH, "utf8"));
+    return normalizePort(raw && typeof raw === "object" ? (raw as Record<string, unknown>).port : undefined);
   } catch {
     return null;
   }
@@ -133,8 +146,8 @@ function isClawdResponse(res: http.IncomingMessage, body: string): boolean {
   if (readHeader(res, CLAWD_SERVER_HEADER) === CLAWD_SERVER_ID) return true;
   if (!body) return false;
   try {
-    const parsed = JSON.parse(body);
-    return parsed && parsed.app === CLAWD_SERVER_ID;
+    const parsed: unknown = JSON.parse(body);
+    return !!parsed && typeof parsed === "object" && (parsed as Record<string, unknown>).app === CLAWD_SERVER_ID;
   } catch {
     return false;
   }
@@ -209,14 +222,16 @@ function getWindowsProcessSnapshot(): Map<number, WinProcessRecord> {
     );
     const trimmed = (raw || "").trim();
     if (!trimmed) return new Map();
-    const parsed = JSON.parse(trimmed);
-    const list: any[] = Array.isArray(parsed) ? parsed : [parsed];
+    const parsed: unknown = JSON.parse(trimmed);
+    const list: unknown[] = Array.isArray(parsed) ? parsed : [parsed];
     const map = new Map<number, WinProcessRecord>();
     for (const proc of list) {
-      const pid = Number(proc && proc.ProcessId);
+	  if (!proc || typeof proc !== "object") continue;
+	  const record = proc as Record<string, unknown>;
+	  const pid = Number(record.ProcessId);
       if (!Number.isFinite(pid)) continue;
-      const rawName = typeof proc.Name === "string" ? proc.Name : "";
-      const ppid = Number(proc.ParentProcessId) || 0;
+	  const rawName = typeof record.Name === "string" ? record.Name : "";
+	  const ppid = Number(record.ParentProcessId) || 0;
       if (!rawName) continue;
       map.set(pid, { rawName, name: normalizeProcessName(rawName), ppid: Math.floor(ppid) });
     }
@@ -263,7 +278,7 @@ function getProcessMetadata(): ProcessMetadata {
   for (let depth = 0; depth < 12; depth++) {
     let info: ProcessInfo | null;
     if (isWin) {
-      const snap = winSnapshot!.get(pid);
+      const snap = requirePresent(winSnapshot).get(pid);
       info = snap && snap.ppid > 0
         ? { pid, ppid: snap.ppid, name: snap.name, rawName: snap.rawName }
         : null;
@@ -288,12 +303,12 @@ function getProcessMetadata(): ProcessMetadata {
   let tmuxClient: string | undefined;
   if (process.env.TMUX) {
     const socketPath = process.env.TMUX.split(",")[0];
-    if (socketPath && socketPath.startsWith("/") && socketPath.length <= 4096 && !/[\0\r\n]/.test(socketPath)) {
+    if (socketPath?.startsWith("/") && socketPath.length <= 4096 && !/[\0\r\n]/.test(socketPath)) {
       tmuxSocket = socketPath;
     }
     if (process.env.TMUX_PANE) {
       try {
-        const { execFileSync } = require("child_process");
+        const { execFileSync } = require("node:child_process");
         const raw = execFileSync("tmux", ["list-clients", "-t", process.env.TMUX_PANE, "-F", "#{client_tty}"],
           { encoding: "utf8", timeout: 500 });
         const target = String(raw || "").split("\n").map((s) => s.trim()).find(Boolean);
@@ -306,11 +321,11 @@ function getProcessMetadata(): ProcessMetadata {
 
   const value: ProcessMetadata = {
     cwd: process.cwd(),
-    sourcePid: sourcePid || undefined,
+		...(sourcePid ? { sourcePid } : {}),
     pidChain: pidChain.length > 0 ? pidChain : [process.pid],
-    editor,
-    tmuxSocket,
-    tmuxClient,
+		...(editor === undefined ? {} : { editor }),
+		...(tmuxSocket === undefined ? {} : { tmuxSocket }),
+		...(tmuxClient === undefined ? {} : { tmuxClient }),
   };
   processMetadataCache = { at: now, value };
   return value;

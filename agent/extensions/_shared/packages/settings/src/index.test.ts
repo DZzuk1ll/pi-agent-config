@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -75,20 +75,27 @@ describe('@personal-pi/settings', () => {
 	it('reads and writes package and trust sections', () => {
 		use_temp_agent_dir();
 
-		expect(read_package_settings('demo', { enabled: false })).toEqual(
-			{
-				enabled: false,
-			},
-		);
+		expect(read_package_settings('demo')).toBeUndefined();
 		write_package_settings('demo', { enabled: true });
-		expect(read_package_settings('demo', { enabled: false })).toEqual(
+		expect(read_package_settings('demo')).toEqual(
 			{
 				enabled: true,
 			},
 		);
 
-		expect(read_trust_settings('hooks', [])).toEqual([]);
+		expect(read_trust_settings('hooks')).toBeUndefined();
 		write_trust_settings('hooks', ['repo']);
-		expect(read_trust_settings('hooks', [])).toEqual(['repo']);
+		expect(read_trust_settings('hooks')).toEqual(['repo']);
+	});
+
+	it('rejects malformed settings and fixes the persisted version at 1', () => {
+		const dir = use_temp_agent_dir();
+		writeFileSync(join(dir, 'my-pi-settings.json'), JSON.stringify({ version: 2, packages: [] }));
+		expect(read_settings()).toEqual({
+			version: 1,
+			extensions: { enabled: {} },
+			trust: {},
+			packages: {},
+		});
 	});
 });

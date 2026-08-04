@@ -16,11 +16,14 @@ for (const capability of ["getBuiltinModule", "binding", "_linkedBinding", "dlop
 	} catch {}
 }
 
-const BOOTSTRAP = String.raw`
+const BOOTSTRAP = `
 (() => {
 	"use strict";
 	const dispatch = globalThis.__hostDispatch;
 	const argsEnvelope = JSON.parse(globalThis.__argsJson);
+	if (!argsEnvelope || typeof argsEnvelope !== "object" || typeof argsEnvelope.defined !== "boolean" || !("value" in argsEnvelope)) {
+		throw new Error("Workflow host sent an invalid args envelope");
+	}
 	delete globalThis.__hostDispatch;
 	delete globalThis.__argsJson;
 	let nextId = 0;
@@ -219,7 +222,11 @@ function execute(source, argsJson) {
 				return false;
 			}
 			let id;
-			try { id = JSON.parse(payloadJson).id; } catch {
+			try {
+				const request = JSON.parse(payloadJson);
+				if (!request || typeof request !== "object") throw new Error("invalid request");
+				id = request.id;
+			} catch {
 				fail(new Error("Workflow sent malformed agent JSON"));
 				return false;
 			}

@@ -278,7 +278,7 @@ async function showTuiScreen<
 				if (menuSignal.aborted) abortScreen();
 				component = createMenuScreenComponent({
 					screen,
-					selectedItemId,
+					...(selectedItemId === undefined ? {} : { selectedItemId }),
 					tui,
 					theme,
 					keybindings,
@@ -335,10 +335,10 @@ async function invokeBusyAction<State, ScreenId extends string, Context extends 
 	menuSignal: AbortSignal,
 	options: RunMenuOptions<State, Context>,
 ): Promise<ActionInvocation<ScreenId>> {
-	const result = await runTask(ctx, {
+	const result = await runTask<ActionInvocation<ScreenId>, Context>(ctx, {
 		label,
 		signal: menuSignal,
-		isCurrent: options.isCurrent,
+		...(options.isCurrent === undefined ? {} : { isCurrent: options.isCurrent }),
 		onError: () => undefined,
 		task: ({ signal }) => invokeAction(ctx, handler, state, signal, itemId, options, {}, false),
 	});

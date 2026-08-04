@@ -2,6 +2,8 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const IGNORED_CHANGE_PREFIXES = [".pi-subagents/", "tmp/", "node_modules/"];
 const IGNORED_CHANGE_PATHS = new Set([".pi-subagents", "tmp", "node_modules"]);
@@ -71,7 +73,7 @@ function hashFile(filePath: string): string {
 }
 
 function largeFileHash(stat: fs.Stats): string {
-	return "large:" + stat.size + ":" + Math.floor(stat.mtimeMs);
+	return `large:${stat.size}:${Math.floor(stat.mtimeMs)}`;
 }
 
 function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats, budget: HashBudget): unknown {
@@ -90,7 +92,7 @@ function hashFileEntry(normalized: string, fullPath: string, stat: fs.Stats, bud
 			// metadata marker so one unreadable file never discards the whole signature.
 			hash = largeFileHash(stat);
 			if (code !== "ERR_FS_FILE_TOO_LARGE") {
-				console.warn("[pi-subagents] watchdog hashFile fell back to metadata for", normalized + ":", (error as Error)?.message);
+				console.warn("[pi-subagents] watchdog hashFile fell back to metadata for", `${normalized}:`, (error as Error)?.message);
 			}
 		}
 	}
@@ -144,7 +146,7 @@ function parsePorcelainZ(raw: string): Array<{ status: string; paths: string[] }
 	const tokens = raw.split("\0").filter(Boolean);
 	const entries: Array<{ status: string; paths: string[] }> = [];
 	for (let index = 0; index < tokens.length; index++) {
-		const token = tokens[index]!;
+		const token = requirePresent(tokens[index]);
 		if (token.length < 4) continue;
 		const status = token.slice(0, 2);
 		const relPath = token.slice(3);

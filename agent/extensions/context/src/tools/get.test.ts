@@ -8,6 +8,8 @@ import {
 	set_context_sidecar_enabled,
 } from '../store.js';
 import { register_context_get_tool } from './get.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const dirs: string[] = [];
 const original_context_db = process.env.MY_PI_CONTEXT_DB;
@@ -36,7 +38,7 @@ function register_tool(): RegisteredTool {
 			tool = value;
 		},
 	} as unknown as ExtensionAPI);
-	return tool!;
+	return requirePresent(tool);
 }
 
 afterEach(() => {
@@ -68,23 +70,23 @@ describe('context_get tool', () => {
 		expect(tool.promptSnippet).toContain(
 			'avoid full-source chat retrieval',
 		);
-		expect(tool.parameters.properties.chunk_id!.description).toContain(
+		expect(requirePresent(tool.parameters.properties.chunk_id).description).toContain(
 			'exceptional full-source chat retrieval',
 		);
 
 		const found = await tool.execute('call', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 			global: true,
 		});
-		expect(found.content[0]!.text).toContain('get-token');
+		expect(requirePresent(found.content[0]).text).toContain('get-token');
 		expect(found.details).toMatchObject({ count: 1 });
 
 		const missing = await tool.execute('call', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 			chunk_id: 'missing',
 			global: true,
 		});
-		expect(missing.content[0]!.text).toContain('No chunk found');
+		expect(requirePresent(missing.content[0]).text).toContain('No chunk found');
 		expect(missing.details).toMatchObject({ count: 0 });
 	});
 });

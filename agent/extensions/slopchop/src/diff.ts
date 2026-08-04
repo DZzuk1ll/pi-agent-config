@@ -1,4 +1,6 @@
 import { parseDiffFromFile, type FileDiffMetadata } from "@pierre/diffs";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 export interface InlineRange {
   start: number;
@@ -144,12 +146,12 @@ function computeInlineHighlights(oldText: string, newText: string): { oldHighlig
   const table = Array.from({ length: oldChars.length + 1 }, () => new Uint16Array(newChars.length + 1));
 
   for (let oldIndex = oldChars.length - 1; oldIndex >= 0; oldIndex -= 1) {
-    const current = table[oldIndex]!;
-    const next = table[oldIndex + 1]!;
+    const current = requirePresent(table[oldIndex]);
+    const next = requirePresent(table[oldIndex + 1]);
     for (let newIndex = newChars.length - 1; newIndex >= 0; newIndex -= 1) {
       current[newIndex] = oldChars[oldIndex] === newChars[newIndex]
-        ? next[newIndex + 1]! + 1
-        : Math.max(next[newIndex]!, current[newIndex + 1]!);
+        ? requirePresent(next[newIndex + 1]) + 1
+        : Math.max(requirePresent(next[newIndex]), requirePresent(current[newIndex + 1]));
     }
   }
 
@@ -163,7 +165,7 @@ function computeInlineHighlights(oldText: string, newText: string): { oldHighlig
       continue;
     }
 
-    if (table[oldIndex + 1]![newIndex]! >= table[oldIndex]![newIndex + 1]!) {
+    if (requirePresent(requirePresent(table[oldIndex + 1])[newIndex]) >= requirePresent(requirePresent(table[oldIndex])[newIndex + 1])) {
       oldHighlights.push({ start: oldIndex, end: oldIndex + 1 });
       oldIndex += 1;
       continue;
@@ -206,8 +208,8 @@ function createRow(
 
   return {
     kind,
-    oldLineNumber,
-    newLineNumber,
+    ...(oldLineNumber === undefined ? {} : { oldLineNumber }),
+    ...(newLineNumber === undefined ? {} : { newLineNumber }),
     oldText,
     newText,
     oldHighlights: highlights.oldHighlights,
@@ -336,14 +338,17 @@ function getLineRange(
   let endLine: number | undefined;
 
   for (let i = startRow; i <= endRow; i++) {
-    const row = rows[i]!;
+    const row = requirePresent(rows[i]);
     const lineNumber = side === "old" ? row.oldLineNumber : row.newLineNumber;
     if (lineNumber === undefined) continue;
     if (startLine === undefined) startLine = lineNumber;
     endLine = lineNumber;
   }
 
-  return { start: startLine, end: endLine };
+  return {
+    ...(startLine === undefined ? {} : { start: startLine }),
+    ...(endLine === undefined ? {} : { end: endLine }),
+  };
 }
 
 function buildStructuredDiffFromRows(
@@ -360,7 +365,7 @@ function buildStructuredDiffFromRows(
   let blockStart: number | undefined;
 
   for (let i = 0; i < rows.length; i++) {
-    const isChange = rows[i]!.kind !== "equal";
+    const isChange = requirePresent(rows[i]).kind !== "equal";
     if (isChange) {
       blockStart ??= i;
       continue;
@@ -424,7 +429,7 @@ function buildStructuredDiffFromRows(
     let hunkDeletions = 0;
 
     for (let rowIndex = seed.changeStartRow; rowIndex <= seed.changeEndRow; rowIndex++) {
-      const row = rows[rowIndex]!;
+      const row = requirePresent(rows[rowIndex]);
       if (row.kind === "insert" || row.kind === "replace") hunkAdditions += 1;
       if (row.kind === "delete" || row.kind === "replace") hunkDeletions += 1;
     }
@@ -435,10 +440,10 @@ function buildStructuredDiffFromRows(
       displayEndRow: seed.displayEndRow,
       changeStartRow: seed.changeStartRow,
       changeEndRow: seed.changeEndRow,
-      oldStartLine: oldRange.start,
-      oldEndLine: oldRange.end,
-      newStartLine: newRange.start,
-      newEndLine: newRange.end,
+      ...(oldRange.start === undefined ? {} : { oldStartLine: oldRange.start }),
+      ...(oldRange.end === undefined ? {} : { oldEndLine: oldRange.end }),
+      ...(newRange.start === undefined ? {} : { newStartLine: newRange.start }),
+      ...(newRange.end === undefined ? {} : { newEndLine: newRange.end }),
       additions: hunkAdditions,
       deletions: hunkDeletions,
     };
@@ -465,7 +470,7 @@ function buildStructuredDiffFromRows(
       visibleItems.push({
         type: "row",
         fullRowIndex: rowIndex,
-        row: rows[rowIndex]!,
+        row: requirePresent(rows[rowIndex]),
       });
     }
 

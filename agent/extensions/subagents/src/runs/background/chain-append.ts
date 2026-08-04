@@ -1,9 +1,10 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { appendJsonl } from "../../shared/artifacts.ts";
-import type { AsyncParallelGroupStatus, AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
+import type { AsyncStatus, WorkflowGraphNode, WorkflowGraphSnapshot } from "../../shared/types.ts";
 import { readStatus } from "../../shared/utils.ts";
 import type { DynamicRunnerGroup, ParallelStepGroup, RunnerStep, RunnerSubagentStep } from "../shared/parallel-utils.ts";
 import { isDynamicRunnerGroup, isParallelGroup } from "../shared/parallel-utils.ts";
@@ -100,10 +101,30 @@ export function enqueueChainAppendRequest(input: {
 }
 
 function readAppendRequest(filePath: string): ChainAppendRequest | undefined {
-	const raw = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Partial<ChainAppendRequest>;
+	const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) return undefined;
+	const raw = parsed as Record<string, unknown>;
 	if (!raw.id || typeof raw.id !== "string") return undefined;
 	if (typeof raw.createdAt !== "number" || !Number.isFinite(raw.createdAt)) return undefined;
 	if (!Array.isArray(raw.steps) || raw.steps.length === 0) return undefined;
+	const validTask = (value: unknown): boolean => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+		const task = value as Record<string, unknown>;
+		return typeof task.agent === "string"
+			&& typeof task.task === "string"
+			&& typeof task.inheritProjectContext === "boolean"
+			&& typeof task.inheritSkills === "boolean";
+	};
+	const validStep = (value: unknown): boolean => {
+		if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+		const step = value as Record<string, unknown>;
+		if (Array.isArray(step.parallel)) return step.parallel.length > 0 && step.parallel.every(validTask);
+		if (step.expand !== undefined || step.collect !== undefined) {
+			return Boolean(step.expand && typeof step.expand === "object" && step.collect && typeof step.collect === "object" && validTask(step.parallel));
+		}
+		return validTask(step);
+	};
+	if (!raw.steps.every(validStep)) return undefined;
 	return { id: raw.id, createdAt: raw.createdAt, steps: raw.steps as RunnerStep[] };
 }
 
@@ -129,7 +150,7 @@ export function consumeChainAppendRequests(asyncDir: string): ChainAppendRequest
 }
 
 function statusStepForTask(task: RunnerSubagentStep): StatusStep {
-	return {
+	return omitUndefinedAs<StatusStep>({
 		agent: task.agent,
 		...(task.context ? { context: task.context } : {}),
 		phase: task.phase,
@@ -144,7 +165,7 @@ function statusStepForTask(task: RunnerSubagentStep): StatusStep {
 		attemptedModels: task.modelCandidates && task.modelCandidates.length > 0 ? task.modelCandidates : task.model ? [task.model] : undefined,
 		recentTools: [],
 		recentOutput: [],
-	};
+	});
 }
 
 function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
@@ -153,7 +174,7 @@ function statusStepsForRunnerStep(step: RunnerStep): StatusStep[] {
 		return [{
 			agent: `expand:${step.parallel.agent}`,
 			...(step.parallel.context ? { context: step.parallel.context } : {}),
-			phase: step.phase ?? step.parallel.phase,
+			...(step.phase ?? step.parallel.phase ? { phase: step.phase ?? step.parallel.phase } : {}),
 			label: step.label ?? step.parallel.label ?? `Dynamic fanout (${step.collect.as})`,
 			outputName: step.collect.as,
 			structured: Boolean(step.collect.outputSchema),
@@ -176,7 +197,7 @@ function pushPhase(graph: WorkflowGraphSnapshot, phase: string | undefined, node
 }
 
 function graphNodeForSequential(step: RunnerSubagentStep, stepIndex: number, flatIndex: number): WorkflowGraphNode {
-	return {
+	return omitUndefinedAs<WorkflowGraphNode>({
 		id: `step-${stepIndex}`,
 		kind: "step",
 		agent: step.agent,
@@ -187,14 +208,14 @@ function graphNodeForSequential(step: RunnerSubagentStep, stepIndex: number, fla
 		stepIndex,
 		outputName: step.outputName,
 		structured: step.structured,
-	};
+	});
 }
 
 function graphNodeForParallel(step: ParallelStepGroup, stepIndex: number, flatIndex: number, graph: WorkflowGraphSnapshot): WorkflowGraphNode {
 	const children = step.parallel.map((task, taskIndex) => {
 		const childId = `step-${stepIndex}-agent-${taskIndex}`;
 		pushPhase(graph, task.phase, childId);
-		return {
+		return omitUndefinedAs<WorkflowGraphNode>({
 			id: childId,
 			kind: "agent" as const,
 			agent: task.agent,
@@ -205,20 +226,20 @@ function graphNodeForParallel(step: ParallelStepGroup, stepIndex: number, flatIn
 			stepIndex,
 			outputName: task.outputName,
 			structured: task.structured,
-		};
+		});
 	});
-	return {
+	return omitUndefinedAs<WorkflowGraphNode>({
 		id: `step-${stepIndex}`,
 		kind: "parallel-group",
 		label: step.parallel.length === 1 ? "Parallel task" : `Parallel group (${step.parallel.length})`,
 		status: "pending",
 		stepIndex,
 		children,
-	};
+	});
 }
 
 function graphNodeForDynamic(step: DynamicRunnerGroup, stepIndex: number): WorkflowGraphNode {
-	return {
+	return omitUndefinedAs<WorkflowGraphNode>({
 		id: `step-${stepIndex}`,
 		kind: "dynamic-parallel-group",
 		label: step.label?.trim() || step.parallel.label?.trim() || `Dynamic fanout (${step.collect.as})`,
@@ -230,11 +251,11 @@ function graphNodeForDynamic(step: DynamicRunnerGroup, stepIndex: number): Workf
 			sourceOutput: step.expand.from.output,
 			sourcePath: step.expand.from.path,
 			itemName: step.expand.item ?? "item",
-			maxItems: step.expand.maxItems,
+			...(step.expand.maxItems === undefined ? {} : { maxItems: step.expand.maxItems }),
 			collectAs: step.collect.as,
 		},
 		children: [],
-	};
+	});
 }
 
 function appendWorkflowNode(graph: WorkflowGraphSnapshot | undefined, step: RunnerStep, stepIndex: number, flatIndex: number): void {
@@ -253,7 +274,14 @@ function appendWorkflowNode(graph: WorkflowGraphSnapshot | undefined, step: Runn
 }
 
 export function appendRunnerStepsToStatus(input: {
-	status: AsyncStatus;
+	status: {
+		steps?: Array<Pick<StatusStep, "agent" | "status">> | undefined;
+		chainStepCount?: number | undefined;
+		parallelGroups?: AsyncStatus["parallelGroups"] | undefined;
+		workflowGraph?: WorkflowGraphSnapshot | undefined;
+		pendingAppends?: number | undefined;
+		lastUpdate?: number | undefined;
+	};
 	steps: RunnerStep[];
 	now?: number;
 	pendingAppends?: number;

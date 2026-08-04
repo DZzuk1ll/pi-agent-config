@@ -4,6 +4,8 @@ import {
 	type SpawnBudgetSnapshot,
 	type SubagentState,
 } from "../../shared/types.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const MAX_GRANT_HISTORY = 20;
 
@@ -78,7 +80,7 @@ export function reserveSpawnBudget(
 ): { snapshot: SpawnBudgetSnapshot; error?: string } {
 	const checked = preflightSpawnBudget(state, config, sessionId, requested);
 	if (checked.error || requested <= 0 || checked.snapshot.limit === null) return checked;
-	state.subagentSpawns!.count += requested;
+	requirePresent(state.subagentSpawns).count += requested;
 	return { snapshot: getSpawnBudgetSnapshot(state, config, sessionId) };
 }
 
@@ -117,7 +119,7 @@ export function grantSpawnBudget(
 	if (before.limit === null) {
 		return { snapshot: before, error: "The current session has no configured spawn cap, so it does not need a budget grant." };
 	}
-	const counters = state.subagentSpawns!;
+	const counters = requirePresent(state.subagentSpawns);
 	counters.granted = (counters.granted ?? 0) + additional;
 	const limit = before.limit + additional;
 	counters.grantHistory = [

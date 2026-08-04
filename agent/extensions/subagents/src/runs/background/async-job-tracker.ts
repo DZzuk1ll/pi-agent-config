@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined, } from "../../../../_shared/runtime/omit-undefined.ts";
 import { renderWidget, widgetRenderKey } from "../../tui/render.ts";
 import { formatControlNoticeMessage } from "../shared/subagent-control.ts";
 import {
@@ -21,6 +22,8 @@ import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-
 import { hasLiveNestedDescendants, updateAsyncJobNestedProjection } from "../shared/nested-events.ts";
 import { isOwnedByOrchestratorUi } from "../../shared/ui-ownership.ts";
 import { listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 interface AsyncJobTrackerOptions {
 	completionRetentionMs?: number;
@@ -35,6 +38,70 @@ const CONTROL_EVENT_READ_CHUNK_BYTES = 64 * 1024;
 const MAX_CONTROL_EVENT_LINE_BYTES = 1024 * 1024;
 const CONTROL_EVENT_SCAN_WINDOW_BYTES = 2 * 1024 * 1024;
 const MAX_RECENT_FLEET_JOBS = 20;
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function decodeSteeringNotice(value: unknown): SteeringNotice | undefined {
+	const notice = recordValue(value);
+	if (!notice) return undefined;
+	if (notice.type !== "subagent.steering.notice" || typeof notice.ts !== "number" || typeof notice.runId !== "string" || typeof notice.requestId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string" || (notice.currentSessionId !== undefined && typeof notice.currentSessionId !== "string")) return undefined;
+	return omitUndefined({
+		type: "subagent.steering.notice" as const,
+		ts: notice.ts,
+		runId: notice.runId,
+		requestId: notice.requestId,
+		state: notice.state,
+		message: notice.message,
+		currentSessionId: typeof notice.currentSessionId === "string" ? notice.currentSessionId : undefined,
+	});
+}
+
+function decodeControlEvent(value: unknown): ControlEvent | undefined {
+	const event = recordValue(value);
+	if (!event || (event.type !== "active_long_running" && event.type !== "needs_attention") || (event.to !== "active_long_running" && event.to !== "needs_attention") || typeof event.ts !== "number" || typeof event.agent !== "string" || typeof event.runId !== "string" || typeof event.message !== "string") return undefined;
+	if (event.from !== undefined && event.from !== "active_long_running" && event.from !== "needs_attention") return undefined;
+	const stringFields = ["nestedRunId", "currentTool", "currentPath", "recentFailureSummary"] as const;
+	if (stringFields.some((field) => event[field] !== undefined && typeof event[field] !== "string")) return undefined;
+	const numberFields = ["index", "turns", "tokens", "toolCount", "currentToolDurationMs", "elapsedMs"] as const;
+	if (numberFields.some((field) => event[field] !== undefined && typeof event[field] !== "number")) return undefined;
+	const reasons = new Set(["idle", "completion_guard", "active_long_running", "tool_failures", "supervisor_request", "time_threshold", "turn_threshold", "token_threshold"]);
+	if (event.reason !== undefined && (typeof event.reason !== "string" || !reasons.has(event.reason))) return undefined;
+	let nestingPath: NonNullable<ControlEvent["nestingPath"]> | undefined;
+	if (event.nestingPath !== undefined) {
+		if (!Array.isArray(event.nestingPath)) return undefined;
+		nestingPath = [];
+		for (const value of event.nestingPath) {
+			const entry = recordValue(value);
+			if (!entry || typeof entry.runId !== "string" || (entry.stepIndex !== undefined && typeof entry.stepIndex !== "number") || (entry.agent !== undefined && typeof entry.agent !== "string")) return undefined;
+			nestingPath.push(omitUndefined({ runId: entry.runId, stepIndex: typeof entry.stepIndex === "number" ? entry.stepIndex : undefined, agent: typeof entry.agent === "string" ? entry.agent : undefined }));
+		}
+	}
+	return omitUndefined({
+		type: event.type,
+		from: event.from,
+		to: event.to,
+		ts: event.ts,
+		agent: event.agent,
+		index: typeof event.index === "number" ? event.index : undefined,
+		runId: event.runId,
+		nestedRunId: typeof event.nestedRunId === "string" ? event.nestedRunId : undefined,
+		nestingPath,
+		message: event.message,
+		reason: event.reason as ControlEvent["reason"],
+		turns: typeof event.turns === "number" ? event.turns : undefined,
+		tokens: typeof event.tokens === "number" ? event.tokens : undefined,
+		toolCount: typeof event.toolCount === "number" ? event.toolCount : undefined,
+		currentTool: typeof event.currentTool === "string" ? event.currentTool : undefined,
+		currentToolDurationMs: typeof event.currentToolDurationMs === "number" ? event.currentToolDurationMs : undefined,
+		currentPath: typeof event.currentPath === "string" ? event.currentPath : undefined,
+		elapsedMs: typeof event.elapsedMs === "number" ? event.elapsedMs : undefined,
+		recentFailureSummary: typeof event.recentFailureSummary === "string" ? event.recentFailureSummary : undefined,
+	});
+}
 
 function rememberFleetJob(state: SubagentState, job: AsyncJobState): void {
 	state.fleetJobs ??= new Map();
@@ -55,7 +122,7 @@ export function collectSubagentWidgetJobs(state: SubagentState): AsyncJobState[]
 			const agents = children.length > 0
 				? children.map((child) => child.agent)
 				: control.currentAgent ? [control.currentAgent] : [];
-			const steps = children.map((child) => ({
+			const steps = children.map((child) => omitUndefined({
 				agent: child.agent,
 				index: child.index,
 				status: "running" as const,
@@ -78,7 +145,7 @@ export function collectSubagentWidgetJobs(state: SubagentState): AsyncJobState[]
 					},
 				} : {}),
 			}));
-			return {
+			return omitUndefined({
 				asyncId: `foreground:${control.runId}`,
 				asyncDir: "",
 				source: "foreground",
@@ -113,7 +180,7 @@ export function collectSubagentWidgetJobs(state: SubagentState): AsyncJobState[]
 				} : {}),
 				nestedRoute: control.nestedRoute,
 				nestedChildren: control.nestedChildren,
-			};
+			});
 		});
 	return [...asyncJobs, ...foregroundJobs];
 }
@@ -158,12 +225,12 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 	const summaryToJob = (run: AsyncRunSummary): AsyncJobState => {
 		const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, run.chainStepCount ?? run.steps.length);
 		const activeGroup = run.currentStep !== undefined
-			? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
+			? groups.find((group) => requirePresent(run.currentStep) >= group.start && requirePresent(run.currentStep) < group.start + group.count)
 			: undefined;
 		const visibleSteps = activeGroup
-			? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
-			: run.steps.map((step, index) => ({ ...step, index }));
-		return {
+			? run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => omitUndefined({ ...step, index: activeGroup.start + index }))
+			: run.steps.map((step, index) => omitUndefined({ ...step, index }));
+		return omitUndefined({
 			asyncId: run.id,
 			asyncDir: run.asyncDir,
 			status: run.state,
@@ -204,7 +271,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			sessionFile: run.sessionFile,
 			controlEventCursor: restoredControlEventCursor(run.asyncDir),
 			nestedChildren: run.nestedChildren,
-		};
+		});
 	};
 	const cancelCleanup = (asyncId: string) => {
 		const existingTimer = state.cleanupTimers.get(asyncId);
@@ -248,10 +315,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					console.error(`Ignoring malformed async control event in '${eventsPath}':`, error);
 					return;
 				}
-				if (!parsed || typeof parsed !== "object") return;
-				if ((parsed as { type?: unknown }).type === "subagent.steering.notice") {
-					const notice = parsed as Partial<SteeringNotice>;
-					if (typeof notice.requestId !== "string" || typeof notice.runId !== "string" || (notice.state !== "failed" && notice.state !== "partial" && notice.state !== "recovered") || typeof notice.message !== "string") return;
+				const parsedRecord = recordValue(parsed);
+				if (!parsedRecord) return;
+				if (parsedRecord.type === "subagent.steering.notice") {
+					const notice = decodeSteeringNotice(parsedRecord);
+					if (!notice) return;
 					if (typeof state.currentSessionId === "string" && notice.currentSessionId !== state.currentSessionId) return;
 					const key = `${notice.runId}:${notice.requestId}:${notice.state}`;
 					if (steeringNoticeSeen.has(key)) return;
@@ -265,24 +333,28 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 					pi.events.emit(SUBAGENT_STEERING_NOTICE_EVENT, { ...notice, source: "async", asyncDir: job.asyncDir, noticeText: notice.message });
 					return;
 				}
-				if ((parsed as { type?: unknown }).type !== "subagent.control") return;
-				const record = parsed as { event?: ControlEvent; channels?: string[]; childIntercomTarget?: string; noticeText?: string; intercom?: { to?: string; message?: string } };
-				if (!record.event || !Array.isArray(record.channels)) return;
+				if (parsedRecord.type !== "subagent.control") return;
+				const event = decodeControlEvent(parsedRecord.event);
+				if (!event || !Array.isArray(parsedRecord.channels) || parsedRecord.channels.some((channel) => typeof channel !== "string")) return;
+				if (parsedRecord.childIntercomTarget !== undefined && typeof parsedRecord.childIntercomTarget !== "string") return;
+				if (parsedRecord.noticeText !== undefined && typeof parsedRecord.noticeText !== "string") return;
+				const intercom = recordValue(parsedRecord.intercom);
+				const childIntercomTarget = typeof parsedRecord.childIntercomTarget === "string" ? parsedRecord.childIntercomTarget : undefined;
 				const payload = {
-					event: record.event,
+					event,
 					source: "async" as const,
 					asyncDir: job.asyncDir,
-					childIntercomTarget: record.childIntercomTarget,
-					noticeText: record.noticeText ?? formatControlNoticeMessage(record.event, record.childIntercomTarget),
+					childIntercomTarget,
+					noticeText: typeof parsedRecord.noticeText === "string" ? parsedRecord.noticeText : formatControlNoticeMessage(event, childIntercomTarget),
 				};
-				if (record.channels.includes("event")) {
+				if (parsedRecord.channels.includes("event")) {
 					pi.events.emit(SUBAGENT_CONTROL_EVENT, payload);
 				}
-				if (record.event.type !== "active_long_running" && record.channels.includes("intercom") && record.intercom?.to && record.intercom.message) {
+				if (event.type !== "active_long_running" && parsedRecord.channels.includes("intercom") && typeof intercom?.to === "string" && typeof intercom.message === "string") {
 					pi.events.emit(SUBAGENT_CONTROL_INTERCOM_EVENT, {
 						...payload,
-						to: record.intercom.to,
-						message: record.intercom.message,
+						to: intercom.to,
+						message: intercom.message,
 					});
 				}
 			};
@@ -360,7 +432,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				};
 				const reconcileNestedDescendants = () => {
 					try {
-						if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, { resultsDir, kill: options.kill, now: options.now });
+						if (job.nestedRoute) reconcileNestedAsyncDescendants(job.nestedRoute, omitUndefined({ resultsDir, kill: options.kill, now: options.now }));
 					} catch (error) {
 						nestedRefreshFailed = true;
 						console.error(`Failed to refresh nested async descendants for '${job.asyncDir}':`, error);
@@ -370,11 +442,11 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 				try {
 					emitNewControlEvents(job);
 					reconcileNestedDescendants();
-					const reconciliation = reconcileAsyncRun(job.asyncDir, {
+					const reconciliation = reconcileAsyncRun(job.asyncDir, omitUndefined({
 						resultsDir,
 						kill: options.kill,
 						now: options.now,
-						startedRun: {
+						startedRun: omitUndefined({
 							runId: job.asyncId,
 							pid: job.pid,
 							sessionId: job.sessionId,
@@ -384,8 +456,8 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							parallelGroups: job.parallelGroups,
 							startedAt: job.startedAt,
 							sessionFile: job.sessionFile,
-						},
-					});
+						}),
+					}));
 					const status = reconciliation.status ?? readStatus(job.asyncDir);
 					if (status) {
 						const previousStatus = job.status;
@@ -410,7 +482,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 							job.parallelGroups = groups.length ? groups : job.parallelGroups;
 							job.hasParallelGroups = groups.length > 0 || job.hasParallelGroups;
 							const activeGroup = status.currentStep !== undefined
-								? groups.find((group) => status.currentStep! >= group.start && status.currentStep! < group.start + group.count)
+								? groups.find((group) => requirePresent(status.currentStep) >= group.start && requirePresent(status.currentStep) < group.start + group.count)
 								: undefined;
 							const visibleSteps = activeGroup
 								? status.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count).map((step, index) => ({ ...step, index: activeGroup.start + index }))
@@ -503,7 +575,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 			turnBudget: info.turnBudget,
 			controlEventCursor: 0,
 		});
-		rememberFleetJob(state, state.asyncJobs.get(info.id)!);
+		rememberFleetJob(state, requirePresent(state.asyncJobs.get(info.id)));
 		ensurePoller();
 		rerenderLastWidget();
 	};
@@ -553,7 +625,7 @@ export function createAsyncJobTracker(pi: Pick<ExtensionAPI, "events">, state: S
 		if (!state.currentSessionId) return;
 		let runs: AsyncRunSummary[];
 		try {
-			runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now });
+			runs = listAsyncRuns(asyncDirRoot, omitUndefined({ states: ["queued", "running"], sessionId: state.currentSessionId, resultsDir, kill: options.kill, now: options.now }));
 		} catch (error) {
 			console.error(`Failed to restore active async jobs from '${asyncDirRoot}':`, error);
 			return;

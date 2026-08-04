@@ -1,14 +1,14 @@
 const FOCUS_STATE_KEY = Symbol.for("pi.agent.interactive-widget-focus.v1");
 
 type FocusState = {
-	owner?: string;
+	owner: string | undefined;
 };
 
 function focusState(): FocusState {
 	const globalRecord = globalThis as typeof globalThis & { [FOCUS_STATE_KEY]?: FocusState };
 	const existing = globalRecord[FOCUS_STATE_KEY];
 	if (existing) return existing;
-	const created: FocusState = {};
+	const created: FocusState = { owner: undefined };
 	globalRecord[FOCUS_STATE_KEY] = created;
 	return created;
 }

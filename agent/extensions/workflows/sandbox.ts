@@ -49,6 +49,7 @@ function sanitizeOptions(value: unknown): AgentCallOptions {
 	if (typeof value.model === "string" && value.model.trim()) output.model = value.model.trim().slice(0, 256);
 	if (typeof value.thinking === "string" && THINKING.has(value.thinking as WorkflowThinking)) output.thinking = value.thinking as WorkflowThinking;
 	if (isRecord(value.schema)) output.schema = value.schema;
+	if (typeof value.cwd === "string" && value.cwd.trim()) output.cwd = value.cwd.trim();
 	return output;
 }
 
@@ -130,7 +131,7 @@ export function runWorkflowSandbox(options: SandboxOptions): Promise<unknown> {
 					return;
 				}
 				try {
-					const value = JSON.parse(raw.payloadJson);
+					const value: unknown = JSON.parse(raw.payloadJson);
 					if (!isRecord(value) || typeof value.title !== "string") throw new Error("invalid phase");
 					options.onPhase(value.title.slice(0, 160));
 				} catch {
@@ -185,8 +186,10 @@ export function runWorkflowSandbox(options: SandboxOptions): Promise<unknown> {
 					return;
 				}
 				try {
-					const normalized = toSerializable(JSON.parse(raw.resultJson), { maxBytes: MAX_WORKFLOW_RESULT_BYTES });
-					finish(undefined, JSON.parse(JSON.stringify(normalized)));
+					const result: unknown = JSON.parse(raw.resultJson);
+					const normalized = toSerializable(result, { maxBytes: MAX_WORKFLOW_RESULT_BYTES });
+					const cloned: unknown = JSON.parse(JSON.stringify(normalized));
+					finish(undefined, cloned);
 				} catch (error) {
 					finish(new Error(`Workflow returned invalid JSON: ${errorText(error)}`));
 				}

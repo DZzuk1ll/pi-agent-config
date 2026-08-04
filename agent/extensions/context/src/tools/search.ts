@@ -44,11 +44,11 @@ export function register_context_search_tool(pi: ExtensionAPI): void {
 			const scope = scope_from_context(ctx);
 			const results = get_context_store(scope).search(params.query, {
 				...(params.global ? {} : scope),
-				global: params.global,
-				source_id: params.source_id,
-				tool_name: params.tool_name,
-				limit: params.limit,
-				full_content: params.full_content,
+				...(params.global === undefined ? {} : { global: params.global }),
+				...(params.source_id === undefined ? {} : { source_id: params.source_id }),
+				...(params.tool_name === undefined ? {} : { tool_name: params.tool_name }),
+				...(params.limit === undefined ? {} : { limit: params.limit }),
+				...(params.full_content === undefined ? {} : { full_content: params.full_content }),
 			});
 			return {
 				content: [

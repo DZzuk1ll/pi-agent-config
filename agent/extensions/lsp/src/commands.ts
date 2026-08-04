@@ -1,13 +1,13 @@
-import {
-	type ExtensionAPI,
-	type ExtensionCommandContext,
+import type {
+	ExtensionAPI,
+	ExtensionCommandContext,
 } from '@earendil-works/pi-coding-agent';
 import {
 	show_command_output_modal,
 	show_picker_modal,
 } from '@personal-pi/tui-modal';
 import { format_lsp_view, format_status_lines } from './format.js';
-import { LspServerManager } from './server-manager.js';
+import type { LspServerManager } from './server-manager.js';
 import { list_supported_languages } from './servers.js';
 
 export function register_lsp_command(

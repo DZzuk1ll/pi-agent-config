@@ -163,10 +163,10 @@ export function create_project_trust_wrapper(
 			}
 			if (!options.legacy_matcher) return false;
 
-			const entry =
-				read_project_trust_store(trust_store_path)[
-					get_project_trust_store_key(subject)
-				];
+			const entry = read_raw_project_trust_entry(
+				trust_store_path,
+				get_project_trust_store_key(subject),
+			);
 			return options.legacy_matcher(entry, subject);
 		},
 		trust: (
@@ -177,6 +177,22 @@ export function create_project_trust_wrapper(
 			trust_project_subject(subject, trust_store_path, now);
 		},
 	};
+}
+
+function read_raw_project_trust_entry(path: string, key: string): unknown {
+	try {
+		const settings_key = trust_settings_key(path);
+		const raw: unknown = settings_key
+			? read_trust_settings(settings_key)
+			: existsSync(path)
+				? JSON.parse(readFileSync(path, 'utf-8'))
+				: undefined;
+		return raw && typeof raw === 'object' && !Array.isArray(raw)
+			? Reflect.get(raw, key)
+			: undefined;
+	} catch {
+		return undefined;
+	}
 }
 
 export function apply_project_trust_untrusted_defaults(
@@ -231,18 +247,27 @@ export function read_project_trust_store(
 ): ProjectTrustStore {
 	try {
 		const settings_key = trust_settings_key(trust_store_path);
-		const parsed = settings_key
-			? read_trust_settings<ProjectTrustStore>(settings_key, {})
+		const parsed: unknown = settings_key
+			? read_trust_settings(settings_key)
 			: existsSync(trust_store_path)
-				? (JSON.parse(
-						readFileSync(trust_store_path, 'utf-8'),
-					) as ProjectTrustStore)
+				? JSON.parse(readFileSync(trust_store_path, 'utf-8'))
 				: {};
-		return parsed &&
-			typeof parsed === 'object' &&
-			!Array.isArray(parsed)
-			? parsed
-			: {};
+		if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) return {};
+		const store: ProjectTrustStore = {};
+		for (const [key, value] of Object.entries(parsed)) {
+			if (!value || typeof value !== 'object' || Array.isArray(value)) continue;
+			const entry = value as Record<string, unknown>;
+			if (typeof entry.id !== 'string' || typeof entry.trusted_at !== 'string') continue;
+			if (entry.hash !== undefined && typeof entry.hash !== 'string') continue;
+			if (entry.kind !== undefined && typeof entry.kind !== 'string') continue;
+			store[key] = {
+				id: entry.id,
+				trusted_at: entry.trusted_at,
+				...(typeof entry.hash === 'string' ? { hash: entry.hash } : {}),
+				...(typeof entry.kind === 'string' ? { kind: entry.kind } : {}),
+			};
+		}
+		return store;
 	} catch {
 		return {};
 	}
@@ -260,7 +285,7 @@ export function write_project_trust_store(
 	mkdirSync(dirname(trust_store_path), { recursive: true });
 	writeFileSync(
 		trust_store_path,
-		JSON.stringify(store, null, '\t') + '\n',
+		`${JSON.stringify(store, null, '\t')}\n`,
 		{ encoding: 'utf8', mode: 0o600 },
 	);
 }
@@ -323,7 +348,7 @@ export async function resolve_project_trust(
 
 	const env_decision = normalize_project_trust_env_decision(
 		(context.env ?? process.env)[subject.env_key],
-		{ fallback: subject.fallback },
+		{ ...(subject.fallback === undefined ? {} : { fallback: subject.fallback }) },
 	);
 	const env_result = apply_normalized_decision(
 		env_decision,

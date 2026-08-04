@@ -590,7 +590,9 @@ test("plan implement-new cancellation leaves the completed plan ready", async ()
 test("plan implement-new abandons a stale continuation after session shutdown", async () => {
 	const mock = createMockPi({ activeTools: ["read"] });
 	planMode(mock.pi);
-	let releaseIdle!: () => void;
+	let releaseIdle: () => void = () => {
+		throw new Error("Idle promise was not initialized");
+	};
 	let newSessionCalls = 0;
 	const context = createMockContext({
 		hasUI: true,

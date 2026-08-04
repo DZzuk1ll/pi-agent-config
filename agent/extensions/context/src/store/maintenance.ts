@@ -220,9 +220,9 @@ export function context_store_purge_with_details(
 	);
 	return {
 		deleted: Number(result.changes ?? 0),
-		source_id: options.source_id,
-		project_path: options.project_path,
-		session_id: options.session_id,
-		older_than_days: options.older_than_days,
+		...(options.source_id === undefined ? {} : { source_id: options.source_id }),
+		...(options.project_path === undefined ? {} : { project_path: options.project_path }),
+		...(options.session_id === undefined ? {} : { session_id: options.session_id }),
+		...(options.older_than_days === undefined ? {} : { older_than_days: options.older_than_days }),
 	};
 }

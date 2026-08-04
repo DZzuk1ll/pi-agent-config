@@ -1,12 +1,13 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
 import { buildCompletionKey, markSeenWithTtl } from "./completion-dedupe.ts";
 import { createFileCoalescer } from "../../shared/file-coalescer.ts";
 import {
 	SUBAGENT_ASYNC_COMPLETE_EVENT,
 	type IntercomEventBus,
 	type NestedRunSummary,
-	type ParallelHandoffReference,
 	type SubagentResultIntercomChild,
 	type SubagentState,
 } from "../../shared/types.ts";
@@ -19,7 +20,10 @@ import {
 } from "../../intercom/result-intercom.ts";
 import { projectNestedRegistryForRoot, sanitizeSummary } from "../shared/nested-events.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
-import type { CompletionNotifier, CompletionNotification } from "./notify.ts";
+import type { CompletionNotifier } from "./notify.ts";
+import { omitUndefined, omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const WATCHER_RESTART_DELAY_MS = 3000;
 const POLL_INTERVAL_MS = 3000;
@@ -42,28 +46,64 @@ type ResultWatcherDeps = {
 	deliverIntercomResults?: boolean;
 };
 
-type ResultFileChild = {
-	agent?: string;
-	output?: string;
-	error?: string;
-	success?: boolean;
-	state?: string;
-	stopped?: boolean;
-	sessionFile?: string;
-	artifactPaths?: { outputPath?: string };
-	intercomTarget?: string;
-	children?: unknown;
-};
+const ResultFileChildSchema = Type.Object({
+	agent: Type.Optional(Type.String()),
+	output: Type.Optional(Type.String()),
+	error: Type.Optional(Type.String()),
+	success: Type.Optional(Type.Boolean()),
+	state: Type.Optional(Type.String()),
+	stopped: Type.Optional(Type.Boolean()),
+	sessionFile: Type.Optional(Type.String()),
+	artifactPaths: Type.Optional(Type.Object({ outputPath: Type.Optional(Type.String()) }, { additionalProperties: true })),
+	intercomTarget: Type.Optional(Type.String()),
+	children: Type.Optional(Type.Unknown()),
+}, { additionalProperties: true });
+type ResultFileChild = Static<typeof ResultFileChildSchema>;
 
-type ResultFileData = CompletionNotification & {
-	runId?: string;
-	mode?: string;
-	results?: ResultFileChild[];
-	nestedChildren?: unknown;
-	asyncDir?: string;
-	intercomTarget?: string;
-	parallelHandoff?: ParallelHandoffReference;
-};
+const ParallelHandoffReferenceSchema = Type.Object({
+	version: Type.Literal(1),
+	path: Type.String(),
+	groupCount: Type.Number(),
+	childCount: Type.Number(),
+	changedPatches: Type.Number(),
+	cleanupState: Type.Union([Type.Literal("complete"), Type.Literal("partial")]),
+}, { additionalProperties: false });
+
+const ResultFileDataSchema = Type.Object({
+	id: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	runId: Type.Optional(Type.String()),
+	source: Type.Optional(Type.Union([Type.Literal("async"), Type.Literal("foreground")])),
+	agent: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	success: Type.Optional(Type.Boolean()),
+	summary: Type.Optional(Type.String()),
+	exitCode: Type.Optional(Type.Number()),
+	state: Type.Optional(Type.String()),
+	timestamp: Type.Optional(Type.Number()),
+	durationMs: Type.Optional(Type.Number()),
+	cwd: Type.Optional(Type.String()),
+	sessionFile: Type.Optional(Type.String()),
+	shareUrl: Type.Optional(Type.String()),
+	gistUrl: Type.Optional(Type.String()),
+	shareError: Type.Optional(Type.String()),
+	taskIndex: Type.Optional(Type.Number()),
+	totalTasks: Type.Optional(Type.Number()),
+	sessionId: Type.Optional(Type.Union([Type.String(), Type.Null()])),
+	triggerTurn: Type.Optional(Type.Boolean()),
+	intercomDelivered: Type.Optional(Type.Boolean()),
+	mode: Type.Optional(Type.String()),
+	results: Type.Optional(Type.Array(ResultFileChildSchema)),
+	nestedChildren: Type.Optional(Type.Unknown()),
+	asyncDir: Type.Optional(Type.String()),
+	intercomTarget: Type.Optional(Type.String()),
+	parallelHandoff: Type.Optional(ParallelHandoffReferenceSchema),
+}, { additionalProperties: true });
+type ResultFileData = Static<typeof ResultFileDataSchema>;
+
+function decodeResultFileData(value: unknown, source: string): ResultFileData {
+	if (Value.Check(ResultFileDataSchema, value)) return value;
+	const [first] = Value.Errors(ResultFileDataSchema, value);
+	throw new TypeError(`Invalid subagent result file '${source}'${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}.`);
+}
 
 function sanitizeNestedResultChildren(value: unknown, resultPath: string, label: string): NestedRunSummary[] | undefined {
 	if (value === undefined) return undefined;
@@ -127,7 +167,7 @@ export function createResultWatcher(
 
 	const scheduleResult = (file: string, triggerTurn: boolean, delayMs = 0) => {
 		const pendingMode = pendingTriggerTurn.get(file);
-		pendingTriggerTurn.set(file, pendingMode === false || !triggerTurn ? false : true);
+		pendingTriggerTurn.set(file, !(pendingMode === false || !triggerTurn ));
 		state.resultFileCoalescer.schedule(file, delayMs);
 	};
 
@@ -136,7 +176,7 @@ export function createResultWatcher(
 		if (processing.has(file) || !fsApi.existsSync(resultPath)) return;
 		processing.add(file);
 		try {
-			const data = JSON.parse(fsApi.readFileSync(resultPath, "utf-8")) as ResultFileData;
+			const data = decodeResultFileData(JSON.parse(fsApi.readFileSync(resultPath, "utf-8")), resultPath);
 			if (typeof data.sessionId !== "string" || !data.sessionId) return;
 			const epoch = deliveryEpoch;
 			if (!ownsSession(data.sessionId, epoch)) return;
@@ -171,10 +211,10 @@ export function createResultWatcher(
 				return;
 			}
 
+			const resultChildren: ResultFileChild[] = Array.isArray(data.results) && data.results.length > 0
+				? data.results
+					: [omitUndefinedAs<ResultFileChild>({ agent: data.agent ?? undefined, output: data.summary, success: data.success })];
 			const hasResultChildren = Array.isArray(data.results) && data.results.length > 0;
-			const resultChildren: ResultFileChild[] = hasResultChildren
-				? data.results!
-				: [{ agent: data.agent ?? undefined, output: data.summary, success: data.success }];
 			const normalizedChildren = attachNestedChildrenToResultChildren(runId, resultChildren.map((result = {}, index): SubagentResultIntercomChild => {
 				const baseOutput = result.output ?? data.summary;
 				const hasRealOutput = typeof baseOutput === "string" && baseOutput.trim().length > 0;
@@ -191,16 +231,16 @@ export function createResultWatcher(
 						: data.state === "paused" || (!hasResultChildren && (data.state === "stopped" || typeof result.success !== "boolean"))
 							? data.state
 							: undefined;
-				return {
+				return omitUndefined({
 					agent: result.agent ?? data.agent ?? `step-${index + 1}`,
-					status: resolveSubagentResultStatus({ success: result.success, state: childState }),
+					status: resolveSubagentResultStatus(omitUndefined({ success: result.success, state: childState })),
 					summary,
 					index,
 					artifactPath: result.artifactPaths?.outputPath,
 					...(typeof sessionPath === "string" && fsApi.existsSync(sessionPath) ? { sessionPath } : {}),
 					...(result.intercomTarget ? { intercomTarget: result.intercomTarget } : {}),
 					...(childNestedChildren ? { children: childNestedChildren } : {}),
-				};
+				});
 			}), nestedChildren);
 
 			const intercomTarget = data.intercomTarget?.trim();
@@ -209,7 +249,7 @@ export function createResultWatcher(
 				const mode = data.mode === "single" || data.mode === "parallel" || data.mode === "chain"
 					? data.mode
 					: resultChildren.length > 1 ? "chain" : "single";
-				intercomDelivered = await deliverSubagentResultIntercomEvent(pi.events, buildSubagentResultIntercomPayload({
+				intercomDelivered = await deliverSubagentResultIntercomEvent(pi.events, buildSubagentResultIntercomPayload(omitUndefined({
 					to: intercomTarget,
 					runId,
 					mode,
@@ -218,7 +258,7 @@ export function createResultWatcher(
 					asyncId: data.id ?? undefined,
 					asyncDir: data.asyncDir,
 					...(data.parallelHandoff ? { parallelHandoff: data.parallelHandoff } : {}),
-				}));
+				})));
 				if (!ownsSession(data.sessionId, epoch)) return;
 				if (!intercomDelivered) console.error(`Subagent async grouped result intercom delivery was not acknowledged for '${resultPath}'.`);
 			}
@@ -232,7 +272,7 @@ export function createResultWatcher(
 				...(nestedChildren?.length ? { nestedChildren } : {}),
 				...(Array.isArray(data.results) ? {
 					results: hasResultChildren ? normalizedChildren.map((child, index) => ({
-						...data.results![index],
+						...requirePresent(data.results)[index],
 						agent: child.agent,
 						status: child.status,
 						summary: child.summary,
@@ -258,7 +298,7 @@ export function createResultWatcher(
 					...(nestedChildren?.length ? { nestedChildren } : {}),
 					...(Array.isArray(data.results) ? {
 						results: hasResultChildren ? normalizedChildren.map((child, index) => ({
-							...data.results![index],
+							...requirePresent(data.results)[index],
 							agent: child.agent,
 							status: child.status,
 							summary: child.summary,

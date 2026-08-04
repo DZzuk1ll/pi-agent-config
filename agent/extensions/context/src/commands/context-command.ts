@@ -61,7 +61,7 @@ export function register_context_commands(pi: ExtensionAPI): void {
 						);
 						return;
 					}
-					await purge_context(ctx, { older_than_days: days });
+					await purge_context(ctx, days === undefined ? {} : { older_than_days: days });
 					return;
 				}
 				default:

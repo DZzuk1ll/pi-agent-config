@@ -18,7 +18,7 @@ function layer(name: string, order: number) {
 	const dispose = registerPrototypePatch(Target.prototype, "value", {
 		name,
 		order,
-		wrap: (next) => function () {
+		wrap: (next) => function (this: Target) {
 			return `${name}(${next.call(this)})`;
 		},
 	});
@@ -35,12 +35,12 @@ describe("prototype patch registry", () => {
 	it("replaces a named layer on reload without nesting it", () => {
 		const stale = registerPrototypePatch(Target.prototype, "value", {
 			name: "reload",
-			wrap: (next) => function () { return `old(${next.call(this)})`; },
+			wrap: (next) => function (this: Target) { return `old(${next.call(this)})`; },
 		});
 		disposers.push(stale);
 		const latest = registerPrototypePatch(Target.prototype, "value", {
 			name: "reload",
-			wrap: (next) => function () { return `new(${next.call(this)})`; },
+			wrap: (next) => function (this: Target) { return `new(${next.call(this)})`; },
 		});
 		disposers.push(latest);
 		expect(new Target().value()).toBe("new(original)");
@@ -49,8 +49,8 @@ describe("prototype patch registry", () => {
 	});
 
 	it("restores the original only after the final layer is removed", () => {
-		const first = registerPrototypePatch(Target.prototype, "value", { name: "a", wrap: (next) => function () { return `a(${next.call(this)})`; } });
-		const second = registerPrototypePatch(Target.prototype, "value", { name: "b", wrap: (next) => function () { return `b(${next.call(this)})`; } });
+		const first = registerPrototypePatch(Target.prototype, "value", { name: "a", wrap: (next) => function (this: Target) { return `a(${next.call(this)})`; } });
+		const second = registerPrototypePatch(Target.prototype, "value", { name: "b", wrap: (next) => function (this: Target) { return `b(${next.call(this)})`; } });
 		first();
 		expect(new Target().value()).toBe("b(original)");
 		second();

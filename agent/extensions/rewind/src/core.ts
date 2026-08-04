@@ -5,11 +5,14 @@
  * Independently testable, safe to import from anywhere.
  */
 
-import { spawn } from "child_process";
-import { statSync, readdirSync } from "fs";
-import { mkdtemp, rm } from "fs/promises";
-import { tmpdir } from "os";
-import { join } from "path";
+import { spawn } from "node:child_process";
+import { statSync, readdirSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { omitUndefinedAs } from "../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 // ============================================================================
 // Constants & Types
@@ -436,7 +439,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
 
     await git(`update-ref ${REF_BASE}/${id} ${commitSha}`, root);
 
-    return {
+    return omitUndefinedAs<CheckpointData>({
       id,
       sessionId,
       trigger,
@@ -451,7 +454,7 @@ export async function createCheckpoint(opts: CreateCheckpointOpts): Promise<Chec
       preexistingUntrackedFiles,
       skippedLargeFiles: skippedLargeFiles.length > 0 ? skippedLargeFiles : undefined,
       skippedLargeDirs: skippedLargeDirs.length > 0 ? skippedLargeDirs : undefined,
-    };
+    });
   } finally {
     await rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
@@ -552,15 +555,18 @@ export async function loadCheckpointFromRef(
       const raw = get(key);
       if (!raw) return undefined;
       try {
-        const arr = JSON.parse(raw);
-        return arr.length > 0 ? arr : undefined;
+		const parsed: unknown = JSON.parse(raw);
+		return Array.isArray(parsed) && parsed.every((item): item is string => typeof item === "string") && parsed.length > 0
+			? parsed
+			: undefined;
       } catch { return undefined; }
     };
 
-    return {
+		const trigger = get("trigger");
+    return omitUndefinedAs<CheckpointData>({
       id: refName,
       sessionId: sid,
-      trigger: (get("trigger") as CheckpointData["trigger"]) || "turn",
+			trigger: trigger === "tool" || trigger === "resume" || trigger === "before-restore" ? trigger : "turn",
       turnIndex: parseInt(turn, 10),
       toolName: get("toolName"),
       description: get("description"),
@@ -568,11 +574,11 @@ export async function loadCheckpointFromRef(
       headSha: head,
       indexTreeSha: idx,
       worktreeTreeSha: wt,
-      timestamp: get("created") ? new Date(get("created")!).getTime() : 0,
+			timestamp: get("created") ? new Date(get("created") ?? "").getTime() : 0,
       preexistingUntrackedFiles: parseJson("untracked"),
       skippedLargeFiles: parseJson("largeFiles"),
       skippedLargeDirs: parseJson("largeDirs"),
-    };
+		});
   } catch {
     return null;
   }
@@ -661,7 +667,7 @@ export async function pruneOldSessions(
     if (!sessionId || sessionId === currentSessionId) continue;
 
     if (!bySession.has(sessionId)) bySession.set(sessionId, []);
-    bySession.get(sessionId)!.push(ref);
+    requirePresent(bySession.get(sessionId)).push(ref);
   }
 
   for (const [_sid, sessionRefs] of bySession) {

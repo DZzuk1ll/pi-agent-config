@@ -14,15 +14,23 @@ const jiti = createJiti(import.meta.url, {
 		"@earendil-works/pi-tui": join(piPackage, "node_modules/@earendil-works/pi-tui"),
 	},
 });
+
+type TestHandler = (...args: unknown[]) => unknown;
+interface TestEditor {
+	insertTextAtCursor(value: string): void;
+	render(width: number): string[];
+}
+type TestEditorFactory = (...args: unknown[]) => TestEditor;
+
 const beautifyModule = await jiti.import<{
-	default: (pi: { on: (name: string, handler: (...args: any[]) => any) => void }) => void;
+	default: (pi: { on: (name: string, handler: TestHandler) => void }) => void;
 }>(
 	"../extensions/beautify/index.ts",
 );
 const beautify = beautifyModule.default;
 
 test("one beautify editor preserves the prompt chrome and image token round trip", async () => {
-	const handlers = new Map<string, Array<(...args: any[]) => any>>();
+	const handlers = new Map<string, TestHandler[]>();
 	beautify({
 		on(name, handler) {
 			handlers.set(name, [...(handlers.get(name) ?? []), handler]);
@@ -39,7 +47,7 @@ test("one beautify editor preserves the prompt chrome and image token round trip
 		handleInput: () => {},
 		render: () => ["", `${" ".repeat(padding)}${text}`],
 	};
-	let editorFactory: ((...args: any[]) => any) | undefined;
+	let editorFactory: TestEditorFactory | undefined;
 	let editorRegistrations = 0;
 	const theme = {
 		fg: (_color: string, value: string) => value,
@@ -51,7 +59,7 @@ test("one beautify editor preserves the prompt chrome and image token round trip
 		ui: {
 			theme,
 			getEditorComponent: () => () => inner,
-			setEditorComponent: (factory: (...args: any[]) => any) => {
+			setEditorComponent: (factory: TestEditorFactory) => {
 				editorRegistrations += 1;
 				editorFactory = factory;
 			},

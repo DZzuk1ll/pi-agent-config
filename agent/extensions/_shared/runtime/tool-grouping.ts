@@ -1,4 +1,6 @@
 import { truncateToWidth } from "@earendil-works/pi-tui";
+import { requirePresent } from "./require-present.ts";
+
 
 export type ToolGroupingMode = "off" | "consecutive-same-type" | "all-read-only";
 
@@ -83,11 +85,11 @@ export function planToolGroups(
 		if (pending.length > 1) {
 			plan.push({
 				kind: "group",
-				toolName: pendingKey!,
+				toolName: requirePresent(pendingKey),
 				children: pending,
 			});
 		} else if (pending.length === 1) {
-			plan.push({ kind: "single", child: pending[0]! });
+			plan.push({ kind: "single", child: requirePresent(pending[0]) });
 		}
 		pending = [];
 		pendingKey = undefined;
@@ -165,7 +167,7 @@ export function formatDoneLineSpacing(lines: readonly string[]): string[] {
 			formatted.push(line);
 			continue;
 		}
-		if (formatted.length > 0 && formatted.at(-1)!.replace(ANSI_SGR_RE, "").trim()) {
+		if (formatted.length > 0 && requirePresent(formatted.at(-1)).replace(ANSI_SGR_RE, "").trim()) {
 			formatted.push("");
 		}
 		const ansiPrefix = line.match(ANSI_SGR_PREFIX_RE)?.[0] ?? "";

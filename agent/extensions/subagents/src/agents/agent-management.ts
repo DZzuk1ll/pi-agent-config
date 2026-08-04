@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type { AgentToolResult } from "../shared/tool-result.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
@@ -35,6 +36,8 @@ import { resolveTurnBudgetConfig } from "../runs/shared/turn-budget.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { AcceptanceInput, Details, ExtensionConfig, ToolBudgetConfig } from "../shared/types.ts";
 import { getProjectConfigDir } from "../shared/utils.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 type ManagementAction = "list" | "get" | "models" | "create" | "update" | "delete" | "eject" | "disable" | "enable" | "reset";
 type ManagementScope = "user" | "project";
@@ -71,7 +74,7 @@ function configObject(config: unknown): { value?: Record<string, unknown>; error
 }
 
 function hasKey(obj: Record<string, unknown>, key: string): boolean {
-	return Object.prototype.hasOwnProperty.call(obj, key);
+	return  Object.hasOwn(obj, key);
 }
 
 function asDisambiguationScope(scope: unknown): ManagementScope | undefined {
@@ -165,7 +168,7 @@ function chainStepWarnings(ctx: ManagementContext, steps: ChainStepConfig[]): st
 	const warnings: string[] = [];
 	const available = new Set(discoverAvailableSkills(ctx.cwd).map((s) => s.name));
 	for (let i = 0; i < steps.length; i++) {
-		const s = steps[i]!;
+		const s = requirePresent(steps[i]);
 		if (s.model) {
 			const found = ctx.modelRegistry.getAvailable().some((m) => `${m.provider}/${m.id}` === s.model || m.id === s.model);
 			if (!found) warnings.push(`Warning: step ${i + 1} (${s.agent}): model '${s.model}' is not in the current model registry.`);
@@ -205,13 +208,13 @@ function skillsWarning(cwd: string, agent: Pick<AgentConfig, "skills" | "skillPa
 export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 	const base = agent.override?.base;
 	if (!base) {
-		return {
+		return omitUndefined({
 			...agent,
 			extensions: agent.extensionsFromDefault ? undefined : agent.extensions ? [...agent.extensions] : undefined,
-		};
+		});
 	}
 
-	return {
+	return omitUndefined({
 		...agent,
 		model: base.model,
 		fallbackModels: base.fallbackModels ? [...base.fallbackModels] : undefined,
@@ -231,7 +234,7 @@ export function editableAgentConfig(agent: AgentConfig): AgentConfig {
 		subagentOnlyExtensions: base.subagentOnlyExtensions ? [...base.subagentOnlyExtensions] : undefined,
 		completionGuard: base.completionGuard,
 		override: undefined,
-	};
+	});
 }
 
 function readAgentFrontmatterFields(filePath: string): Set<string> {
@@ -351,7 +354,9 @@ function parseStepList(raw: unknown): { steps?: ChainStepConfig[]; error?: strin
 		if (hasKey(s, "toolBudget")) {
 			const validation = validateToolBudgetConfig(s.toolBudget, `config.steps[${i}].toolBudget`);
 			if (validation.error) return { error: validation.error };
-			step.toolBudget = s.toolBudget as ChainStepConfig["toolBudget"];
+			const toolBudget = s.toolBudget as ChainStepConfig["toolBudget"];
+			if (toolBudget === undefined) delete step.toolBudget;
+			else step.toolBudget = toolBudget;
 		}
 		steps.push(step);
 	}
@@ -367,7 +372,7 @@ function parseTools(raw: string): { tools?: string[]; mcpDirectTools?: string[] 
 			if (direct) mcpDirectTools.push(direct);
 		} else tools.push(item);
 	}
-	return { tools: tools.length ? tools : undefined, mcpDirectTools: mcpDirectTools.length ? mcpDirectTools : undefined };
+	return omitUndefined({ tools: tools.length ? tools : undefined, mcpDirectTools: mcpDirectTools.length ? mcpDirectTools : undefined });
 }
 
 function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): string | undefined {
@@ -377,56 +382,67 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		else return "config.systemPrompt must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "model")) {
-		if (cfg.model === false || cfg.model === "") target.model = undefined;
-		else if (typeof cfg.model === "string") target.model = cfg.model.trim() || undefined;
+		if (cfg.model === false || cfg.model === "") delete target.model;
+		else if (typeof cfg.model === "string") {
+			const model = cfg.model.trim();
+			if (model) target.model = model;
+			else delete target.model;
+		}
 		else return "config.model must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "fallbackModels")) {
-		if (cfg.fallbackModels === false || cfg.fallbackModels === "") target.fallbackModels = undefined;
+		if (cfg.fallbackModels === false || cfg.fallbackModels === "") delete target.fallbackModels;
 		else if (typeof cfg.fallbackModels === "string") {
 			const models = parseCsv(cfg.fallbackModels);
-			target.fallbackModels = models.length ? models : undefined;
+			if (models.length) target.fallbackModels = models;
+			else delete target.fallbackModels;
 		} else if (Array.isArray(cfg.fallbackModels)) {
 			const models = cfg.fallbackModels
 				.filter((value): value is string => typeof value === "string")
 				.map((value) => value.trim())
 				.filter(Boolean);
-			target.fallbackModels = models.length ? [...new Set(models)] : undefined;
+			if (models.length) target.fallbackModels = [...new Set(models)];
+			else delete target.fallbackModels;
 		} else return "config.fallbackModels must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "tools")) {
-		if (cfg.tools === false || cfg.tools === "") { target.tools = undefined; target.mcpDirectTools = undefined; }
-		else if (typeof cfg.tools === "string") { const parsed = parseTools(cfg.tools); target.tools = parsed.tools; target.mcpDirectTools = parsed.mcpDirectTools; }
+		if (cfg.tools === false || cfg.tools === "") { delete target.tools; delete target.mcpDirectTools; }
+		else if (typeof cfg.tools === "string") {
+			const parsed = parseTools(cfg.tools);
+			if (parsed.tools) target.tools = parsed.tools; else delete target.tools;
+			if (parsed.mcpDirectTools) target.mcpDirectTools = parsed.mcpDirectTools; else delete target.mcpDirectTools;
+		}
 		else return "config.tools must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skills")) {
-		if (cfg.skills === false || cfg.skills === "") target.skills = undefined;
-		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); target.skills = skills.length ? skills : undefined; }
+		if (cfg.skills === false || cfg.skills === "") delete target.skills;
+		else if (typeof cfg.skills === "string") { const skills = parseCsv(cfg.skills); if (skills.length) target.skills = skills; else delete target.skills; }
 		else return "config.skills must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "skillPath")) {
-		if (cfg.skillPath === false || cfg.skillPath === "") target.skillPath = undefined;
-		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); target.skillPath = skillPath.length ? skillPath : undefined; }
+		if (cfg.skillPath === false || cfg.skillPath === "") delete target.skillPath;
+		else if (typeof cfg.skillPath === "string") { const skillPath = parseCsv(cfg.skillPath); if (skillPath.length) target.skillPath = skillPath; else delete target.skillPath; }
 		else if (Array.isArray(cfg.skillPath) && cfg.skillPath.every((entry) => typeof entry === "string")) {
 			const skillPath = [...new Set(cfg.skillPath.map((entry) => entry.trim()).filter(Boolean))];
-			target.skillPath = skillPath.length ? skillPath : undefined;
+			if (skillPath.length) target.skillPath = skillPath;
+			else delete target.skillPath;
 		} else return "config.skillPath must be a comma-separated string, string array, or false when provided.";
 	}
 	if (hasKey(cfg, "extensions")) {
-		if (cfg.extensions === false) target.extensions = undefined;
+		if (cfg.extensions === false) delete target.extensions;
 		else if (cfg.extensions === "") target.extensions = [];
 		else if (typeof cfg.extensions === "string") target.extensions = parseCsv(cfg.extensions);
 		else return "config.extensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "subagentOnlyExtensions")) {
-		if (cfg.subagentOnlyExtensions === false) target.subagentOnlyExtensions = undefined;
+		if (cfg.subagentOnlyExtensions === false) delete target.subagentOnlyExtensions;
 		else if (cfg.subagentOnlyExtensions === "") target.subagentOnlyExtensions = [];
 		else if (typeof cfg.subagentOnlyExtensions === "string") target.subagentOnlyExtensions = parseCsv(cfg.subagentOnlyExtensions);
 		else return "config.subagentOnlyExtensions must be a comma-separated string, empty string, or false when provided.";
 	}
 	if (hasKey(cfg, "thinking")) {
-		if (cfg.thinking === false || cfg.thinking === "") target.thinking = undefined;
-		else if (typeof cfg.thinking === "string") target.thinking = cfg.thinking.trim() || undefined;
+		if (cfg.thinking === false || cfg.thinking === "") delete target.thinking;
+		else if (typeof cfg.thinking === "string") { const thinking = cfg.thinking.trim(); if (thinking) target.thinking = thinking; else delete target.thinking; }
 		else return "config.thinking must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "systemPromptMode")) {
@@ -442,30 +458,31 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.inheritSkills = cfg.inheritSkills;
 	}
 	if (hasKey(cfg, "defaultContext")) {
-		if (cfg.defaultContext === false || cfg.defaultContext === "") target.defaultContext = undefined;
+		if (cfg.defaultContext === false || cfg.defaultContext === "") delete target.defaultContext;
 		else if (cfg.defaultContext === "fresh" || cfg.defaultContext === "fork") target.defaultContext = cfg.defaultContext;
 		else return "config.defaultContext must be 'fresh', 'fork', or false when provided.";
 	}
 	if (hasKey(cfg, "async")) {
-		if (cfg.async === "") target.defaultAsync = undefined;
+		if (cfg.async === "") delete target.defaultAsync;
 		else if (typeof cfg.async === "boolean") target.defaultAsync = cfg.async;
 		else return "config.async must be a boolean or empty string when provided.";
 	}
 	if (hasKey(cfg, "timeoutMs")) {
-		if (cfg.timeoutMs === false || cfg.timeoutMs === "") target.defaultTimeoutMs = undefined;
+		if (cfg.timeoutMs === false || cfg.timeoutMs === "") delete target.defaultTimeoutMs;
 		else if (typeof cfg.timeoutMs === "number" && Number.isInteger(cfg.timeoutMs) && cfg.timeoutMs > 0) target.defaultTimeoutMs = cfg.timeoutMs;
 		else return "config.timeoutMs must be a positive integer or false when provided.";
 	}
 	if (hasKey(cfg, "turnBudget")) {
-		if (cfg.turnBudget === false || cfg.turnBudget === "") target.defaultTurnBudget = undefined;
+		if (cfg.turnBudget === false || cfg.turnBudget === "") delete target.defaultTurnBudget;
 		else {
 			const resolved = resolveTurnBudgetConfig(cfg.turnBudget, "config.turnBudget");
 			if (resolved.error) return resolved.error;
-			target.defaultTurnBudget = resolved.turnBudget;
+			if (resolved.turnBudget) target.defaultTurnBudget = resolved.turnBudget;
+			else delete target.defaultTurnBudget;
 		}
 	}
 	if (hasKey(cfg, "acceptance")) {
-		if (cfg.acceptance === "") target.defaultAcceptance = undefined;
+		if (cfg.acceptance === "") delete target.defaultAcceptance;
 		else {
 			const errors = validateAcceptanceInput(cfg.acceptance, "config.acceptance");
 			if (errors.length > 0) return errors.join(" ");
@@ -473,20 +490,21 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		}
 	}
 	if (hasKey(cfg, "acceptanceRole")) {
-		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") target.acceptanceRole = undefined;
+		if (cfg.acceptanceRole === false || cfg.acceptanceRole === "") delete target.acceptanceRole;
 		else if (cfg.acceptanceRole === "read-only" || cfg.acceptanceRole === "writer") target.acceptanceRole = cfg.acceptanceRole;
 		else return "config.acceptanceRole must be 'read-only', 'writer', or false when provided.";
 	}
 	if (hasKey(cfg, "output")) {
-		if (cfg.output === false || cfg.output === "") target.output = undefined;
+		if (cfg.output === false || cfg.output === "") delete target.output;
 		else if (typeof cfg.output === "string") target.output = cfg.output;
 		else return "config.output must be a string or false when provided.";
 	}
 	if (hasKey(cfg, "reads")) {
-		if (cfg.reads === false || cfg.reads === "") target.defaultReads = undefined;
+		if (cfg.reads === false || cfg.reads === "") delete target.defaultReads;
 		else if (typeof cfg.reads === "string") {
 			const reads = parseCsv(cfg.reads);
-			target.defaultReads = reads.length ? reads : undefined;
+			if (reads.length) target.defaultReads = reads;
+			else delete target.defaultReads;
 		} else return "config.reads must be a comma-separated string or false when provided.";
 	}
 	if (hasKey(cfg, "progress")) {
@@ -494,7 +512,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.defaultProgress = cfg.progress;
 	}
 	if (hasKey(cfg, "maxSubagentDepth")) {
-		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") target.maxSubagentDepth = undefined;
+		if (cfg.maxSubagentDepth === false || cfg.maxSubagentDepth === "") delete target.maxSubagentDepth;
 		else if (typeof cfg.maxSubagentDepth === "number" && Number.isInteger(cfg.maxSubagentDepth) && cfg.maxSubagentDepth >= 0) {
 			target.maxSubagentDepth = cfg.maxSubagentDepth;
 		} else return "config.maxSubagentDepth must be an integer >= 0 or false when provided.";
@@ -504,7 +522,7 @@ function applyAgentConfig(target: AgentConfig, cfg: Record<string, unknown>): st
 		target.completionGuard = cfg.completionGuard;
 	}
 	if (hasKey(cfg, "toolBudget")) {
-		if (cfg.toolBudget === false || cfg.toolBudget === "") target.toolBudget = undefined;
+		if (cfg.toolBudget === false || cfg.toolBudget === "") delete target.toolBudget;
 		else {
 			const validation = validateToolBudgetConfig(cfg.toolBudget, "config.toolBudget");
 			if (validation.error) return validation.error;
@@ -529,7 +547,7 @@ function resolveTarget<T extends { source: AgentSource; filePath: string }>(
 		const available = availableNames(cwd, kind);
 		return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' not found. Available: ${available.join(", ") || "none"}.`, true);
 	}
-	if (mutable.length === 1) return mutable[0]!;
+	if (mutable.length === 1) return requirePresent(mutable[0]);
 	const scope = asDisambiguationScope(scopeHint);
 	if (!scope) {
 		const paths = mutable.map((m) => `${m.source}: ${m.filePath}`).join("\n");
@@ -538,7 +556,7 @@ function resolveTarget<T extends { source: AgentSource; filePath: string }>(
 	const scoped = mutable.filter((m) => m.source === scope);
 	if (scoped.length === 0) return result(`${kind === "agent" ? "Agent" : "Chain"} '${name}' not found in scope '${scope}'.`, true);
 	if (scoped.length > 1) return result(`Multiple ${kind}s named '${name}' found in scope '${scope}': ${scoped.map((m) => m.filePath).join(", ")}`, true);
-	return scoped[0]!;
+	return requirePresent(scoped[0]);
 }
 
 function renamePath(
@@ -639,7 +657,7 @@ function formatChainDetail(chain: ChainConfig): string {
 	}
 	lines.push("", "Steps:");
 	for (let i = 0; i < chain.steps.length; i++) {
-		lines.push(...formatChainStepDetail(chain.steps[i]!, i));
+		lines.push(...formatChainStepDetail(requirePresent(chain.steps[i]), i));
 	}
 	return lines.join("\n");
 }
@@ -652,12 +670,12 @@ export function handleList(params: ManagementParams, ctx: ManagementContext): Ag
 	const agents = scopedAgents.filter((a) => !a.disabled);
 	const chains = d.chains.filter((c) => scope === "both" || c.source === "package" || c.source === scope).sort((a, b) => a.name.localeCompare(b.name));
 	const diagnostics = d.chainDiagnostics.filter((entry) => scope === "both" || entry.source === scope);
-	const proactiveSuggestions = buildProactiveSkillSubagentRecommendationLines({
+	const proactiveSuggestions = buildProactiveSkillSubagentRecommendationLines(omitUndefined({
 		agents,
 		chains,
 		config: ctx.config?.proactiveSkillSubagents,
 		discoverAvailableSkills: () => discoverAvailableSkills(ctx.cwd),
-	});
+	}));
 	const lines = [
 		"Executable agents:",
 		...(agents.length
@@ -819,14 +837,14 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 	if (isChain) {
 		const parsed = parseStepList(cfg.steps);
 		if (parsed.error) return result(parsed.error, true);
-		const chain: ChainConfig = { name: runtimeName, localName: name, packageName: parsedPackage.packageName, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: parsed.steps! };
+		const chain: ChainConfig = omitUndefined({ name: runtimeName, localName: name, packageName: parsedPackage.packageName, description: cfg.description.trim(), source: scope, filePath: targetPath, steps: requirePresent(parsed.steps) });
 		fs.writeFileSync(targetPath, serializeChain(chain), "utf-8");
 		const missing = unknownChainAgents(ctx.cwd, chain.steps);
 		if (missing.length) warnings.push(`Warning: chain steps reference unknown agents: ${missing.join(", ")}.`);
 		warnings.push(...chainStepWarnings(ctx, chain.steps));
 		return result([`Created chain '${runtimeName}' at ${targetPath}.`, ...warnings].join("\n"));
 	}
-	const agent: AgentConfig = {
+	const agent: AgentConfig = omitUndefined({
 		name: runtimeName,
 		localName: name,
 		packageName: parsedPackage.packageName,
@@ -837,7 +855,7 @@ export function handleCreate(params: ManagementParams, ctx: ManagementContext): 
 		systemPromptMode: defaultSystemPromptMode(name),
 		inheritProjectContext: defaultInheritProjectContext(name),
 		inheritSkills: defaultInheritSkills(),
-	};
+	});
 	const applyError = applyAgentConfig(agent, cfg);
 	if (applyError) return result(applyError, true);
 	const mw = modelWarning(ctx, agent.model);
@@ -883,7 +901,8 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (applyError) return result(applyError, true);
 		const preserveFrontmatterFields = preservedAgentFrontmatterFields(target, cfg);
 		updated.localName = newLocalName;
-		updated.packageName = newPackageName;
+		if (newPackageName) updated.packageName = newPackageName;
+		else delete updated.packageName;
 		updated.name = buildRuntimeName(newLocalName, newPackageName);
 		if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 		if (hasKey(cfg, "model")) {
@@ -901,7 +920,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		if (updated.name !== oldName) {
 			const renamed = renamePath("agent", target.filePath, updated.name, target.source, ctx.cwd);
 			if (renamed.error) return result(renamed.error, true);
-			updated.filePath = renamed.filePath!;
+			updated.filePath = requirePresent(renamed.filePath);
 		}
 		fs.writeFileSync(updated.filePath, serializeAgent(updated, { preserveFrontmatterFields }), "utf-8");
 		if (updated.name !== oldName) {
@@ -914,7 +933,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 		return result([headline, ...warnings].join("\n"));
 	}
 	const scopeHint = asDisambiguationScope(params.agentScope);
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", requirePresent(params.chainName), findChains(requirePresent(params.chainName), ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	if (!isMutableSource(target.source)) return result(`Chain '${target.name}' is not editable from source '${target.source}'.`, true);
@@ -937,10 +956,11 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	if (hasKey(cfg, "steps")) {
 		const parsed = parseStepList(cfg.steps);
 		if (parsed.error) return result(parsed.error, true);
-		parsedSteps = parsed.steps!;
+		parsedSteps = requirePresent(parsed.steps);
 	}
 	updated.localName = newLocalName;
-	updated.packageName = newPackageName;
+	if (newPackageName) updated.packageName = newPackageName;
+	else delete updated.packageName;
 	updated.name = buildRuntimeName(newLocalName, newPackageName);
 	if (hasKey(cfg, "description")) updated.description = (cfg.description as string).trim();
 	if (parsedSteps) {
@@ -952,7 +972,7 @@ export function handleUpdate(params: ManagementParams, ctx: ManagementContext): 
 	if (updated.name !== oldName) {
 		const renamed = renamePath("chain", target.filePath, updated.name, target.source, ctx.cwd);
 		if (renamed.error) return result(renamed.error, true);
-		updated.filePath = renamed.filePath!;
+		updated.filePath = requirePresent(renamed.filePath);
 	}
 	fs.writeFileSync(updated.filePath, updated.filePath.endsWith(".chain.json") ? serializeJsonChain(updated) : serializeChain(updated), "utf-8");
 	const headline = updated.name === oldName
@@ -975,7 +995,7 @@ function handleDelete(params: ManagementParams, ctx: ManagementContext): AgentTo
 		if (refs.length) lines.push(`Warning: chains reference deleted agent '${target.name}': ${refs.join(", ")}.`);
 		return result(lines.join("\n"));
 	}
-	const targetOrError = resolveTarget("chain", params.chainName!, findChains(params.chainName!, ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
+	const targetOrError = resolveTarget("chain", requirePresent(params.chainName), findChains(requirePresent(params.chainName), ctx.cwd, scopeHint ?? "both"), ctx.cwd, params.agentScope);
 	if ("content" in targetOrError) return targetOrError;
 	const target = targetOrError;
 	fs.unlinkSync(target.filePath);
@@ -988,7 +1008,7 @@ function handleEject(params: ManagementParams, ctx: ManagementContext): AgentToo
 	const sanitized = sanitizeName(raw);
 	const parsedScope = actionScope(params.agentScope, "eject");
 	if (parsedScope.error) return parsedScope.error;
-	const scope = parsedScope.scope!;
+	const scope = requirePresent(parsedScope.scope);
 	const d = discoverAgentsAll(ctx.cwd);
 	const source = [...d.package, ...d.builtin].find((a) => a.name === raw || a.name === sanitized);
 	if (!source) {
@@ -1025,7 +1045,7 @@ function handleDisable(params: ManagementParams, ctx: ManagementContext): AgentT
 	const raw = params.agent.trim();
 	const parsedScope = actionScope(params.agentScope, "disable");
 	if (parsedScope.error) return parsedScope.error;
-	const scope = parsedScope.scope!;
+	const scope = requirePresent(parsedScope.scope);
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
 		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
@@ -1048,7 +1068,7 @@ function handleEnable(params: ManagementParams, ctx: ManagementContext): AgentTo
 	const raw = params.agent.trim();
 	const parsedScope = actionScope(params.agentScope, "enable");
 	if (parsedScope.error) return parsedScope.error;
-	const scope = parsedScope.scope!;
+	const scope = requirePresent(parsedScope.scope);
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
 		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);
@@ -1076,7 +1096,7 @@ function handleReset(params: ManagementParams, ctx: ManagementContext): AgentToo
 	const sanitized = sanitizeName(raw);
 	const parsedScope = actionScope(params.agentScope, "reset");
 	if (parsedScope.error) return parsedScope.error;
-	const scope = parsedScope.scope!;
+	const scope = requirePresent(parsedScope.scope);
 	const d = discoverAgentsAll(ctx.cwd);
 	if (scope === "project" && d.projectSettingsPath === null) {
 		return result("Project override is not available here: no project config root (.pi or .agents) was found above the cwd. Use agentScope: 'user' or run from inside a project.", true);

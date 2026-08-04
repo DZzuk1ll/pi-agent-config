@@ -8,6 +8,8 @@ import {
 	set_context_sidecar_enabled,
 } from '../store.js';
 import { register_context_export_tool } from './export.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const dirs: string[] = [];
 const original_context_db = process.env.MY_PI_CONTEXT_DB;
@@ -36,7 +38,7 @@ function register_tool(): RegisteredTool {
 			tool = value;
 		},
 	} as unknown as ExtensionAPI);
-	return tool!;
+	return requirePresent(tool);
 }
 
 afterEach(() => {
@@ -70,18 +72,18 @@ describe('context_export tool', () => {
 		expect(tool.description).toContain('broad/full JSON/log/script');
 		expect(tool.description).toContain('full source offline');
 		expect(tool.promptSnippet).toContain('offline rg/jq/Python');
-		expect(tool.parameters.properties.chunk_id!.description).toContain(
+		expect(requirePresent(tool.parameters.properties.chunk_id).description).toContain(
 			'full source for offline processing',
 		);
 
 		const result = await tool.execute('call', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 			file_path: output,
 			global: true,
 		});
 
-		expect(result.content[0]!.text).toContain('Exported 1 chunk(s)');
-		expect(result.content[0]!.text).not.toContain('export-token');
+		expect(requirePresent(result.content[0]).text).toContain('Exported 1 chunk(s)');
+		expect(requirePresent(result.content[0]).text).not.toContain('export-token');
 		expect(readFileSync(output, 'utf8')).toContain('export-token');
 		expect(result.details).toMatchObject({
 			count: 1,
@@ -104,7 +106,7 @@ describe('context_export tool', () => {
 			global: true,
 		});
 
-		expect(result.content[0]!.text).toContain(
+		expect(requirePresent(result.content[0]).text).toContain(
 			'Source ctx_missing was not found',
 		);
 		expect(result.details).toMatchObject({

@@ -11,6 +11,9 @@ import type {
   CodexSearchCall,
   SearchContextSize,
 } from "./types.ts";
+import { type Static, type TSchema, Type } from "typebox";
+import { Value } from "typebox/value";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 
 export interface ResponsesSearchOptions {
   query: string;
@@ -78,6 +81,66 @@ interface ResponseEventData {
   };
 }
 
+const ResponseUsageSchema = Type.Object({
+  input_tokens: Type.Optional(Type.Number()),
+  output_tokens: Type.Optional(Type.Number()),
+  total_tokens: Type.Optional(Type.Number()),
+}, { additionalProperties: true });
+const ResponseEnvelopeSchema = Type.Object({
+  id: Type.Optional(Type.String()),
+  usage: Type.Optional(ResponseUsageSchema),
+}, { additionalProperties: true });
+const ResponseOutputItemSchema = Type.Object({
+  id: Type.Optional(Type.String()),
+  type: Type.Optional(Type.String()),
+  status: Type.Optional(Type.String()),
+  role: Type.Optional(Type.String()),
+  action: Type.Optional(Type.Object({
+    type: Type.Optional(Type.String()),
+    query: Type.Optional(Type.String()),
+    queries: Type.Optional(Type.Array(Type.String())),
+    url: Type.Optional(Type.String()),
+  }, { additionalProperties: true })),
+  content: Type.Optional(Type.Array(Type.Object({
+    type: Type.Optional(Type.String()),
+    text: Type.Optional(Type.String()),
+    annotations: Type.Optional(Type.Array(Type.Object({
+      type: Type.Optional(Type.String()),
+      title: Type.Optional(Type.String()),
+      url: Type.Optional(Type.String()),
+      start_index: Type.Optional(Type.Number()),
+      end_index: Type.Optional(Type.Number()),
+    }, { additionalProperties: true }))),
+  }, { additionalProperties: true }))),
+}, { additionalProperties: true });
+const CreatedEventSchema = Type.Object({ response: ResponseEnvelopeSchema }, { additionalProperties: true });
+const DeltaEventSchema = Type.Object({ delta: Type.String() }, { additionalProperties: true });
+const ItemEventSchema = Type.Object({ item: ResponseOutputItemSchema }, { additionalProperties: true });
+const CompletedEventSchema = Type.Object({ response: ResponseEnvelopeSchema }, { additionalProperties: true });
+const FailedEventSchema = Type.Object({
+  error: Type.Object({
+    message: Type.Optional(Type.String()),
+    code: Type.Optional(Type.String()),
+  }, { additionalProperties: true }),
+}, { additionalProperties: true });
+
+function requireEventData<T extends TSchema>(event: SseEvent, schema: T): Static<T> {
+  if (Value.Check(schema, event.data)) return event.data;
+  throw new CodexError("schema", `Codex SSE event '${event.type}' did not match the expected schema.`);
+}
+
+function decodeKnownResponseEvent(event: SseEvent): ResponseEventData | undefined {
+  switch (event.type) {
+    case "response.created": return requireEventData(event, CreatedEventSchema);
+    case "response.output_text.delta": return requireEventData(event, DeltaEventSchema);
+    case "response.output_item.added":
+    case "response.output_item.done": return requireEventData(event, ItemEventSchema);
+    case "response.completed": return requireEventData(event, CompletedEventSchema);
+    case "response.failed": return requireEventData(event, FailedEventSchema);
+    default: return undefined;
+  }
+}
+
 export async function runResponsesSearch(
   options: ResponsesSearchOptions,
 ): Promise<CodexWebSearchResult> {
@@ -107,7 +170,7 @@ export async function runResponsesSearch(
   };
   if (indexedWebAccess) webSearchTool.indexed_web_access = true;
 
-  const response = await transport.fetch(transport.resolveEndpoint("responses"), {
+  const response = await transport.fetch(transport.resolveEndpoint("responses"), omitUndefined({
     method: "POST",
     headers,
     body: JSON.stringify({
@@ -129,7 +192,7 @@ export async function runResponsesSearch(
       include: [],
     }),
     signal,
-  });
+  }));
 
   if (!response.ok) {
     const status = response.status;
@@ -152,7 +215,7 @@ export async function runResponsesSearch(
   const citations = new Map<string, CodexCitation>();
 
   for await (const event of parseSse(response.body)) {
-    const data = event.data as ResponseEventData | undefined;
+    const data = decodeKnownResponseEvent(event);
     if (!data) continue;
 
     if (event.type === "response.created") {
@@ -170,10 +233,10 @@ export async function runResponsesSearch(
     if (event.type === "response.output_item.added" && data.item?.type === "web_search_call") {
       const item = data.item;
       if (item.id) {
-        searchCalls.set(item.id, {
+        searchCalls.set(item.id, omitUndefined({
           id: item.id,
           status: item.status,
-        });
+        }));
       }
       continue;
     }
@@ -184,7 +247,14 @@ export async function runResponsesSearch(
     }
 
     if (event.type === "response.completed") {
-      usage = data.response?.usage;
+      const completedUsage = data.response?.usage;
+      usage = completedUsage
+        ? omitUndefined({
+            input_tokens: completedUsage.input_tokens,
+            output_tokens: completedUsage.output_tokens,
+            total_tokens: completedUsage.total_tokens,
+          })
+        : undefined;
       continue;
     }
 
@@ -194,20 +264,20 @@ export async function runResponsesSearch(
     }
   }
 
-  return {
+  return omitUndefined({
     responseId,
     model,
     text: messageTextParts.join("") || streamedText,
     searchCalls: [...searchCalls.values()],
     citations: [...citations.values()],
     usage: usage
-      ? {
+      ? omitUndefined({
           inputTokens: usage.input_tokens,
           outputTokens: usage.output_tokens,
           totalTokens: usage.total_tokens,
-        }
+        })
       : undefined,
-  };
+  });
 }
 
 async function* parseSse(body: ReadableStream<Uint8Array>): AsyncGenerator<SseEvent> {
@@ -284,13 +354,13 @@ function collectOutputItem(
   if (item.type === "web_search_call") {
     const key = item.id ?? `search-${searchCalls.size + 1}`;
     const query = item.action?.query ?? item.action?.queries?.join(", ");
-    searchCalls.set(key, {
+    searchCalls.set(key, omitUndefined({
       id: item.id,
       status: item.status,
       query,
       url: item.action?.url,
       actionType: item.action?.type,
-    });
+    }));
     return;
   }
 
@@ -301,12 +371,12 @@ function collectOutputItem(
     messageTextParts.push(part.text ?? "");
     for (const annotation of part.annotations ?? []) {
       if (annotation.type !== "url_citation" || !annotation.url) continue;
-      citations.set(annotation.url, {
+      citations.set(annotation.url, omitUndefined({
         title: annotation.title,
         url: annotation.url,
         startIndex: annotation.start_index,
         endIndex: annotation.end_index,
-      });
+      }));
     }
   }
 }

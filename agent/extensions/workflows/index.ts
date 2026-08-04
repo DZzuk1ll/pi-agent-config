@@ -12,6 +12,8 @@ import { WorkflowLiveStatus } from "./live-status.ts";
 import { MAX_WORKFLOW_ARGS_BYTES, MAX_WORKFLOW_SOURCE_BYTES, runWorkflowSandbox } from "./sandbox.ts";
 import { WorkflowTranscriptClient } from "./transcript.ts";
 import { formatWorkflowCall, formatWorkflowResult } from "./view.ts";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
+
 
 const MAX_ACTIVE_WORKFLOWS = 4;
 const WORKFLOW_UI_VISIBILITY_EVENT = "workflow:ui-visibility";
@@ -134,6 +136,7 @@ export default function workflows(pi: ExtensionAPI): void {
 		promptGuidelines: [
 			"Use workflow only when the user explicitly asks for one or the task genuinely needs multiple dependent or parallel agents.",
 			"Keep scripts small, await every agent() call, label phases, handle ok:false results, and stay within 32 calls and concurrency 4.",
+			"Set agent() cwd when a step targets a different repository or worktree.",
 			"Do not use workflow for a task the parent can complete directly with ordinary tools or one subagent call.",
 		],
 		parameters: Type.Object({
@@ -168,15 +171,16 @@ export default function workflows(pi: ExtensionAPI): void {
 			try {
 				const runId = `wf_${randomBytes(6).toString("hex")}`;
 				const background = (params.background ?? false) && ctx.hasUI;
-				let controller!: WorkflowController;
+				let pendingController: WorkflowController | undefined;
 				artifacts = new WorkflowArtifacts(runId, params.script, params.argsJson, (error) => {
-					if (controller) controller.abort(`Workflow artifact persistence failed: ${error.message}`);
+					pendingController?.abort(`Workflow artifact persistence failed: ${error.message}`);
 				});
 				const delegation = new DelegationClient(pi.events, ctx.cwd);
 				let emitTimer: ReturnType<typeof setTimeout> | undefined;
 				let lastEventSignature = "";
 				const onChange = () => {
-					artifacts!.checkpoint(controller.details);
+					const controller = requirePresent(pendingController);
+					requirePresent(artifacts).checkpoint(controller.details);
 					const signature = JSON.stringify({
 						state: controller.details.state,
 						phase: controller.details.currentPhase,
@@ -184,7 +188,7 @@ export default function workflows(pi: ExtensionAPI): void {
 					});
 					if (signature !== lastEventSignature) {
 						lastEventSignature = signature;
-						artifacts!.event("workflow.progress", JSON.parse(signature));
+						requirePresent(artifacts).event("workflow.progress", JSON.parse(signature));
 					}
 					refreshLiveUi();
 					if (background || emitTimer) return;
@@ -201,16 +205,17 @@ export default function workflows(pi: ExtensionAPI): void {
 					}, 200);
 					emitTimer.unref?.();
 				};
-				controller = new WorkflowController({
+				const controller = new WorkflowController({
 					runId,
 					sessionId: ctx.sessionManager.getSessionId(),
 					name: params.name.trim(),
-					description: params.description?.trim(),
+					...(params.description?.trim() ? { description: params.description.trim() } : {}),
 					background,
-					parentSignal: background ? undefined : signal,
+					...(!background && signal !== undefined ? { parentSignal: signal } : {}),
 					delegation,
 					onChange,
 				});
+				pendingController = controller;
 				artifacts.event("workflow.started", { name: controller.details.name, background });
 				artifacts.checkpoint(controller.details, true);
 
@@ -232,11 +237,11 @@ export default function workflows(pi: ExtensionAPI): void {
 						}
 						await controller.finalize(failure ? { error: failure } : { result });
 						try {
-							artifacts!.finish(controller.details);
+							requirePresent(artifacts).finish(controller.details);
 						} catch (error) {
 							controller.details.state = "failed";
 							controller.details.error = `Workflow artifact persistence failed: ${error instanceof Error ? error.message : String(error)}`;
-							artifacts!.dispose();
+							requirePresent(artifacts).dispose();
 						}
 					} finally {
 						if (emitTimer) clearTimeout(emitTimer);
@@ -251,7 +256,7 @@ export default function workflows(pi: ExtensionAPI): void {
 					void completion.finally(() => {
 						active.delete(runId);
 						releaseAdmission();
-						artifacts!.dispose();
+						requirePresent(artifacts).dispose();
 						try { prepareWorkflowStorage([...active.keys()]); } catch {}
 						refreshLiveUi();
 						if (shuttingDown) return;
@@ -259,7 +264,7 @@ export default function workflows(pi: ExtensionAPI): void {
 							pi.sendMessage(
 								{
 									customType: "workflow-result",
-									content: resultText(controller.details, artifacts!.directory),
+									content: resultText(controller.details, requirePresent(artifacts).directory),
 									display: true,
 									details: { runId, state: controller.details.state },
 								},

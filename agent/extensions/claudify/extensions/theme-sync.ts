@@ -8,10 +8,10 @@ export type ThemeOverrideSyncSnapshot = {
 };
 
 type ThemeOverrideSyncState = ThemeOverrideSyncSnapshot & {
-	owner?: symbol;
-	theme?: ThemeOverrideTarget;
-	apply?: ThemeOverrideApplier;
-	identity?: object;
+	owner: symbol | undefined;
+	theme: ThemeOverrideTarget | undefined;
+	apply: ThemeOverrideApplier | undefined;
+	identity: object | undefined;
 };
 
 const THEME_OVERRIDE_SYNC_STATE = Symbol.for("pi-claudify:theme-override-sync-state");
@@ -20,7 +20,14 @@ function syncState(): ThemeOverrideSyncState {
 	const globalRecord = globalThis as Record<PropertyKey, unknown>;
 	const existing = globalRecord[THEME_OVERRIDE_SYNC_STATE];
 	if (existing && typeof existing === "object") return existing as ThemeOverrideSyncState;
-	const created: ThemeOverrideSyncState = { enabled: false, revision: 0 };
+	const created: ThemeOverrideSyncState = {
+		enabled: false,
+		revision: 0,
+		owner: undefined,
+		theme: undefined,
+		apply: undefined,
+		identity: undefined,
+	};
 	globalRecord[THEME_OVERRIDE_SYNC_STATE] = created;
 	return created;
 }

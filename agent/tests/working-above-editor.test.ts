@@ -66,9 +66,9 @@ test("compacts only Pi's empty above-editor spacer across initial load and reloa
 		},
 	};
 
-	const handlers = new Map<string, (...args: any[]) => unknown>();
+	const handlers = new Map<string, (...args: unknown[]) => unknown>();
 	workingAboveEditor({
-		on(event: string, handler: (...args: any[]) => unknown) {
+		on(event: string, handler: (...args: unknown[]) => unknown) {
 			handlers.set(event, handler);
 		},
 	} as never);

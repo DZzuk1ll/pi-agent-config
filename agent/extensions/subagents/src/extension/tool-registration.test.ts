@@ -8,6 +8,8 @@ import {
 import { Type } from "typebox";
 import { describe, expect, it } from "vitest";
 import { registerSubagentTool } from "./tool-registration.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 function fakePi() {
 	const tools = new Map<string, ToolDefinition>();
@@ -35,7 +37,7 @@ describe("registerSubagentTool", () => {
 				return { content: [{ type: "text", text: "failed" }], details: { reason: "boom" }, isError: true };
 			},
 		});
-		const tool = fake.tools.get("subagent")!;
+		const tool = requirePresent(fake.tools.get("subagent"));
 		const internal = await tool.execute("host-id", {}, undefined, undefined, {} as never);
 		const extension = {
 			path: "test",
@@ -83,7 +85,7 @@ describe("registerSubagentTool", () => {
 				};
 			},
 		});
-		const tool = fake.tools.get("subagent")!;
+		const tool = requirePresent(fake.tools.get("subagent"));
 		const signal = new AbortController().signal;
 		const [failed, ok] = await Promise.all([
 			tool.execute("failure-id", { fail: true, delay: 5 }, signal, undefined, {} as never),
@@ -91,9 +93,9 @@ describe("registerSubagentTool", () => {
 		]);
 		expect(failed).toEqual({ content: [{ type: "text", text: "failed" }], details: { value: 5 } });
 		expect(ok).toEqual({ content: [{ type: "text", text: "ok" }], details: { value: 0 } });
-		expect(fake.hooks[0]!({ toolCallId: "success-id", toolName: "subagent" })).toBeUndefined();
-		expect(fake.hooks[0]!({ toolCallId: "failure-id", toolName: "subagent" })).toEqual({ isError: true });
-		expect(fake.hooks[0]!({ toolCallId: "failure-id", toolName: "subagent" })).toBeUndefined();
+		expect(requirePresent(fake.hooks[0])({ toolCallId: "success-id", toolName: "subagent" })).toBeUndefined();
+		expect(requirePresent(fake.hooks[0])({ toolCallId: "failure-id", toolName: "subagent" })).toEqual({ isError: true });
+		expect(requirePresent(fake.hooks[0])({ toolCallId: "failure-id", toolName: "subagent" })).toBeUndefined();
 	});
 
 	it("does not leak partial, thrown, or superseded failure state", async () => {
@@ -111,7 +113,7 @@ describe("registerSubagentTool", () => {
 				return { content: [{ type: "text", text: params.mode }], details: {}, ...(params.mode === "fail" ? { isError: true } : {}) };
 			},
 		});
-		const tool = fake.tools.get("subagent_wait")!;
+		const tool = requirePresent(fake.tools.get("subagent_wait"));
 		const updates: unknown[] = [];
 		await tool.execute("same", { mode: "fail" }, undefined, (result) => updates.push(result), {} as never);
 		await tool.execute("same", { mode: "ok" }, undefined, (result) => updates.push(result), {} as never);
@@ -119,8 +121,8 @@ describe("registerSubagentTool", () => {
 			{ content: [{ type: "text", text: "partial" }], details: {} },
 			{ content: [{ type: "text", text: "partial" }], details: {} },
 		]);
-		expect(fake.hooks[0]!({ toolCallId: "same", toolName: "subagent_wait" })).toBeUndefined();
+		expect(requirePresent(fake.hooks[0])({ toolCallId: "same", toolName: "subagent_wait" })).toBeUndefined();
 		await expect(tool.execute("thrown", { mode: "throw" }, undefined, undefined, {} as never)).rejects.toThrow("boom");
-		expect(fake.hooks[0]!({ toolCallId: "thrown", toolName: "subagent_wait" })).toBeUndefined();
+		expect(requirePresent(fake.hooks[0])({ toolCallId: "thrown", toolName: "subagent_wait" })).toBeUndefined();
 	});
 });

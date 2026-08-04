@@ -1,4 +1,5 @@
 import * as path from "node:path";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type { AgentToolResult } from "../shared/tool-result.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Compile } from "typebox/compile";
@@ -68,7 +69,7 @@ type SubagentRpcErrorCode =
 	| "invalid_state";
 
 interface EventBus {
-	on(event: string, handler: (data: unknown) => void): (() => void) | void;
+	on(event: string, handler: (data: unknown) => void): (() => void) | undefined;
 	emit(event: string, data: unknown): void;
 }
 
@@ -488,7 +489,7 @@ function stopAsyncRun(
 
 	let status: ReturnType<typeof reconcileAsyncRun>["status"];
 	try {
-		status = reconcileAsyncRun(location.asyncDir, { resultsDir, kill: options.kill, now: options.now }).status;
+		status = reconcileAsyncRun(location.asyncDir, omitUndefined({ resultsDir, kill: options.kill, now: options.now })).status;
 	} catch (error) {
 		throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
 	}
@@ -502,13 +503,13 @@ function stopAsyncRun(
 	}
 
 	try {
-		deliverStopRequest({
+		deliverStopRequest(omitUndefined({
 			asyncDir: location.asyncDir,
 			pid: status.pid,
 			kill: options.kill,
 			now: options.now,
 			source: "rpc-stop",
-		});
+		}));
 	} catch (error) {
 		throw new SubagentRpcError("execution_failed", error instanceof Error ? error.message : String(error));
 	}
@@ -575,13 +576,22 @@ function parseRequest(raw: unknown): SubagentRpcRequestEnvelope {
 	if (typeof raw.method !== "string" || !(SUBAGENT_RPC_METHODS as readonly string[]).includes(raw.method)) {
 		throw new SubagentRpcError("unsupported_method", `Unsupported subagent RPC method: ${String(raw.method)}.`);
 	}
+	const source = parseRequestSource(raw.source);
 	return {
 		version: SUBAGENT_RPC_PROTOCOL_VERSION,
 		requestId,
 		method: raw.method as SubagentRpcMethod,
 		...(raw.params !== undefined ? { params: raw.params } : {}),
-		...(isRecord(raw.source) ? { source: raw.source as SubagentRpcRequestEnvelope["source"] } : {}),
+		...(source === undefined ? {} : { source }),
 	};
+}
+
+function parseRequestSource(value: unknown): SubagentRpcRequestEnvelope["source"] | undefined {
+	if (!isRecord(value)) return undefined;
+	if (value.extension !== undefined && typeof value.extension !== "string") {
+		throw new SubagentRpcError("invalid_request", "Subagent RPC source.extension must be a string when provided.");
+	}
+	return Object.fromEntries(Object.entries(value).filter(([, entry]) => entry !== undefined));
 }
 
 function safeReplyRequestId(raw: unknown): string {

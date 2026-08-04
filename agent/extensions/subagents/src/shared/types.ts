@@ -545,36 +545,36 @@ export interface ChildWatchdogProgress {
 	seq: number;
 	lastUpdate: number;
 	followUpPending: boolean;
-	reason?: string;
-	timedOut?: boolean;
+	reason?: string | undefined;
+	timedOut?: boolean | undefined;
 }
 
 export interface AgentProgress {
 	index: number;
 	agent: string;
 	status: "pending" | "running" | "completed" | "failed" | "detached";
-	activityState?: ActivityState;
+	activityState?: ActivityState | undefined;
 	task: string;
-	skills?: string[];
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolArgs?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
+	skills?: string[] | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolArgs?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
 	recentTools: Array<{ tool: string; args: string; endMs: number }>;
 	recentOutput: string[];
 	toolCount: number;
-	turnCount?: number;
+	turnCount?: number | undefined;
 	tokens: number;
 	/** Resolved launch model/effort and split usage for public live projections. */
-	model?: string;
-	thinking?: string;
-	inputTokens?: number;
-	outputTokens?: number;
+	model?: string | undefined;
+	thinking?: string | undefined;
+	inputTokens?: number | undefined;
+	outputTokens?: number | undefined;
 	durationMs: number;
-	error?: string;
-	failedTool?: string;
-	watchdog?: ChildWatchdogProgress;
+	error?: string | undefined;
+	failedTool?: string | undefined;
+	watchdog?: ChildWatchdogProgress | undefined;
 }
 
 export interface ToolCallSummary {
@@ -1158,90 +1158,90 @@ export interface AsyncJobState {
 	asyncId: string;
 	asyncDir: string;
 	/** Execution source used by the unified foreground/background status widget. */
-	source?: "async" | "foreground";
+	source?: "async" | "foreground" | undefined;
 	/** Parent-resolved launch directory retained for trusted live artifact lookup. */
-	cwd?: string;
+	cwd?: string | undefined;
 	status: "queued" | "running" | "complete" | "failed" | "paused" | "stopped";
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
-	description?: string;
-	pid?: number;
-	sessionId?: string;
-	activityState?: ActivityState;
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
-	turnCount?: number;
-	toolCount?: number;
-	steering?: SteeringStatus;
-	mode?: SubagentRunMode;
+	description?: string | undefined;
+	pid?: number | undefined;
+	sessionId?: string | undefined;
+	activityState?: ActivityState | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
+	turnCount?: number | undefined;
+	toolCount?: number | undefined;
+	steering?: SteeringStatus | undefined;
+	mode?: SubagentRunMode | undefined;
 	/** Run-level context summary derived from step contexts. */
-	context?: "fresh" | "fork" | "mixed";
-	agents?: string[];
-	currentStep?: number;
-	chainStepCount?: number;
-	parallelGroups?: AsyncParallelGroupStatus[];
-	steps?: AsyncJobStep[];
-	stepsTotal?: number;
-	runningSteps?: number;
-	completedSteps?: number;
-	hasParallelGroups?: boolean;
-	activeParallelGroup?: boolean;
-	startedAt?: number;
-	updatedAt?: number;
-	timeoutMs?: number;
-	deadlineAt?: number;
-	timedOut?: boolean;
-	stopped?: boolean;
-	turnBudget?: TurnBudgetState;
-	turnBudgetExceeded?: boolean;
-	wrapUpRequested?: boolean;
-	toolBudget?: ToolBudgetState;
-	toolBudgetBlocked?: boolean;
-	sessionDir?: string;
-	outputFile?: string;
-	totalTokens?: TokenUsage;
-	sessionFile?: string;
-	controlEventCursor?: number;
-	nestedRoute?: NestedRouteInfo;
-	nestedChildren?: NestedRunSummary[];
+	context?: "fresh" | "fork" | "mixed" | undefined;
+	agents?: string[] | undefined;
+	currentStep?: number | undefined;
+	chainStepCount?: number | undefined;
+	parallelGroups?: AsyncParallelGroupStatus[] | undefined;
+	steps?: AsyncJobStep[] | undefined;
+	stepsTotal?: number | undefined;
+	runningSteps?: number | undefined;
+	completedSteps?: number | undefined;
+	hasParallelGroups?: boolean | undefined;
+	activeParallelGroup?: boolean | undefined;
+	startedAt?: number | undefined;
+	updatedAt?: number | undefined;
+	timeoutMs?: number | undefined;
+	deadlineAt?: number | undefined;
+	timedOut?: boolean | undefined;
+	stopped?: boolean | undefined;
+	turnBudget?: TurnBudgetState | undefined;
+	turnBudgetExceeded?: boolean | undefined;
+	wrapUpRequested?: boolean | undefined;
+	toolBudget?: ToolBudgetState | undefined;
+	toolBudgetBlocked?: boolean | undefined;
+	sessionDir?: string | undefined;
+	outputFile?: string | undefined;
+	totalTokens?: TokenUsage | undefined;
+	sessionFile?: string | undefined;
+	controlEventCursor?: number | undefined;
+	nestedRoute?: NestedRouteInfo | undefined;
+	nestedChildren?: NestedRunSummary[] | undefined;
 }
 
 export interface ForegroundResumeChild {
 	agent: string;
 	index: number;
-	context?: "fresh" | "fork";
-	sessionFile?: string;
-	model?: string;
-	thinking?: string;
+	context?: "fresh" | "fork" | undefined;
+	sessionFile?: string | undefined;
+	model?: string | undefined;
+	thinking?: string | undefined;
 	status: SubagentResultStatus;
-	activityState?: ActivityState;
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
-	turnCount?: number;
-	tokens?: number;
-	toolCount?: number;
-	exitCode?: number;
-	error?: string;
-	finalOutput?: string;
-	outputMode?: OutputMode;
-	savedOutputPath?: string;
-	outputSaveError?: string;
-	artifactPaths?: ArtifactPaths;
-	transcriptPath?: string;
-	transcriptError?: string;
-	detachedReason?: string;
-	acceptance?: AcceptanceLedger;
-	agentContract?: AgentContract;
-	launchContractDigest?: string;
-	execution?: ExecutionProjection;
-	review?: ReviewProjection;
-	effects?: EffectsProjection;
-	capabilityCeiling?: ResolvedSubagentCapabilityCeiling;
-	capabilityAudit?: SubagentCapabilityAudit;
-	updatedAt?: number;
+	activityState?: ActivityState | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
+	turnCount?: number | undefined;
+	tokens?: number | undefined;
+	toolCount?: number | undefined;
+	exitCode?: number | undefined;
+	error?: string | undefined;
+	finalOutput?: string | undefined;
+	outputMode?: OutputMode | undefined;
+	savedOutputPath?: string | undefined;
+	outputSaveError?: string | undefined;
+	artifactPaths?: ArtifactPaths | undefined;
+	transcriptPath?: string | undefined;
+	transcriptError?: string | undefined;
+	detachedReason?: string | undefined;
+	acceptance?: AcceptanceLedger | undefined;
+	agentContract?: AgentContract | undefined;
+	launchContractDigest?: string | undefined;
+	execution?: ExecutionProjection | undefined;
+	review?: ReviewProjection | undefined;
+	effects?: EffectsProjection | undefined;
+	capabilityCeiling?: ResolvedSubagentCapabilityCeiling | undefined;
+	capabilityAudit?: SubagentCapabilityAudit | undefined;
+	updatedAt?: number | undefined;
 }
 
 export interface ForegroundResumeRun {
@@ -1249,7 +1249,7 @@ export interface ForegroundResumeRun {
 	mode: SubagentRunMode;
 	cwd: string;
 	/** Originating parent session. Detached exits can outlive the active session. */
-	sessionId?: string;
+	sessionId?: string | undefined;
 	updatedAt: number;
 	children: ForegroundResumeChild[];
 }
@@ -1257,83 +1257,83 @@ export interface ForegroundResumeRun {
 export interface ForegroundChildControl {
 	index: number;
 	agent: string;
-	description?: string;
+	description?: string | undefined;
 	startedAt: number;
 	updatedAt: number;
-	currentActivityState?: ActivityState;
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
-	turnCount?: number;
-	tokens?: number;
-	inputTokens?: number;
-	outputTokens?: number;
-	model?: string;
-	thinking?: string;
-	toolCount?: number;
-	interrupt?: () => boolean;
+	currentActivityState?: ActivityState | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
+	turnCount?: number | undefined;
+	tokens?: number | undefined;
+	inputTokens?: number | undefined;
+	outputTokens?: number | undefined;
+	model?: string | undefined;
+	thinking?: string | undefined;
+	toolCount?: number | undefined;
+	interrupt?: () => boolean | undefined;
 }
 
 export interface ForegroundRunControl {
 	runId: string;
 	/** Originating parent session; required for public fleet projection. */
-	sessionId?: string;
+	sessionId?: string | undefined;
 	mode: SubagentRunMode;
 	startedAt: number;
 	updatedAt: number;
 	/** Effective working directory used to resolve live transcript artifacts. */
-	cwd?: string;
-	currentAgent?: string;
-	currentIndex?: number;
+	cwd?: string | undefined;
+	currentAgent?: string | undefined;
+	currentIndex?: number | undefined;
 	/** Short caller-facing task/goal shown in fleet surfaces when available. */
-	description?: string;
+	description?: string | undefined;
 	/** Owning orchestrator run; automatic status surfaces may render that owner instead. */
-	uiOwnerRunId?: string;
-	currentActivityState?: ActivityState;
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
-	turnCount?: number;
-	tokens?: number;
-	inputTokens?: number;
-	outputTokens?: number;
-	model?: string;
-	thinking?: string;
-	toolCount?: number;
+	uiOwnerRunId?: string | undefined;
+	currentActivityState?: ActivityState | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
+	turnCount?: number | undefined;
+	tokens?: number | undefined;
+	inputTokens?: number | undefined;
+	outputTokens?: number | undefined;
+	model?: string | undefined;
+	thinking?: string | undefined;
+	toolCount?: number | undefined;
 	/** Independently tracked children for foreground parallel work and fleet inspection. */
-	activeChildren?: Map<number, ForegroundChildControl>;
-	nestedRoute?: NestedRouteInfo;
-	nestedChildren?: NestedRunSummary[];
-	interrupt?: () => boolean;
+	activeChildren?: Map<number, ForegroundChildControl> | undefined;
+	nestedRoute?: NestedRouteInfo | undefined;
+	nestedChildren?: NestedRunSummary[] | undefined;
+	interrupt?: () => boolean | undefined;
 }
 
 export interface SubagentState {
 	baseCwd: string;
 	currentSessionId: string | null;
 	/** Runtime-owned artifact resolution inputs used by Fleet transcript targeting. */
-	artifactDirPreference?: ArtifactDirPreference;
-	parentSessionFile?: string | null;
+	artifactDirPreference?: ArtifactDirPreference | undefined;
+	parentSessionFile?: string | null | undefined;
 	/** Last valid parent session model observed for this session; used when continuation contexts omit ctx.model. */
-	lastParentModel?: { provider: string; id: string };
-	subagentInProgress?: boolean;
+	lastParentModel?: { provider: string; id: string } | undefined;
+	subagentInProgress?: boolean | undefined;
 	subagentSpawns?: {
 		sessionId: string | null;
 		count: number;
-		configuredLimit?: number | null;
-		granted?: number;
-		grantHistory?: SpawnBudgetGrant[];
+		configuredLimit?: number | null | undefined;
+		granted?: number | undefined;
+		grantHistory?: SpawnBudgetGrant[] | undefined;
 	};
 	asyncJobs: Map<string, AsyncJobState>;
 	/** Current-session active and recent async runs for the native fleet inspector. */
-	fleetJobs?: Map<string, AsyncJobState>;
+	fleetJobs?: Map<string, AsyncJobState> | undefined;
 	/** Suppress dynamic status widgets while the fleet overlay owns the viewport. */
-	fleetInspectorOpen?: boolean;
-	foregroundRuns?: Map<string, ForegroundResumeRun>;
+	fleetInspectorOpen?: boolean | undefined;
+	foregroundRuns?: Map<string, ForegroundResumeRun> | undefined;
 	foregroundControls: Map<string, ForegroundRunControl>;
 	lastForegroundControlId: string | null;
-	pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>>;
+	pendingForegroundControlNotices?: Map<string, ReturnType<typeof setTimeout>> | undefined;
 	cleanupTimers: Map<string, ReturnType<typeof setTimeout>>;
 	lastUiContext: ExtensionContext | null;
 	poller: NodeJS.Timeout | null;
@@ -1756,6 +1756,6 @@ export function truncateOutput(
 		truncated: true,
 		originalBytes: bytes,
 		originalLines: lines.length,
-		artifactPath,
+		...(artifactPath === undefined ? {} : { artifactPath }),
 	};
 }

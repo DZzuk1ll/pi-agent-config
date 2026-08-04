@@ -4,6 +4,7 @@
 
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type { AgentConfig } from "../agents/agents.ts";
 import { normalizeSkillInput } from "../agents/skills.ts";
 import { CHAIN_RUNS_DIR, type AcceptanceInput, type AgentContract, type ChainGateLayer, type JsonSchemaObject, type OutputMode, type ToolBudgetConfig } from "./types.ts";
@@ -24,16 +25,21 @@ export interface ResolvedStepBehavior {
 }
 
 export interface StepOverrides {
-	output?: string | false;
+	output?: string | boolean;
 	outputMode?: OutputMode;
-	reads?: string[] | false;
+	reads?: string[] | boolean;
 	progress?: boolean;
 	skills?: string[] | false;
 	model?: string;
 }
 
-function normalizeOutputOverride(output: string | false | undefined): string | false | undefined {
+function normalizeOutputOverride(output: string | boolean | undefined): string | false | undefined {
+	if (output === true || output === "true") return undefined;
 	return output === "false" ? false : output;
+}
+
+function normalizeReadsOverride(reads: string[] | boolean | undefined): string[] | false | undefined {
+	return reads === true ? undefined : reads;
 }
 
 // =============================================================================
@@ -49,11 +55,11 @@ export interface SequentialStep {
 	as?: string;
 	outputSchema?: JsonSchemaObject;
 	cwd?: string;
-	output?: string | false;
+	output?: string | boolean;
 	outputMode?: OutputMode;
-	reads?: string[] | false;
+	reads?: string[] | boolean;
 	progress?: boolean;
-	skill?: string | string[] | false;
+	skill?: string | string[] | boolean;
 	model?: string;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
@@ -71,11 +77,11 @@ export interface ParallelTaskItem {
 	outputSchema?: JsonSchemaObject;
 	cwd?: string;
 	count?: number;
-	output?: string | false;
+	output?: string | boolean;
 	outputMode?: OutputMode;
-	reads?: string[] | false;
+	reads?: string[] | boolean;
 	progress?: boolean;
-	skill?: string | string[] | false;
+	skill?: string | string[] | boolean;
 	model?: string;
 	toolBudget?: ToolBudgetConfig;
 	acceptance?: AcceptanceInput;
@@ -249,9 +255,10 @@ export function resolveStepBehavior(
 			: normalizeOutputOverride(agentConfig.output) ?? false;
 
 	// Reads: step override > frontmatter defaultReads > false (no reads)
+	const stepReads = normalizeReadsOverride(stepOverrides.reads);
 	const reads =
-		stepOverrides.reads !== undefined
-			? stepOverrides.reads
+		stepReads !== undefined
+			? stepReads
 			: agentConfig.defaultReads ?? false;
 
 	// Progress: step override > frontmatter defaultProgress > false
@@ -277,7 +284,7 @@ export function resolveStepBehavior(
 
 	const outputMode = stepOverrides.outputMode ?? "inline";
 	const model = stepOverrides.model ?? agentConfig.model;
-	return { output, outputMode, reads, progress, skills, model };
+	return omitUndefined({ output, outputMode, reads, progress, skills, model });
 }
 
 export function resolveTaskTextForFileUpdatePolicy(task: string | undefined, originalTask?: string): string | undefined {
@@ -351,19 +358,31 @@ export function buildChainInstructions(
 	}
 
 	// Include previous step's summary in suffix if available
-	if (previousSummary && previousSummary.trim()) {
+	if (previousSummary?.trim()) {
 		suffixParts.push(`Previous step output:\n${previousSummary.trim()}`);
 	}
 
 	const prefix = prefixParts.length > 0
-		? prefixParts.join("\n") + "\n\n"
+		? `${prefixParts.join("\n")}\n\n`
 		: "";
 
 	const suffix = suffixParts.length > 0
-		? "\n\n---\n" + suffixParts.join("\n")
+		? `\n\n---\n${suffixParts.join("\n")}`
 		: "";
 
 	return { prefix, suffix };
+}
+
+/** Apply the same reads override semantics to foreground and background single runs. */
+export function injectSingleReadInstructions(
+	task: string,
+	agentConfig: AgentConfig,
+	reads: string[] | boolean | undefined,
+	cwd: string,
+): string {
+	const behavior = resolveStepBehavior(agentConfig, omitUndefined({ reads }));
+	const { prefix } = buildChainInstructions({ ...behavior, output: false, progress: false }, cwd, false);
+	return `${prefix}${task}`;
 }
 
 // =============================================================================
@@ -408,8 +427,8 @@ export function resolveParallelBehaviors(
 		}
 
 		// Reads: task override > agent default > false
-		const reads =
-			task.reads !== undefined ? task.reads : config.defaultReads ?? false;
+		const taskReads = normalizeReadsOverride(task.reads);
+		const reads = taskReads !== undefined ? taskReads : config.defaultReads ?? false;
 
 		// Progress: task override > agent default > false
 		const progress =
@@ -435,7 +454,7 @@ export function resolveParallelBehaviors(
 
 		const outputMode = task.outputMode ?? "inline";
 		const model = task.model ?? config.model;
-		return { output, outputMode, reads, progress, skills, model };
+		return omitUndefined({ output, outputMode, reads, progress, skills, model });
 	});
 }
 

@@ -1,4 +1,4 @@
-"use strict";
+
 
 const PI_AGENT_ID = "pi";
 const PI_HOOK_SOURCE = "pi-extension";
@@ -34,7 +34,7 @@ function isInteractiveMode(runtime = {}) {
   if (mode !== "interactive") return false;
   const stdin = runtime.stdin || process.stdin;
   const stdout = runtime.stdout || process.stdout;
-  return !!(stdin && stdin.isTTY && stdout && stdout.isTTY);
+  return !!(stdin?.isTTY && stdout?.isTTY);
 }
 
 function shouldReport(ctx, runtime = {}) {
@@ -63,10 +63,10 @@ function safeCall(fn) {
 }
 
 function readSessionId(ctx) {
-  const manager = ctx && ctx.sessionManager;
+  const manager = ctx?.sessionManager;
   const candidates = [
-    safeCall(manager && manager.getSessionId && manager.getSessionId.bind(manager)),
-    safeCall(manager && manager.getSessionFile && manager.getSessionFile.bind(manager)),
+    safeCall(manager?.getSessionId?.bind(manager)),
+    safeCall(manager?.getSessionFile?.bind(manager)),
   ];
   for (const candidate of candidates) {
     const value = safeString(candidate, "");
@@ -171,7 +171,7 @@ function attach(pi, deps = {}) {
     } catch {
       return waitForDelivery ? Promise.resolve(false) : false;
     }
-    const sessionKey = payload && payload.session_id ? payload.session_id : "pi:default";
+    const sessionKey = payload?.session_id ? payload.session_id : "pi:default";
     const task = () => Promise.resolve(postStateFn(payload));
     if (waitForDelivery) return chainDelivery(deliveryChains, sessionKey, task);
     task().catch(() => {});
@@ -195,7 +195,7 @@ function attach(pi, deps = {}) {
   pi.on("tool_call", handleToolCall);
 
   pi.on("tool_result", (nativeEvent, ctx) => {
-    const isError = !!(nativeEvent && nativeEvent.isError);
+    const isError = !!(nativeEvent?.isError);
     // Await failed tool delivery so a following lifecycle event cannot hide
     // the error state before Clawd receives it.
     return send(

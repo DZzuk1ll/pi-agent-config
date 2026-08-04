@@ -8,6 +8,8 @@ import {
 	isChildProcessTreeAlive,
 	trySignalChildTree,
 } from "../extensions/subagents/src/shared/post-exit-stdio-guard.ts";
+import { requirePresent } from "../extensions/_shared/runtime/require-present.ts";
+
 
 function delay(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
@@ -148,7 +150,7 @@ test("POSIX escalation kills a stubborn foreground process group and its descend
 	let descendantPid: number | undefined;
 
 	try {
-		const [chunk] = await once(leader.stdout!, "data") as [Buffer];
+		const [chunk] = await once(requirePresent(leader.stdout), "data") as [Buffer];
 		descendantPid = Number(chunk.toString("utf8").trim());
 		assert.ok(Number.isSafeInteger(descendantPid) && descendantPid > 1);
 		assert.equal(isChildProcessTreeAlive(leader, { processGroup: true }), true);

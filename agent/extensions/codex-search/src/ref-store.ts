@@ -43,12 +43,23 @@ export function createRefStore(): RefStore {
 async function loadStored(dir: string): Promise<StoredRefs> {
   try {
     const raw = await readFile(join(dir, STORE_FILE), "utf-8");
-    const parsed = JSON.parse(raw) as StoredRefs;
-    return { urlToRefId: parsed.urlToRefId ?? {} };
+    const parsed: unknown = JSON.parse(raw);
+    if (!isRecord(parsed) || !isStringRecord(parsed.urlToRefId)) {
+      throw new TypeError(`Invalid Codex search reference store at '${join(dir, STORE_FILE)}'.`);
+    }
+    return { urlToRefId: parsed.urlToRefId };
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code === "ENOENT") return { urlToRefId: {} };
     throw error;
   }
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isStringRecord(value: unknown): value is Record<string, string> {
+  return isRecord(value) && Object.values(value).every((entry) => typeof entry === "string");
 }
 
 async function enqueuePersist(dir: string, map: Map<string, string>): Promise<void> {

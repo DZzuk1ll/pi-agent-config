@@ -15,7 +15,7 @@ import {
 	temp_db,
 } from '../test/support.js';
 import {
-	ContextStore,
+	type ContextStore,
 	default_context_db_path,
 	escape_fts5_query,
 	get_context_store,
@@ -24,6 +24,8 @@ import {
 	set_context_sidecar_enabled,
 	should_index_text,
 } from './store.js';
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 const busy_error = Object.assign(new Error('database is locked'), {
 	code: 'ERR_SQLITE_ERROR',
@@ -110,80 +112,80 @@ describe('ContextStore', () => {
 		expect(stored?.receipt).toContain('exceeds 10 B');
 		expect(stored?.receipt).toContain('Next actions:');
 		expect(stored?.receipt).toContain(
-			`context_search query:"..." source_id:"${stored!.source_id}"`,
+			`context_search query:"..." source_id:"${requirePresent(stored).source_id}"`,
 		);
 		expect(stored?.receipt).toContain('before:1 after:1');
 		expect(stored?.receipt).toContain(
-			`context_export source_id:"${stored!.source_id}"`,
+			`context_export source_id:"${requirePresent(stored).source_id}"`,
 		);
 		expect(stored?.receipt).toContain(
 			'Avoid full context_get without chunk_id',
 		);
 		expect(stored?.receipt).toContain(
-			`First chunk id: ${stored!.source_id}_0001`,
+			`First chunk id: ${requirePresent(stored).source_id}_0001`,
 		);
-		expect(stored?.first_chunk_id).toBe(`${stored!.source_id}_0001`);
+		expect(stored?.first_chunk_id).toBe(`${requirePresent(stored).source_id}_0001`);
 		expect(stored?.receipt).toContain('/context list');
 		expect(stored?.receipt).toContain('Preview:');
 		expect(stored?.chunk_count).toBeGreaterThan(1);
 
 		const results = store.search('needle', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 		});
 		expect(results.length).toBeGreaterThan(0);
 		expect(results[0]).toMatchObject({
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 			tool_name: 'bash',
 		});
-		expect(results[0]!.content).toContain('needle-at-end');
-		expect(results[0]!.snippet).toBe(true);
+		expect(requirePresent(results[0]).content).toContain('needle-at-end');
+		expect(requirePresent(results[0]).snippet).toBe(true);
 
 		const full_results = store.search('needle', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 			full_content: true,
 		});
-		expect(full_results[0]!.snippet).toBe(false);
-		expect(full_results[0]!.content.length).toBeGreaterThanOrEqual(
-			results[0]!.content.length,
+		expect(requirePresent(full_results[0]).snippet).toBe(false);
+		expect(requirePresent(full_results[0]).content.length).toBeGreaterThanOrEqual(
+			requirePresent(results[0]).content.length,
 		);
 
-		const chunks = store.get(stored!.source_id);
+		const chunks = store.get(requirePresent(stored).source_id);
 		expect(chunks.map((chunk) => chunk.content).join('\n')).toContain(
 			'needle-at-end',
 		);
-		expect(chunks).toHaveLength(stored!.chunk_count);
-		expect(store.get(stored!.source_id, '1')[0]!.id).toBe(
-			chunks[0]!.id,
+		expect(chunks).toHaveLength(requirePresent(stored).chunk_count);
+		expect(requirePresent(store.get(requirePresent(stored).source_id, '1')[0]).id).toBe(
+			requirePresent(chunks[0]).id,
 		);
-		expect(store.get(stored!.source_id, '0001')[0]!.id).toBe(
-			chunks[0]!.id,
+		expect(requirePresent(store.get(requirePresent(stored).source_id, '0001')[0]).id).toBe(
+			requirePresent(chunks[0]).id,
 		);
 		expect(
-			store.get(
-				stored!.source_id,
-				`${stored!.source_id}:chunk:000`,
-			)[0]!.id,
-		).toBe(chunks[0]!.id);
+			requirePresent(store.get(
+				requirePresent(stored).source_id,
+				`${requirePresent(stored).source_id}:chunk:000`,
+			)[0]).id,
+		).toBe(requirePresent(chunks[0]).id);
 		expect(
-			store.get(
-				stored!.source_id,
-				`${stored!.source_id}:chunk:001`,
-			)[0]!.id,
-		).toBe(chunks[0]!.id);
+			requirePresent(store.get(
+				requirePresent(stored).source_id,
+				`${requirePresent(stored).source_id}:chunk:001`,
+			)[0]).id,
+		).toBe(requirePresent(chunks[0]).id);
 
-		const exact = store.get(stored!.source_id, results[0]!.chunk_id);
+		const exact = store.get(requirePresent(stored).source_id, requirePresent(results[0]).chunk_id);
 		expect(exact).toHaveLength(1);
-		expect(exact[0]!.id).toBe(results[0]!.chunk_id);
-		expect(exact[0]!.content).toContain('needle-at-end');
+		expect(requirePresent(exact[0]).id).toBe(requirePresent(results[0]).chunk_id);
+		expect(requirePresent(exact[0]).content).toContain('needle-at-end');
 
 		const surrounding = store.get(
-			stored!.source_id,
-			results[0]!.chunk_id,
+			requirePresent(stored).source_id,
+			requirePresent(results[0]).chunk_id,
 			{ before: 1, after: 1 },
 		);
 		expect(surrounding.length).toBeGreaterThanOrEqual(2);
 		expect(surrounding.map((chunk) => chunk.id)).toContain(
-			results[0]!.chunk_id,
+			requirePresent(results[0]).chunk_id,
 		);
 		expect(surrounding.map((chunk) => chunk.ordinal)).toEqual(
 			[...surrounding]
@@ -193,11 +195,11 @@ describe('ContextStore', () => {
 
 		const stats = store.stats();
 		expect(stats.sources).toBe(1);
-		expect(stats.chunks).toBe(stored!.chunk_count);
-		expect(stats.bytes_stored).toBe(stored!.bytes);
-		expect(stats.bytes_returned).toBe(stored!.returned_bytes);
+		expect(stats.chunks).toBe(requirePresent(stored).chunk_count);
+		expect(stats.bytes_stored).toBe(requirePresent(stored).bytes);
+		expect(stats.bytes_returned).toBe(requirePresent(stored).returned_bytes);
 		expect(stats.bytes_saved).toBe(
-			stored!.bytes - stored!.returned_bytes,
+			requirePresent(stored).bytes - requirePresent(stored).returned_bytes,
 		);
 		expect(stats.bytes_stored).toBeGreaterThan(stats.bytes_returned);
 		expect(stats.reduction_pct).toBeGreaterThan(0);
@@ -217,7 +219,7 @@ describe('ContextStore', () => {
 			force: true,
 		});
 
-		const exported = store.export_content(stored!.source_id);
+		const exported = store.export_content(requirePresent(stored).source_id);
 
 		expect(exported.chunks.length).toBeGreaterThan(1);
 		expect(exported.content).toBe(text);
@@ -227,9 +229,9 @@ describe('ContextStore', () => {
 			markers: ['alpha', 'beta', 'omega'],
 		});
 		expect(
-			store.export_content(stored!.source_id, '1').verified,
+			store.export_content(requirePresent(stored).source_id, '1').verified,
 		).toBeNull();
-		const ranged = store.export_content(stored!.source_id, '2', {
+		const ranged = store.export_content(requirePresent(stored).source_id, '2', {
 			before: 1,
 			after: 1,
 		});
@@ -251,30 +253,30 @@ describe('ContextStore', () => {
 		const stored = store.store({ text, tool_name: 'bash' });
 		expect(stored?.chunk_count).toBeGreaterThan(20);
 
-		const chunks = store.get(stored!.source_id);
+		const chunks = store.get(requirePresent(stored).source_id);
 		expect(
 			Math.max(...chunks.map((chunk) => chunk.byte_count)),
 		).toBeLessThanOrEqual(4096);
 
 		const results = store.search('TARGET_VALUE', {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 		});
 		expect(results).toHaveLength(1);
-		expect(results[0]!.content).toContain(
+		expect(requirePresent(results[0]).content).toContain(
 			'1173: TARGET_VALUE=chunk-test-value',
 		);
 		expect(
-			Buffer.byteLength(results[0]!.content, 'utf8'),
+			Buffer.byteLength(requirePresent(results[0]).content, 'utf8'),
 		).toBeLessThanOrEqual(4096);
 
 		const clamped_range = store.get(
-			stored!.source_id,
-			results[0]!.chunk_id,
+			requirePresent(stored).source_id,
+			requirePresent(results[0]).chunk_id,
 			{ before: 99, after: 99 },
 		);
 		expect(clamped_range).toHaveLength(7);
 		expect(clamped_range.map((chunk) => chunk.id)).toContain(
-			results[0]!.chunk_id,
+			requirePresent(results[0]).chunk_id,
 		);
 	});
 
@@ -291,12 +293,12 @@ describe('ContextStore', () => {
 			force: true,
 		});
 		expect(forced).not.toBeNull();
-		expect(forced!.receipt).toContain('[REDACTED:');
-		expect(forced!.receipt).not.toContain(secret);
+		expect(requirePresent(forced).receipt).toContain('[REDACTED:');
+		expect(requirePresent(forced).receipt).not.toContain(secret);
 
-		const chunks = store.get(forced!.source_id);
-		expect(chunks[0]!.content).toContain('[REDACTED:');
-		expect(chunks[0]!.content).not.toContain(secret);
+		const chunks = store.get(requirePresent(forced).source_id);
+		expect(requirePresent(chunks[0]).content).toContain('[REDACTED:');
+		expect(requirePresent(chunks[0]).content).not.toContain(secret);
 
 		const db = new DatabaseSync(store.db_path, {
 			enableForeignKeyConstraints: true,
@@ -306,7 +308,7 @@ describe('ContextStore', () => {
 				.prepare(
 					'SELECT content FROM context_chunks WHERE source_id = ?',
 				)
-				.get(forced!.source_id) as { content: string };
+				.get(requirePresent(forced).source_id) as { content: string };
 			expect(row.content).toContain('[REDACTED:');
 			expect(row.content).not.toContain(secret);
 		} finally {
@@ -337,11 +339,11 @@ describe('ContextStore', () => {
 		expect(other_session?.deduped).toBeUndefined();
 		expect(store.list({ global: true })).toHaveLength(2);
 		expect(
-			store.get(other_session!.source_id, undefined, {
+			store.get(requirePresent(other_session).source_id, undefined, {
 				project_path: '/repo',
 				session_id: 'session-b',
 			}),
-		).toHaveLength(other_session!.chunk_count);
+		).toHaveLength(requirePresent(other_session).chunk_count);
 		const db = new DatabaseSync(store.db_path, {
 			enableForeignKeyConstraints: true,
 		});
@@ -384,7 +386,7 @@ describe('ContextStore', () => {
 		try {
 			db.prepare(
 				'UPDATE context_sources SET created_at = ? WHERE id = ?',
-			).run(Date.now() - 30 * 24 * 60 * 60 * 1000, first!.source_id);
+			).run(Date.now() - 30 * 24 * 60 * 60 * 1000, requirePresent(first).source_id);
 		} finally {
 			close_db(db);
 		}
@@ -400,7 +402,7 @@ describe('ContextStore', () => {
 			'first command',
 		);
 		expect(store.list({ tool_name: 'read' })).toHaveLength(1);
-		expect(store.list({ source_id: first!.source_id })).toHaveLength(
+		expect(store.list({ source_id: requirePresent(first).source_id })).toHaveLength(
 			1,
 		);
 		expect(store.list({ limit: 1 })).toHaveLength(1);
@@ -430,14 +432,14 @@ describe('ContextStore', () => {
 
 		const scoped = store.search('shared-token');
 		expect(scoped).toHaveLength(1);
-		expect(scoped[0]!.content).toContain('current-session');
-		expect(store.get(other!.source_id)).toEqual([]);
+		expect(requirePresent(scoped[0]).content).toContain('current-session');
+		expect(store.get(requirePresent(other).source_id)).toEqual([]);
 		expect(
-			store.get(other!.source_id, undefined, { global: true }),
-		).toHaveLength(other!.chunk_count);
+			store.get(requirePresent(other).source_id, undefined, { global: true }),
+		).toHaveLength(requirePresent(other).chunk_count);
 
 		store.configure({ session_id: 'session-b' });
-		expect(store.search('shared-token')[0]!.content).toContain(
+		expect(requirePresent(store.search('shared-token')[0]).content).toContain(
 			'other-session',
 		);
 		expect(
@@ -475,7 +477,7 @@ describe('ContextStore', () => {
 
 		const scoped = store.search('overlap-token');
 		expect(scoped).toHaveLength(1);
-		expect(scoped[0]!.content).toContain('project-a');
+		expect(requirePresent(scoped[0]).content).toContain('project-a');
 		expect(
 			store.search('overlap-token', { global: true }),
 		).toHaveLength(2);
@@ -493,17 +495,17 @@ describe('ContextStore', () => {
 		});
 
 		expect(
-			store.search('needle', { source_id: bash!.source_id }),
+			store.search('needle', { source_id: requirePresent(bash).source_id }),
 		).toHaveLength(1);
 		expect(
-			store.search('needle', { source_id: read!.source_id })[0]!
+			requirePresent(store.search('needle', { source_id: requirePresent(read).source_id })[0])
 				.content,
 		).toContain('read-only');
 		expect(
 			store.search('needle', { tool_name: 'bash' }),
 		).toHaveLength(1);
 		expect(
-			store.search('needle', { tool_name: 'bash' })[0]!.content,
+			requirePresent(store.search('needle', { tool_name: 'bash' })[0]).content,
 		).toContain('bash-only');
 
 		for (let index = 0; index < 30; index++) {
@@ -548,10 +550,10 @@ describe('ContextStore', () => {
 			tool_name: 'bash',
 		});
 
-		expect(store.purge({ source_id: stored!.source_id })).toBe(1);
-		expect(store.get(stored!.source_id)).toEqual([]);
+		expect(store.purge({ source_id: requirePresent(stored).source_id })).toBe(1);
+		expect(store.get(requirePresent(stored).source_id)).toEqual([]);
 		expect(store.search('purge-token')).toEqual([]);
-		expect(store.purge({ source_id: stored!.source_id })).toBe(0);
+		expect(store.purge({ source_id: requirePresent(stored).source_id })).toBe(0);
 	});
 
 	it('purges by project and session filters with details', () => {
@@ -585,15 +587,15 @@ describe('ContextStore', () => {
 			session_id: 'session-a',
 		});
 		expect(
-			store.get(project_a_session_a!.source_id, undefined, {
+			store.get(requirePresent(project_a_session_a).source_id, undefined, {
 				global: true,
 			}),
 		).toEqual([]);
 		expect(
-			store.get(project_a_session_b!.source_id, undefined, {
+			store.get(requirePresent(project_a_session_b).source_id, undefined, {
 				global: true,
 			}),
-		).toHaveLength(project_a_session_b!.chunk_count);
+		).toHaveLength(requirePresent(project_a_session_b).chunk_count);
 
 		const project_purge = store.purge_with_details({
 			project_path: '/repo-b',
@@ -603,7 +605,7 @@ describe('ContextStore', () => {
 			project_path: '/repo-b',
 		});
 		expect(
-			store.get(project_b_session_a!.source_id, undefined, {
+			store.get(requirePresent(project_b_session_a).source_id, undefined, {
 				global: true,
 			}),
 		).toEqual([]);
@@ -631,16 +633,16 @@ describe('ContextStore', () => {
 				'UPDATE context_sources SET created_at = ? WHERE id = ?',
 			).run(
 				Date.now() - 30 * 24 * 60 * 60 * 1000,
-				old_source!.source_id,
+				requirePresent(old_source).source_id,
 			);
 		} finally {
 			close_db(db);
 		}
 
 		expect(store.purge({ older_than_days: 14 })).toBe(1);
-		expect(store.get(old_source!.source_id)).toEqual([]);
-		expect(store.get(fresh_source!.source_id)).toHaveLength(
-			fresh_source!.chunk_count,
+		expect(store.get(requirePresent(old_source).source_id)).toEqual([]);
+		expect(store.get(requirePresent(fresh_source).source_id)).toHaveLength(
+			requirePresent(fresh_source).chunk_count,
 		);
 		expect(store.search('ancient-token')).toEqual([]);
 		expect(store.search('fresh-token')).toHaveLength(1);
@@ -666,7 +668,7 @@ describe('ContextStore', () => {
 				'UPDATE context_sources SET created_at = ? WHERE id = ?',
 			).run(
 				Date.now() - 10 * 24 * 60 * 60 * 1000,
-				old_source!.source_id,
+				requirePresent(old_source).source_id,
 			);
 		} finally {
 			close_db(db);
@@ -679,11 +681,11 @@ describe('ContextStore', () => {
 			size_deleted: 0,
 		});
 		expect(
-			store.get(old_source!.source_id, undefined, { global: true }),
+			store.get(requirePresent(old_source).source_id, undefined, { global: true }),
 		).toEqual([]);
 		expect(
-			store.get(fresh_source!.source_id, undefined, { global: true }),
-		).toHaveLength(fresh_source!.chunk_count);
+			store.get(requirePresent(fresh_source).source_id, undefined, { global: true }),
+		).toHaveLength(requirePresent(fresh_source).chunk_count);
 		const stats = store.stats();
 		expect(stats).toMatchObject({
 			retention_days: 7,
@@ -714,7 +716,7 @@ describe('ContextStore', () => {
 				'UPDATE context_sources SET created_at = ? WHERE id = ?',
 			).run(
 				Date.now() - 30 * 24 * 60 * 60 * 1000,
-				old_source!.source_id,
+				requirePresent(old_source).source_id,
 			);
 		} finally {
 			close_db(db);

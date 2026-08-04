@@ -4,7 +4,6 @@ import { isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
-
 type Labels = {
 	path: string;
 	branch: string;
@@ -93,27 +92,36 @@ function readConfig(): StatuslineConfig {
 	const configPath = existsSync(CONFIG_PATH) ? CONFIG_PATH : LEGACY_CONFIG_PATH;
 	if (!existsSync(configPath)) return DEFAULT_CONFIG;
 	try {
-		const raw = JSON.parse(readFileSync(configPath, "utf8")) as Partial<StatuslineConfig>;
-		const labels = raw.labels && typeof raw.labels === "object"
+		const parsed: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+		if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) return DEFAULT_CONFIG;
+		const raw = parsed as Record<string, unknown>;
+		const rawLabels = raw.labels && typeof raw.labels === "object" && !Array.isArray(raw.labels)
+			? raw.labels as Record<string, unknown>
+			: undefined;
+		const labels = rawLabels
 			? Object.fromEntries(
 				Object.entries(DEFAULT_CONFIG.labels).map(([key, value]) => [
 					key,
-					cleanText((raw.labels as Partial<Labels>)[key as keyof Labels], value) || value,
+					cleanText(rawLabels[key], value) || value,
 				]),
 			) as Labels
 			: DEFAULT_CONFIG.labels;
 		return {
-			...DEFAULT_CONFIG,
-			...raw,
 			contextBarWidth: Math.max(
 				8,
-				Math.min(48, Number.isFinite(raw.contextBarWidth) ? Math.floor(raw.contextBarWidth!) : 24),
+				Math.min(48, typeof raw.contextBarWidth === "number" && Number.isFinite(raw.contextBarWidth) ? Math.floor(raw.contextBarWidth) : 24),
 			),
 			separator: cleanSeparator(raw.separator),
+			showPath: typeof raw.showPath === "boolean" ? raw.showPath : DEFAULT_CONFIG.showPath,
+			showGitBranch: typeof raw.showGitBranch === "boolean" ? raw.showGitBranch : DEFAULT_CONFIG.showGitBranch,
+			showTokens: typeof raw.showTokens === "boolean" ? raw.showTokens : DEFAULT_CONFIG.showTokens,
+			showCacheHitRate: typeof raw.showCacheHitRate === "boolean" ? raw.showCacheHitRate : DEFAULT_CONFIG.showCacheHitRate,
+			showCost: typeof raw.showCost === "boolean" ? raw.showCost : DEFAULT_CONFIG.showCost,
+			showExtensionStatuses: typeof raw.showExtensionStatuses === "boolean" ? raw.showExtensionStatuses : DEFAULT_CONFIG.showExtensionStatuses,
 			hiddenExtensionStatuses: Array.isArray(raw.hiddenExtensionStatuses)
 				? raw.hiddenExtensionStatuses.map((key) => cleanText(key)).filter(Boolean)
 				: [],
-			hideSubscriptionAccount: raw.hideSubscriptionAccount === true,
+			hideSubscriptionAccount: typeof raw.hideSubscriptionAccount === "boolean" ? raw.hideSubscriptionAccount : DEFAULT_CONFIG.hideSubscriptionAccount,
 			labels,
 		};
 	} catch {
@@ -139,7 +147,7 @@ function formatPath(cwd: string): string {
 	return insideHome ? (fromHome ? `~${sep}${fromHome}` : "~") : cwd;
 }
 
-function collectUsage(entries: readonly any[]): {
+function collectUsage(entries: readonly unknown[]): {
 	input: number;
 	output: number;
 	cacheRead: number;
@@ -160,19 +168,24 @@ function collectUsage(entries: readonly any[]): {
 	};
 
 	for (const entry of entries) {
-		if (entry?.type === "message" && entry.message?.role === "assistant") {
-			const usage = entry.message.usage as UsageLike | undefined;
+		if (!entry || typeof entry !== "object") continue;
+		const record = entry as Record<string, unknown>;
+		const message = record.message && typeof record.message === "object"
+			? record.message as Record<string, unknown>
+			: undefined;
+		if (record.type === "message" && message?.role === "assistant") {
+			const usage = message.usage as UsageLike | undefined;
 			add(usage);
 			const promptTokens = (usage?.input ?? 0) + (usage?.cacheRead ?? 0) + (usage?.cacheWrite ?? 0);
 			if (promptTokens > 0) cacheHitRate = ((usage?.cacheRead ?? 0) / promptTokens) * 100;
-		} else if (entry?.type === "message" && entry.message?.role === "toolResult") {
-			add(entry.message.usage as UsageLike | undefined);
-		} else if (entry?.type === "branch_summary" || entry?.type === "compaction") {
-			add(entry.usage as UsageLike | undefined);
+		} else if (record.type === "message" && message?.role === "toolResult") {
+			add(message.usage as UsageLike | undefined);
+		} else if (record.type === "branch_summary" || record.type === "compaction") {
+			add(record.usage as UsageLike | undefined);
 		}
 	}
 
-	return { ...totals, cacheHitRate };
+	return { ...totals, ...(cacheHitRate === undefined ? {} : { cacheHitRate }) };
 }
 
 function contextColor(percent: number | null | undefined): "success" | "warning" | "error" {
@@ -236,7 +249,7 @@ export default function statusline(pi: ExtensionAPI): void {
 					value: string,
 					color: "text" | "muted" | "success" | "warning" | "error" = "text",
 				): string => `${label(name)} ${theme.fg(color, value)}`;
-				const fit = (sections: string[], width: number): string =>
+				const fitSections = (sections: string[], width: number): string =>
 					truncateToWidth(sections.join(theme.fg("dim", config.separator)), width, theme.fg("dim", "…"));
 				const fits = (sections: string[], width: number): boolean =>
 					visibleWidth(sections.join(config.separator)) <= width;
@@ -326,14 +339,14 @@ export default function statusline(pi: ExtensionAPI): void {
 					const compactTop = [...projectLine, ...statusLine];
 					const compactBottom = [...modelLine, ...detailLine];
 					if (fits(compactTop, contentWidth) && fits(compactBottom, contentWidth)) {
-						return [fit(compactTop, contentWidth), fit(compactBottom, contentWidth)]
+							return [fitSections(compactTop, contentWidth), fitSections(compactBottom, contentWidth)]
 							.map((line) => `${" ".repeat(PADDING_X)}${line}`);
 					}
 
 					return [
-						...(projectLine.length ? [fit(projectLine, contentWidth)] : []),
-						fit(modelLine, contentWidth),
-						...(detailLine.length || statusLine.length ? [fit([...detailLine, ...statusLine], contentWidth)] : []),
+							...(projectLine.length ? [fitSections(projectLine, contentWidth)] : []),
+							fitSections(modelLine, contentWidth),
+							...(detailLine.length || statusLine.length ? [fitSections([...detailLine, ...statusLine], contentWidth)] : []),
 					].map((line) => `${" ".repeat(PADDING_X)}${line}`);
 					},
 				};

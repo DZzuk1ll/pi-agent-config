@@ -32,10 +32,12 @@ function latestState(entries: readonly { data: unknown }[]) {
 }
 
 function deferred<T>() {
-	let resolve!: (value: T) => void;
+	let pendingResolve: ((value: T) => void) | undefined;
 	const promise = new Promise<T>((settle) => {
-		resolve = settle;
+		pendingResolve = settle;
 	});
+	assert.ok(pendingResolve);
+	const resolve = pendingResolve;
 	return { promise, resolve };
 }
 

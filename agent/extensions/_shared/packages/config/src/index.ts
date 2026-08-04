@@ -92,26 +92,23 @@ export function configPath(name: string, file: string = "config.json"): string {
 /**
  * Load and parse a JSON config file.
  *
- * Returns `{}` for missing files, malformed JSON, or non-plain-object values.
- * The typeof guard fixes a latent bug where valid non-object JSON
- * (e.g. `"hello"`, `42`, `null`) passes through the cast. Arrays are also
- * rejected — `typeof [] === "object"` in JavaScript, but config files are
- * always plain objects.
+ * Missing files, malformed JSON, and structurally invalid values return
+ * `undefined`. Callers own their defaults so invalid input cannot masquerade
+ * as a valid config object.
  */
-export function loadJsonConfig<T>(path: string): T {
-	if (!existsSync(path)) return {} as T;
+export function loadJsonConfig<T extends TObject>(path: string, schema: T): Static<T> | undefined {
+	if (!existsSync(path)) return undefined;
 	try {
 		const parsed = JSON.parse(readFileSync(path, "utf-8")) as unknown;
-		if (parsed === null || typeof parsed !== "object" || Array.isArray(parsed)) return {} as T;
-		return parsed as T;
+		return validateConfig(schema, parsed);
 	} catch (err) {
 		// Diagnostic for malformed-JSON path. Silent save + silent load otherwise
 		// produce identical user-visible symptoms (state reverts on next start)
 		// with zero diagnostic surface — the user cannot tell "never saved" from
 		// "saved-but-unreadable." Warning is owner-only since the file lives in
 		// the user's HOME.
-		console.warn(`rpiv-config: invalid JSON at ${path}, using default ({}) — ${(err as Error).message}`);
-		return {} as T;
+		console.warn(`rpiv-config: invalid JSON at ${path}, using caller default — ${err instanceof Error ? err.message : String(err)}`);
+		return undefined;
 	}
 }
 
@@ -120,21 +117,25 @@ export function loadJsonConfig<T>(path: string): T {
  * legacy `~/.config/<name>/<file>` location only when the XDG path is missing.
  *
  * - XDG file present (valid or malformed) → its parse result wins. A malformed
- *   XDG file warns and returns `{}` but does NOT silently fall back to legacy —
+ *   XDG file warns and returns `undefined` but does NOT silently fall back to legacy —
  *   corruption is surfaced, not masked.
- * - XDG file missing → read the legacy path (which returns `{}` if also missing,
- *   or warns + `{}` if malformed).
- * - Both missing → `{}`.
+ * - XDG file missing → read the legacy path (which returns `undefined` if also
+ *   missing, or warns + `undefined` if malformed).
+ * - Both missing → `undefined`.
  *
  * @param name — package directory name (e.g. "rpiv-todo")
  * @param file — config filename (defaults to "config.json")
  */
-export function loadJsonConfigWithLegacyFallback<T>(name: string, file: string = "config.json"): T {
+export function loadJsonConfigWithLegacyFallback<T extends TObject>(
+	name: string,
+	schema: T,
+	file: string = "config.json",
+): Static<T> | undefined {
 	const xdgPath = configPath(name, file);
 	if (existsSync(xdgPath)) {
-		return loadJsonConfig<T>(xdgPath);
+		return loadJsonConfig(xdgPath, schema);
 	}
-	return loadJsonConfig<T>(legacyConfigPath(name, file));
+	return loadJsonConfig(legacyConfigPath(name, file), schema);
 }
 
 // ---------------------------------------------------------------------------
@@ -280,24 +281,16 @@ export function readEnvVar(key: string, fallback?: string): string | undefined {
 /**
  * Validate and clean a config value against a TypeBox schema.
  *
- * 1. Guards against non-plain-object input (returns `{}` for primitives, arrays).
- * 2. Clones the input (Value.Clean mutates).
- * 3. Strips unknown properties via `Value.Clean`.
- * 4. Applies schema defaults via `Value.Create` (spread merge: defaults
- *    provide base, cleaned value overrides).
- * 5. Returns the validated, cleaned object typed as the schema's static type.
- *
- * Falls back to `{}` on any failure — same fail-soft contract as `loadJsonConfig`.
+ * Clones the input, applies schema defaults, strips unknown properties, and
+ * checks the final value. Invalid input returns `undefined`.
  */
-export function validateConfig<T extends TObject>(schema: T, value: unknown): Static<T> {
+export function validateConfig<T extends TObject>(schema: T, value: unknown): Static<T> | undefined {
 	try {
-		if (value === null || typeof value !== "object" || Array.isArray(value)) return {} as Static<T>;
-		const cleaned = Value.Clean(schema, Value.Clone(value));
-		const defaults = Value.Create(schema);
-		// Merge: defaults as base, cleaned values override.
-		// Both are plain objects from TypeBox operations — safe spread via Record cast.
-		return { ...(defaults as Record<string, unknown>), ...(cleaned as Record<string, unknown>) } as Static<T>;
+		const cloned = Value.Clone(value);
+		const defaulted = Value.Default(schema, cloned);
+		const cleaned = Value.Clean(schema, defaulted);
+		return Value.Check(schema, cleaned) ? cleaned : undefined;
 	} catch {
-		return {} as Static<T>;
+		return undefined;
 	}
 }

@@ -2,7 +2,7 @@
  * Rendering functions for subagent results
  */
 
-import * as path from "node:path";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type { AgentToolResult } from "../shared/tool-result.ts";
 import { getMarkdownTheme, keyText, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, Markdown, Spacer, Text, visibleWidth, type Component } from "@earendil-works/pi-tui";
@@ -18,12 +18,14 @@ import {
 	MAX_WIDGET_JOBS,
 	WIDGET_KEY,
 } from "../shared/types.ts";
-import { formatTokens, formatUsage, formatDuration, formatModelThinking, formatToolCall, shortenPath } from "../shared/formatters.ts";
+import { formatTokens, formatUsage, formatDuration, formatToolCall, shortenPath } from "../shared/formatters.ts";
 import { getDisplayItems, getSingleResultOutput } from "../shared/utils.ts";
 import { flatToLogicalStepIndex } from "../runs/background/parallel-groups.ts";
 import { formatNestedAggregate } from "../runs/shared/nested-render.ts";
 import { aggregateStepStatus, formatActivityLabel, formatAgentRunningLabel, formatParallelOutcome } from "../shared/status-format.ts";
 import { contextModeBadge, contextModePrefix } from "../runs/shared/context-mode.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 type Theme = ExtensionContext["ui"]["theme"];
 
@@ -85,7 +87,7 @@ export function truncLine(text: string, maxWidth: number): string {
 			const graphemeWidth = visibleWidth(grapheme);
 
 			if (currentWidth + graphemeWidth > targetWidth) {
-				return result + activeStyles.join("") + "…";
+				return `${result + activeStyles.join("")}…`;
 			}
 
 			result += grapheme;
@@ -94,7 +96,7 @@ export function truncLine(text: string, maxWidth: number): string {
 		i = end;
 	}
 
-	return result + activeStyles.join("") + "…";
+	return `${result + activeStyles.join("")}…`;
 }
 
 function wrapPlainText(text: string, maxWidth: number): string[] {
@@ -140,7 +142,7 @@ function runningSeed(...values: Array<number | undefined>): number | undefined {
 
 export function runningGlyph(seed = 0, now = Date.now()): string {
 	const animationFrame = Math.floor(now / RUNNING_FRAME_INTERVAL_MS);
-	return RUNNING_FRAMES[Math.abs(animationFrame + seed) % RUNNING_FRAMES.length]!;
+	return requirePresent(RUNNING_FRAMES[Math.abs(animationFrame + seed) % RUNNING_FRAMES.length]);
 }
 
 function progressRunningSeed(progress: ProgressSeedSource | undefined): number | undefined {
@@ -164,7 +166,7 @@ export function clearLegacyResultAnimationTimer(context: LegacyResultAnimationCo
 	const timer = context.state.subagentResultAnimationTimer;
 	if (!timer) return;
 	clearInterval(timer);
-	context.state.subagentResultAnimationTimer = undefined;
+	delete context.state.subagentResultAnimationTimer;
 }
 
 function extractOutputTarget(task: string): string | undefined {
@@ -333,7 +335,7 @@ function formatWidgetAgents(agents: string[]): string {
 function widgetJobName(job: AsyncJobState): string {
 	if (job.mode === "parallel") return "parallel";
 	if (job.mode === "chain") return "chain";
-	if (job.mode === "single" && job.agents?.length === 1) return job.agents[0]!;
+	if (job.mode === "single" && job.agents?.length === 1) return requirePresent(job.agents[0]);
 	if (job.agents?.length) return formatWidgetAgents(job.agents);
 	return job.mode ?? "subagent";
 }
@@ -443,7 +445,7 @@ function widgetParallelAgentDetails(job: AsyncJobState, theme: Theme, expanded =
 }
 
 function parseParallelGroupAgentCount(label: string | undefined): number | undefined {
-	if (!label || !label.startsWith("[") || !label.endsWith("]")) return undefined;
+	if (!label?.startsWith("[") || !label.endsWith("]")) return undefined;
 	const inner = label.slice(1, -1).trim();
 	if (!inner) return 0;
 	return inner.split("+").map((part) => part.trim()).filter(Boolean).length;
@@ -471,12 +473,12 @@ function buildChainStepSpans(details: Pick<Details, "chainAgents" | "workflowGra
 					.filter((value): value is number => typeof value === "number");
 				const start = childFlatIndexes.length ? Math.min(...childFlatIndexes) : flatCursor;
 				const count = node.children?.length ?? 0;
-				spans.push({ stepIndex: node.stepIndex, start, count, isParallel: true, status: node.status, label: node.label, error: node.error });
+				spans.push(omitUndefined({ stepIndex: node.stepIndex, start, count, isParallel: true, status: node.status, label: node.label, error: node.error }));
 				flatCursor = Math.max(flatCursor, start + count);
 				continue;
 			}
 			const start = node.flatIndex ?? flatCursor;
-			spans.push({ stepIndex: node.stepIndex, start, count: 1, isParallel: false, status: node.status, label: node.label, error: node.error });
+			spans.push(omitUndefined({ stepIndex: node.stepIndex, start, count: 1, isParallel: false, status: node.status, label: node.label, error: node.error }));
 			flatCursor = Math.max(flatCursor, start + 1);
 		}
 		if (spans.length) return spans.sort((left, right) => left.stepIndex - right.stepIndex);
@@ -486,7 +488,7 @@ function buildChainStepSpans(details: Pick<Details, "chainAgents" | "workflowGra
 	const spans: ChainStepSpan[] = [];
 	let start = 0;
 	for (let stepIndex = 0; stepIndex < details.chainAgents.length; stepIndex++) {
-		const label = details.chainAgents[stepIndex]!;
+		const label = requirePresent(details.chainAgents[stepIndex]);
 		const parsedCount = parseParallelGroupAgentCount(label);
 		const count = parsedCount ?? 1;
 		spans.push({ stepIndex, start, count, isParallel: parsedCount !== undefined });
@@ -551,14 +553,14 @@ function buildChainRenderEntries(details: Details, label: MultiProgressLabel): C
 	const entries: ChainRenderEntry[] = [];
 	for (const span of buildChainStepSpans(details)) {
 		if (span.isParallel && span.count === 0) {
-			entries.push({
+			entries.push(omitUndefined({
 				kind: "placeholder",
 				rowNumber: span.stepIndex + 1,
 				stepLabel: `Step ${span.stepIndex + 1}`,
 				agentName: span.label ?? details.chainAgents?.[span.stepIndex] ?? `step-${span.stepIndex + 1}`,
 				status: span.status ?? "pending",
 				error: span.error,
-			});
+			}));
 			continue;
 		}
 		for (let index = span.start; index < span.start + span.count; index++) {
@@ -600,7 +602,7 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 			if (progress.index >= 0 && progress.index < totalCount) statuses[progress.index] = progress.status;
 		}
 		for (let i = 0; i < details.results.length; i++) {
-			const result = details.results[i]!;
+			const result = requirePresent(details.results[i]);
 			const progressFromArray = details.progress?.find((progress) => progress.index === i)
 				|| details.progress?.find((progress) => progress.agent === result.agent && progress.status === "running");
 			const index = result.progress?.index ?? progressFromArray?.index ?? i;
@@ -624,7 +626,7 @@ function buildMultiProgressLabel(details: Pick<Details, "mode" | "results" | "pr
 	}
 
 	if (activeParallelGroup) {
-		const currentStepIndex = details.currentStepIndex!;
+		const currentStepIndex = requirePresent(details.currentStepIndex);
 		const span = stepSpans[currentStepIndex];
 		const groupSize = span?.count ?? 1;
 		const groupStart = span?.start ?? 0;
@@ -697,7 +699,7 @@ function widgetStats(job: AsyncJobState, theme: Theme): string {
 			if (stepsTotal > 0) parts.push(`${done}/${stepsTotal} done`);
 		} else {
 			const activeGroup = job.currentStep !== undefined
-				? job.parallelGroups?.find((group) => job.currentStep! >= group.start && job.currentStep! < group.start + group.count)
+				? job.parallelGroups?.find((group) => requirePresent(job.currentStep) >= group.start && requirePresent(job.currentStep) < group.start + group.count)
 				: job.parallelGroups?.find((group) => group.start === 0);
 			const logicalStep = activeGroup?.stepIndex ?? job.currentStep ?? 0;
 			const total = job.chainStepCount ?? stepsTotal;
@@ -811,7 +813,7 @@ function formatNestedWidgetLines(children: NestedRunSummary[] | undefined, theme
 			return;
 		}
 		for (let index = 0; index < items.length; index++) {
-			const child = items[index]!;
+			const child = requirePresent(items[index]);
 			if (lines.length >= lineBudget) {
 				const aggregate = formatNestedAggregate(items.slice(index));
 				if (aggregate) lines[lines.length - 1] = theme.fg("dim", `${prefix}↳ ${aggregate}`);
@@ -1150,7 +1152,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 		const lines = expanded
 			? buildWidgetLines(jobs, theme, width, true)
 			: jobs.length === 1
-				? compactSingleWidgetLines(jobs[0]!, theme, width)
+				? compactSingleWidgetLines(requirePresent(jobs[0]), theme, width)
 				: buildWidgetLines(jobs, theme, width, false);
 		const container = new Container();
 		for (const line of fitAdaptiveWidgetLines(jobs, lines, theme, width, expanded)) container.addChild(new Text(line, 1, 0));
@@ -1160,7 +1162,7 @@ function buildWidgetComponent(jobs: AsyncJobState[], expanded: boolean): (_tui: 
 
 export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = getTermWidth(), expanded = false): string[] {
 	if (jobs.length === 0) return [];
-	if (jobs.length === 1) return buildSingleWidgetLines(jobs[0]!, theme, width, expanded);
+	if (jobs.length === 1) return buildSingleWidgetLines(requirePresent(jobs[0]), theme, width, expanded);
 	const running = jobs.filter((job) => job.status === "running");
 	const queued = jobs.filter((job) => job.status === "queued");
 	const finished = jobs.filter((job) => job.status !== "running" && job.status !== "queued");
@@ -1219,7 +1221,7 @@ export function buildWidgetLines(jobs: AsyncJobState[], theme: Theme, width = ge
 	}
 
 	for (let i = 0; i < items.length; i++) {
-		const item = items[i]!;
+		const item = requirePresent(items[i]);
 		const last = i === items.length - 1;
 		const branch = last ? "└─" : "├─";
 		const continuation = last ? "   " : "│  ";
@@ -1330,14 +1332,14 @@ function renderMultiCompact(d: Details, theme: Theme, frame?: number): Component
 
 	const useResultsDirectly = multiLabel.hasParallelInChain || !d.chainAgents?.length;
 	const displayStart = multiLabel.showActiveGroupOnly ? multiLabel.groupStartIndex : 0;
-	const displayEnd = multiLabel.showActiveGroupOnly ? multiLabel.groupEndIndex : (useResultsDirectly ? d.results.length : d.chainAgents!.length);
+	const displayEnd = multiLabel.showActiveGroupOnly ? multiLabel.groupEndIndex : (useResultsDirectly ? d.results.length : requirePresent(d.chainAgents).length);
 	const chainEntries = buildChainRenderEntries(d, multiLabel);
 	const renderEntries = chainEntries ?? Array.from({ length: displayEnd - displayStart }, (_, offset): ChainRenderEntry => {
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const fallbackLabel = itemTitle.toLowerCase();
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `${fallbackLabel}-${rowNumber}`) : (requirePresent(d.chainAgents)[i] || r?.agent || `${fallbackLabel}-${rowNumber}`) };
 	});
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
@@ -1402,7 +1404,7 @@ export function renderSubagentResult(
 	frame?: number,
 ): Component {
 	const d = result.details;
-	if (!d || !d.results.length) {
+	if (!d?.results.length) {
 		const t = result.content[0];
 		const text = t?.type === "text" ? t.text : "(no output)";
 		const contextPrefix = contextModePrefix(theme, d?.context);
@@ -1447,36 +1449,36 @@ export function renderSubagentResult(
 				: "";
 
 		const w = getTermWidth() - 4;
-		const fit = (text: string) => expanded ? text : truncLine(text, w);
+		const fitText = (text: string) => expanded ? text : truncLine(text, w);
 		const toolCallLines = getToolCallLines(r, expanded);
 		const c = new Container();
-		c.addChild(new Text(fit(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`), 0, 0));
+		c.addChild(new Text(fitText(`${icon} ${theme.fg("toolTitle", theme.bold(r.agent))}${contextBadge}${progressInfo}`), 0, 0));
 		c.addChild(new Spacer(1));
 		const taskMaxLen = Math.max(20, w - 8);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
 			? r.task
 			: `${r.task.slice(0, taskMaxLen)}...`;
 		c.addChild(
-			new Text(fit(theme.fg("dim", `Task: ${taskPreview}`)), 0, 0),
+			new Text(fitText(theme.fg("dim", `Task: ${taskPreview}`)), 0, 0),
 		);
 		c.addChild(new Spacer(1));
 
 		if (isRunning && r.progress) {
 			const progressSnapshotNow = snapshotNowForProgress(r.progress);
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, progressSnapshotNow, 12)) {
-				c.addChild(new Text(fit(`  ${nestedLine}`), 0, 0));
+				c.addChild(new Text(fitText(`  ${nestedLine}`), 0, 0));
 			}
 			const toolLine = formatCurrentToolLine(r.progress, w, expanded, progressSnapshotNow);
 			if (toolLine) {
-				c.addChild(new Text(fit(theme.fg("warning", `> ${toolLine}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("warning", `> ${toolLine}`)), 0, 0));
 			}
 			const liveStatusLine = buildLiveStatusLine(r.progress, progressSnapshotNow);
 			if (liveStatusLine) {
-				c.addChild(new Text(fit(theme.fg("accent", liveStatusLine)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("accent", liveStatusLine)), 0, 0));
 			}
-			c.addChild(new Text(fit(theme.fg("accent", liveDetailHintText())), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("accent", liveDetailHintText())), 0, 0));
 			if (r.artifactPaths) {
-				c.addChild(new Text(fit(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 			}
 			if (r.progress.recentTools?.length) {
 				for (const t of r.progress.recentTools.slice(-3)) {
@@ -1484,24 +1486,24 @@ export function renderSubagentResult(
 					const argsPreview = expanded || t.args.length <= maxArgsLen
 						? t.args
 						: `${t.args.slice(0, maxArgsLen)}...`;
-					c.addChild(new Text(fit(theme.fg("dim", `${t.tool}: ${argsPreview}`)), 0, 0));
+					c.addChild(new Text(fitText(theme.fg("dim", `${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}
 			for (const line of (r.progress.recentOutput ?? []).slice(-5)) {
-				c.addChild(new Text(fit(theme.fg("dim", `  ${line}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("dim", `  ${line}`)), 0, 0));
 			}
 			if (toolLine || liveStatusLine || r.progress.recentTools?.length || r.progress.recentOutput?.length || r.artifactPaths) {
 				c.addChild(new Spacer(1));
 			}
 		} else {
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, r.progress?.lastActivityAt, 8)) {
-				c.addChild(new Text(fit(`  ${nestedLine}`), 0, 0));
+				c.addChild(new Text(fitText(`  ${nestedLine}`), 0, 0));
 			}
 		}
 
 		if (expanded) {
 			for (const line of toolCallLines) {
-				c.addChild(new Text(fit(theme.fg("muted", line)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("muted", line)), 0, 0));
 			}
 			if (toolCallLines.length) c.addChild(new Spacer(1));
 		}
@@ -1509,22 +1511,22 @@ export function renderSubagentResult(
 		if (output) c.addChild(new Markdown(output, 0, 0, mdTheme));
 		c.addChild(new Spacer(1));
 		if (r.skills?.length) {
-			c.addChild(new Text(fit(theme.fg("dim", `Skills: ${r.skills.join(", ")}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `Skills: ${r.skills.join(", ")}`)), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(fit(theme.fg("warning", `Warning: ${r.skillsWarning}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("warning", `Warning: ${r.skillsWarning}`)), 0, 0));
 		}
 		if (r.attemptedModels && r.attemptedModels.length > 1) {
-			c.addChild(new Text(fit(theme.fg("dim", `Fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `Fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
 		}
-		c.addChild(new Text(fit(theme.fg("dim", formatUsage(r.usage, r.model))), 0, 0));
+		c.addChild(new Text(fitText(theme.fg("dim", formatUsage(r.usage, r.model))), 0, 0));
 		if (r.sessionFile) {
-			c.addChild(new Text(fit(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `Session: ${shortenPath(r.sessionFile)}`)), 0, 0));
 		}
 
 		if (!isRunning && r.artifactPaths) {
 			c.addChild(new Spacer(1));
-			c.addChild(new Text(fit(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `Artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 		}
 		return c;
 	}
@@ -1615,28 +1617,28 @@ export function renderSubagentResult(
 		: null;
 
 	const w = getTermWidth() - 4;
-	const fit = (text: string) => expanded ? text : truncLine(text, w);
+	const fitText = (text: string) => expanded ? text : truncLine(text, w);
 	const c = new Container();
 	c.addChild(
 		new Text(
-			fit(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}`),
+			fitText(`${icon} ${theme.fg("toolTitle", theme.bold(modeLabel))}${contextBadge} · ${multiLabel.headerLabel}${summaryStr}`),
 			0,
 			0,
 		),
 	);
 	if (chainVis) {
-		c.addChild(new Text(fit(`  ${chainVis}`), 0, 0));
+		c.addChild(new Text(fitText(`  ${chainVis}`), 0, 0));
 	}
 
 	const useResultsDirectly = multiLabel.hasParallelInChain || !d.chainAgents?.length;
 	const displayStart = multiLabel.showActiveGroupOnly ? multiLabel.groupStartIndex : 0;
-	const displayEnd = multiLabel.showActiveGroupOnly ? multiLabel.groupEndIndex : (useResultsDirectly ? d.results.length : d.chainAgents!.length);
+	const displayEnd = multiLabel.showActiveGroupOnly ? multiLabel.groupEndIndex : (useResultsDirectly ? d.results.length : requirePresent(d.chainAgents).length);
 	const chainEntries = buildChainRenderEntries(d, multiLabel);
 	const renderEntries = chainEntries ?? Array.from({ length: displayEnd - displayStart }, (_, offset): ChainRenderEntry => {
 		const i = displayStart + offset;
 		const r = d.results[i];
 		const rowNumber = multiLabel.showActiveGroupOnly ? (i - multiLabel.groupStartIndex + 1) : (i + 1);
-		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (d.chainAgents![i] || r?.agent || `step-${rowNumber}`) };
+		return { kind: "result", resultIndex: i, rowNumber, agentName: useResultsDirectly ? (r?.agent || `step-${rowNumber}`) : (requirePresent(d.chainAgents)[i] || r?.agent || `step-${rowNumber}`) };
 	});
 
 	c.addChild(new Spacer(1));
@@ -1644,7 +1646,7 @@ export function renderSubagentResult(
 	for (const entry of renderEntries) {
 		if (entry.kind === "placeholder") {
 			const statusLabel = widgetStepStatus(entry.status as AsyncJobStep["status"], theme);
-			c.addChild(new Text(fit(`  ${statusLabel} ${entry.stepLabel}: ${theme.bold(entry.agentName)}`), 0, 0));
+			c.addChild(new Text(fitText(`  ${statusLabel} ${entry.stepLabel}: ${theme.bold(entry.agentName)}`), 0, 0));
 			c.addChild(new Text(theme.fg(entry.status === "failed" ? "error" : "dim", `    status: ${entry.status}`), 0, 0));
 			if (entry.error) c.addChild(new Text(theme.fg("error", `    error: ${entry.error}`), 0, 0));
 			c.addChild(new Spacer(1));
@@ -1657,7 +1659,7 @@ export function renderSubagentResult(
 
 		if (!r) {
 			const pendingLabel = entry.rowLabel ?? `${itemTitle} ${rowNumber}`;
-			c.addChild(new Text(fit(theme.fg("dim", `  ${pendingLabel}: ${agentName}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `  ${pendingLabel}: ${agentName}`)), 0, 0));
 			c.addChild(new Text(theme.fg("dim", `    status: pending`), 0, 0));
 			c.addChild(new Spacer(1));
 			continue;
@@ -1686,48 +1688,48 @@ export function renderSubagentResult(
 			? `${statusIcon} ${stepLabel}: ${theme.bold(theme.fg("warning", r.agent))}${contextBadge}${modelDisplay}${stats}`
 			: `${statusIcon} ${stepLabel}: ${theme.bold(r.agent)}${contextBadge}${modelDisplay}${stats}`;
 		const toolCallLines = getToolCallLines(r, expanded);
-		c.addChild(new Text(fit(stepHeader), 0, 0));
+		c.addChild(new Text(fitText(stepHeader), 0, 0));
 
 		const taskMaxLen = Math.max(20, w - 12);
 		const taskPreview = expanded || r.task.length <= taskMaxLen
 			? r.task
 			: `${r.task.slice(0, taskMaxLen)}...`;
-		c.addChild(new Text(fit(theme.fg("dim", `    task: ${taskPreview}`)), 0, 0));
+		c.addChild(new Text(fitText(theme.fg("dim", `    task: ${taskPreview}`)), 0, 0));
 
 		const outputTarget = extractOutputTarget(r.task);
 		if (outputTarget) {
-			c.addChild(new Text(fit(theme.fg("dim", `    output: ${outputTarget}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `    output: ${outputTarget}`)), 0, 0));
 		}
 
 		if (r.skills?.length) {
-			c.addChild(new Text(fit(theme.fg("dim", `    skills: ${r.skills.join(", ")}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `    skills: ${r.skills.join(", ")}`)), 0, 0));
 		}
 		if (r.skillsWarning) {
-			c.addChild(new Text(fit(theme.fg("warning", `    Warning: ${r.skillsWarning}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("warning", `    Warning: ${r.skillsWarning}`)), 0, 0));
 		}
 		if (r.attemptedModels && r.attemptedModels.length > 1) {
-			c.addChild(new Text(fit(theme.fg("dim", `    fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `    fallbacks: ${r.attemptedModels.join(" → ")}`)), 0, 0));
 		}
 
 		if (rRunning && liveProgress) {
 			if (liveProgress.skills?.length) {
-				c.addChild(new Text(fit(theme.fg("accent", `    skills: ${liveProgress.skills.join(", ")}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("accent", `    skills: ${liveProgress.skills.join(", ")}`)), 0, 0));
 			}
 			const progressSnapshotNow = snapshotNowForProgress(liveProgress);
 			const toolLine = formatCurrentToolLine(liveProgress, w, expanded, progressSnapshotNow);
 			if (toolLine) {
-				c.addChild(new Text(fit(theme.fg("warning", `    > ${toolLine}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("warning", `    > ${toolLine}`)), 0, 0));
 			}
 			const liveStatusLine = buildLiveStatusLine(liveProgress, progressSnapshotNow);
 			if (liveStatusLine) {
-				c.addChild(new Text(fit(theme.fg("accent", `    ${liveStatusLine}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("accent", `    ${liveStatusLine}`)), 0, 0));
 			}
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, progressSnapshotNow, 8)) {
-				c.addChild(new Text(fit(`    ${nestedLine}`), 0, 0));
+				c.addChild(new Text(fitText(`    ${nestedLine}`), 0, 0));
 			}
-			c.addChild(new Text(fit(theme.fg("accent", `    ${liveDetailHintText()}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("accent", `    ${liveDetailHintText()}`)), 0, 0));
 			if (r.artifactPaths) {
-				c.addChild(new Text(fit(theme.fg("dim", `    artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("dim", `    artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 			}
 			if (liveProgress.recentTools?.length) {
 				for (const t of liveProgress.recentTools.slice(-3)) {
@@ -1735,28 +1737,28 @@ export function renderSubagentResult(
 					const argsPreview = expanded || t.args.length <= maxArgsLen
 						? t.args
 						: `${t.args.slice(0, maxArgsLen)}...`;
-					c.addChild(new Text(fit(theme.fg("dim", `      ${t.tool}: ${argsPreview}`)), 0, 0));
+					c.addChild(new Text(fitText(theme.fg("dim", `      ${t.tool}: ${argsPreview}`)), 0, 0));
 				}
 			}
 			const recentLines = (liveProgress.recentOutput ?? []).slice(-5);
 			for (const line of recentLines) {
-				c.addChild(new Text(fit(theme.fg("dim", `      ${line}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("dim", `      ${line}`)), 0, 0));
 			}
 		}
 
 		if (!rRunning) {
 			for (const nestedLine of formatNestedWidgetLines(r.children, theme, w, true, r.progress?.lastActivityAt, 8)) {
-				c.addChild(new Text(fit(`    ${nestedLine}`), 0, 0));
+				c.addChild(new Text(fitText(`    ${nestedLine}`), 0, 0));
 			}
 		}
 
 		if (!rRunning && r.artifactPaths) {
-			c.addChild(new Text(fit(theme.fg("dim", `    artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
+			c.addChild(new Text(fitText(theme.fg("dim", `    artifacts: ${shortenPath(r.artifactPaths.outputPath)}`)), 0, 0));
 		}
 
 		if (expanded && !rRunning) {
 			for (const line of toolCallLines) {
-				c.addChild(new Text(fit(theme.fg("muted", `      ${line}`)), 0, 0));
+				c.addChild(new Text(fitText(theme.fg("muted", `      ${line}`)), 0, 0));
 			}
 			if (toolCallLines.length) c.addChild(new Spacer(1));
 		}
@@ -1766,7 +1768,7 @@ export function renderSubagentResult(
 
 	if (d.artifacts) {
 		c.addChild(new Spacer(1));
-		c.addChild(new Text(fit(theme.fg("dim", `Artifacts dir: ${shortenPath(d.artifacts.dir)}`)), 0, 0));
+		c.addChild(new Text(fitText(theme.fg("dim", `Artifacts dir: ${shortenPath(d.artifacts.dir)}`)), 0, 0));
 	}
 	return c;
 }

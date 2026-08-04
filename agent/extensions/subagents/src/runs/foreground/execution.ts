@@ -4,6 +4,7 @@
 
 import { existsSync, unlinkSync } from "node:fs";
 import * as path from "node:path";
+import { omitUndefined, omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
 import type { Message } from "@earendil-works/pi-ai";
 import type { AgentConfig } from "../../agents/agents.ts";
 import {
@@ -88,9 +89,10 @@ import { appendTurnBudgetSystemPrompt, formatTurnBudgetOutput, initialTurnBudget
 import { initialToolBudgetState, toolBudgetState } from "../shared/tool-budget.ts";
 import { resolveWatchdogConfig } from "../../watchdog/settings.ts";
 import { agentDefinitionDigest, launchBindingDigest } from "../../shared/launch-contract.ts";
-import { formatProtocolOutputLimit } from "../shared/child-protocol.ts";
+import { formatProtocolOutputLimit, isDecodedLlmMessage, type DecodedChildEvent } from "../shared/child-protocol.ts";
 import {
 	runChildProcess,
+	type ChildProcessRuntimeOptions,
 	type ChildProcessRuntimeControls,
 	type ChildProcessRuntimeResult,
 } from "../shared/child-process-runtime.ts";
@@ -101,6 +103,8 @@ import {
 	resolveChildWatchdogConfig,
 	type ChildWatchdogStateSnapshot,
 } from "../../watchdog/child-status.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const artifactOutputByResult = new WeakMap<SingleResult, string>();
 const acceptanceOutputByResult = new WeakMap<SingleResult, string>();
@@ -171,26 +175,26 @@ function stripAcceptanceReportsFromMessages(messages: Message[] | undefined): vo
 }
 
 function snapshotProgress(progress: AgentProgress): AgentProgress {
-	return {
+	return omitUndefined({
 		...progress,
 		skills: progress.skills ? [...progress.skills] : undefined,
 		recentTools: boundStreamedRecentTools(progress.recentTools),
 		recentOutput: boundStreamedRecentOutput(progress.recentOutput),
-	};
+	});
 }
 
 function snapshotResult(result: SingleResult, progress: AgentProgress): SingleResult {
-	return {
+	return omitUndefinedAs<SingleResult>({
 		...result,
 		messages: result.outputMode === "file-only" && result.savedOutputPath ? undefined : result.messages ? [...result.messages] : undefined,
 		usage: { ...result.usage },
 		skills: result.skills ? [...result.skills] : undefined,
 		attemptedModels: result.attemptedModels ? [...result.attemptedModels] : undefined,
 		modelAttempts: result.modelAttempts
-			? result.modelAttempts.map((attempt) => ({
+				? result.modelAttempts.map((attempt) => omitUndefined({
 				...attempt,
 				usage: attempt.usage ? { ...attempt.usage } : undefined,
-			}))
+				}))
 			: undefined,
 		controlEvents: result.controlEvents ? result.controlEvents.map((event) => ({ ...event })) : undefined,
 		progress,
@@ -198,7 +202,7 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
 		artifactPaths: result.artifactPaths ? { ...result.artifactPaths } : undefined,
 		truncation: result.truncation ? { ...result.truncation } : undefined,
 		outputReference: result.outputReference ? { ...result.outputReference } : undefined,
-	};
+	});
 }
 
 /**
@@ -210,8 +214,10 @@ function snapshotResult(result: SingleResult, progress: AgentProgress): SingleRe
  */
 function snapshotStreamResult(result: SingleResult, progress: AgentProgress): SingleResult {
 	const snapshot = snapshotResult(result, progress);
-	snapshot.messages = undefined;
-	snapshot.toolCalls = boundStreamedToolCalls(result);
+	delete snapshot.messages;
+	const toolCalls = boundStreamedToolCalls(result);
+	if (toolCalls === undefined) delete snapshot.toolCalls;
+	else snapshot.toolCalls = toolCalls;
 	return snapshot;
 }
 
@@ -247,7 +253,7 @@ async function runSingleAttempt(
 			childIndex: options.index ?? 0,
 		})
 		: undefined;
-	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, capabilityAudit } = buildPiArgs({
+	const { args, env: sharedEnv, tempDir, toolDiagnosticPath, capabilityAudit } = buildPiArgs(omitUndefined({
 		baseArgs: ["--mode", "json", "-p"],
 		task,
 		sessionEnabled: shared.sessionEnabled,
@@ -282,10 +288,10 @@ async function runSingleAttempt(
 		childWatchdog,
 		waitToolEnabled: options.waitToolEnabled,
 		capabilityCeiling: options.capabilityCeiling,
-	});
+	}));
 
 	const effectiveSystemPrompt = appendTurnBudgetSystemPrompt(shared.systemPrompt, options.turnBudget);
-	const toolPlan = resolvePiLaunchToolPlan({
+	const toolPlan = resolvePiLaunchToolPlan(omitUndefined({
 		tools: agent.tools,
 		extensions: agent.extensions,
 		subagentOnlyExtensions: agent.subagentOnlyExtensions,
@@ -295,8 +301,8 @@ async function runSingleAttempt(
 		structuredOutput: Boolean(options.structuredOutput),
 		capabilityCeiling: options.capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
-	});
-	const launchContractDigest = launchBindingDigest({
+	}));
+	const launchContractDigest = launchBindingDigest(omitUndefined({
 		definitionDigest: agentDefinitionDigest(agent),
 		task: shared.originalTask ?? task,
 		...(modelArg ? { model: modelArg } : {}),
@@ -313,8 +319,8 @@ async function runSingleAttempt(
 		...(options.outputPath ? { outputPath: options.outputPath } : {}),
 		outputMode: options.outputMode ?? "inline",
 		...(options.structuredOutput ? { structuredOutputSchema: options.structuredOutput.schema } : {}),
-	});
-	const result: SingleResult = withRunContext({
+	}));
+	const result: SingleResult = withRunContext(omitUndefinedAs<SingleResult>({
 		agent: agent.name,
 		task: shared.originalTask ?? task,
 		...(options.agentContract ? { agentContract: options.agentContract } : {}),
@@ -332,7 +338,7 @@ async function runSingleAttempt(
 		...(options.toolBudget ? { toolBudget: initialToolBudgetState(options.toolBudget) } : {}),
 		...(options.capabilityCeiling ? { capabilityCeiling: options.capabilityCeiling } : {}),
 		...(capabilityAudit ? { capabilityAudit } : {}),
-	}, options.context);
+	}), options.context);
 	const startTime = Date.now();
 	if (options.structuredOutput) {
 		try {
@@ -408,14 +414,7 @@ async function runSingleAttempt(
 	let observedMutationAttempt = false;
 	let structuredOutputToolInvoked = false;
 	const exitCode = await (async (): Promise<number> => {
-		interface ForegroundChildEvent {
-			[key: string]: unknown;
-			type?: string;
-			message?: Message;
-			toolName?: string;
-			args?: unknown;
-			willRetry?: unknown;
-		}
+		type ForegroundChildEvent = DecodedChildEvent;
 
 		const spawnSpec = getPiSpawnCommand(args);
 		let runtimeControls: ChildProcessRuntimeControls | undefined;
@@ -431,10 +430,11 @@ async function runSingleAttempt(
 		let jsonlWriter: ReturnType<typeof createJsonlWriter> | undefined;
 		let turnBudgetSoftReached = false;
 		let childWatchdogState: ChildWatchdogStateSnapshot | undefined;
-		let resolveDetached!: () => void;
+		let pendingResolveDetached: (() => void) | undefined;
 		const detachedPromise = new Promise<void>((resolve) => {
-			resolveDetached = resolve;
+			pendingResolveDetached = resolve;
 		});
+		const resolveDetached = requirePresent(pendingResolveDetached);
 
 		const updateChildWatchdogState = (snapshot: ChildWatchdogStateSnapshot): void => {
 			childWatchdogState = snapshot;
@@ -485,7 +485,7 @@ async function runSingleAttempt(
 			if (!controlConfig.enabled) return false;
 			const previous = progress.activityState;
 			progress.activityState = "needs_attention";
-			const event = buildControlEvent({
+			const event = buildControlEvent(omitUndefined({
 				type: "needs_attention",
 				from: previous,
 				to: "needs_attention",
@@ -503,7 +503,7 @@ async function runSingleAttempt(
 				currentToolDurationMs: input.currentToolDurationMs ?? currentToolDurationMs(now),
 				currentPath: input.currentPath ?? progress.currentPath,
 				recentFailureSummary: input.recentFailureSummary,
-			});
+			}));
 			emitControlEvent(event);
 			return previous !== "needs_attention";
 		};
@@ -512,7 +512,7 @@ async function runSingleAttempt(
 			activeLongRunningNotified = true;
 			const previous = progress.activityState;
 			progress.activityState = "active_long_running";
-			emitControlEvent(buildControlEvent({
+			emitControlEvent(buildControlEvent(omitUndefined({
 				type: "active_long_running",
 				from: previous,
 				to: "active_long_running",
@@ -529,7 +529,7 @@ async function runSingleAttempt(
 				currentToolDurationMs: currentToolDurationMs(now),
 				currentPath: progress.currentPath,
 				elapsedMs: now - startTime,
-			}));
+			})));
 			return true;
 		};
 		const requestTurnBudgetAbort = (turnCount: number) => {
@@ -575,13 +575,13 @@ async function runSingleAttempt(
 
 		const updateActivityState = (now: number): boolean => {
 			if (!controlConfig.enabled) return false;
-			const idleState = deriveActivityState({
+			const idleState = deriveActivityState(omitUndefined({
 				config: controlConfig,
 				startedAt: startTime,
 				lastActivityAt: progress.lastActivityAt,
 				currentTool: progress.currentTool,
 				now,
-			});
+			}));
 			if (idleState === "needs_attention") {
 				return progress.activityState === "needs_attention" ? false : emitNeedsAttention(now);
 			}
@@ -602,12 +602,12 @@ async function runSingleAttempt(
 			const controlEvents = drainPendingControlEvents();
 			options.onUpdate({
 				content: [{ type: "text", text }],
-				details: {
+					details: omitUndefined({
 					mode: "single",
 					results: [resultSnapshot],
 					progress: [progressSnapshot],
 					controlEvents,
-				},
+					}),
 			});
 		};
 
@@ -658,7 +658,7 @@ async function runSingleAttempt(
 				progress.currentPath = resolveCurrentPath(evt.toolName, toolArgs);
 				const mutates = isMutatingTool(evt.toolName, toolArgs);
 				observedMutationAttempt = observedMutationAttempt || mutates;
-				pendingToolResult = { tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now };
+				pendingToolResult = omitUndefined({ tool: evt.toolName ?? "tool", path: progress.currentPath, mutates, startedAt: now });
 				fireUpdate();
 			}
 
@@ -678,8 +678,8 @@ async function runSingleAttempt(
 			}
 
 			if (evt.type === "message_end" && evt.message) {
-				result.messages!.push(evt.message);
-				if (evt.message.role === "assistant") {
+				if (isDecodedLlmMessage(evt.message)) requirePresent(result.messages).push(evt.message);
+				if (isDecodedLlmMessage(evt.message) && evt.message.role === "assistant") {
 					result.usage.turns++;
 					progress.turnCount = result.usage.turns;
 					const stopReason = (evt.message as { stopReason?: string }).stopReason;
@@ -716,8 +716,8 @@ async function runSingleAttempt(
 				fireUpdate();
 			}
 
-			if (evt.type === "tool_result_end" && evt.message) {
-				result.messages!.push(evt.message);
+			if (evt.type === "tool_result_end" && isDecodedLlmMessage(evt.message) && evt.message.role === "toolResult") {
+				requirePresent(result.messages).push(evt.message);
 				const resultText = extractTextFromContent(evt.message.content);
 				if (options.toolBudget && pendingToolResult && resultText.includes("Tool budget hard limit reached")) {
 					result.toolBudgetBlocked = true;
@@ -727,21 +727,21 @@ async function runSingleAttempt(
 				const toolSnapshot = pendingToolResult;
 				pendingToolResult = undefined;
 				if (toolSnapshot?.mutates && didMutatingToolFail(resultText)) {
-					recordMutatingFailure(mutatingFailures, {
+					recordMutatingFailure(mutatingFailures, omitUndefined({
 						tool: toolSnapshot.tool,
 						path: toolSnapshot.path,
 						error: resultText.split("\n").find((line) => line.trim())?.trim().slice(0, 180) ?? "mutating tool failed",
 						ts: now,
-					}, mutatingFailureWindowMs);
+					}), mutatingFailureWindowMs);
 					if (shouldEscalateMutatingFailures(mutatingFailures, controlConfig.failedToolAttemptsBeforeAttention)) {
-						emitNeedsAttention(now, {
+						emitNeedsAttention(now, omitUndefined({
 							message: `${agent.name} needs attention after repeated mutating tool failures`,
 							reason: "tool_failures",
 							currentTool: toolSnapshot.tool,
 							currentPath: toolSnapshot.path,
 							currentToolDurationMs: toolSnapshot.startedAt ? Math.max(0, now - toolSnapshot.startedAt) : undefined,
 							recentFailureSummary: summarizeRecentMutatingFailures(mutatingFailures),
-						});
+						}));
 					}
 				} else if (toolSnapshot?.mutates) {
 					resetMutatingFailureState(mutatingFailures);
@@ -810,8 +810,10 @@ async function runSingleAttempt(
 				if (options.outputPath && recoveredResult.exitCode === 0) {
 					const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
 					fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
-					recoveredResult.savedOutputPath = resolvedOutput.savedPath;
-					recoveredResult.outputSaveError = resolvedOutput.saveError;
+					if (resolvedOutput.savedPath === undefined) delete recoveredResult.savedOutputPath;
+					else recoveredResult.savedOutputPath = resolvedOutput.savedPath;
+					if (resolvedOutput.saveError === undefined) delete recoveredResult.outputSaveError;
+					else recoveredResult.outputSaveError = resolvedOutput.saveError;
 					if (resolvedOutput.savedPath) {
 						recoveredResult.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
 					} else {
@@ -839,7 +841,7 @@ async function runSingleAttempt(
 			return finalCode;
 		};
 
-		const runtimePromise = runChildProcess<ForegroundChildEvent>({
+		const runtimePromise = runChildProcess(omitUndefinedAs<ChildProcessRuntimeOptions>({
 			command: spawnSpec.command,
 			args: spawnSpec.args,
 			cwd: options.cwd ?? runtimeCwd,
@@ -938,7 +940,7 @@ async function runSingleAttempt(
 				fireUpdate();
 			},
 			onEvent: processEvent,
-		});
+		}));
 
 		const outcome = await Promise.race([
 			runtimePromise.then((runtime) => ({ kind: "closed" as const, runtime })),
@@ -954,9 +956,10 @@ async function runSingleAttempt(
 	if (interruptedByControl) {
 		result.exitCode = 0;
 		result.interrupted = true;
-		result.error = undefined;
+		delete result.error;
 		result.finalOutput = result.finalOutput || "Interrupted. Waiting for explicit next action.";
-		result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+		if (allControlEvents.length) result.controlEvents = allControlEvents;
+		else delete result.controlEvents;
 		progress.activityState = undefined;
 		progress.durationMs = Date.now() - startTime;
 		result.progressSummary = {
@@ -1053,13 +1056,13 @@ async function runSingleAttempt(
 	}
 	const completionGuardEnabled = isAgentContractV1(options.agentContract) ? agent.completionGuard === true : agent.completionGuard !== false;
 	const completionGuard = result.exitCode === 0 && !result.error && completionGuardEnabled
-		? evaluateCompletionMutationGuard({
+		? evaluateCompletionMutationGuard(omitUndefined({
 			agent: agent.name,
 			task: shared.originalTask ?? task,
 			messages: result.messages ?? [],
 			tools: agent.tools,
 			mcpDirectTools: agent.mcpDirectTools,
-		})
+		}))
 		: undefined;
 	const completionGuardTriggered = completionGuard?.triggered === true && !observedMutationAttempt;
 	if (completionGuard) {
@@ -1078,7 +1081,7 @@ async function runSingleAttempt(
 		result.error = "Subagent completed without making edits for an implementation task.\nIt appears to have returned planning or scratchpad output instead of applying changes.";
 		progress.status = "failed";
 		progress.error = result.error;
-		emitControlEvent(buildControlEvent({
+		emitControlEvent(buildControlEvent(omitUndefined({
 			from: progress.activityState,
 			to: "needs_attention",
 			runId: options.runId ?? agent.name,
@@ -1087,13 +1090,15 @@ async function runSingleAttempt(
 			ts: Date.now(),
 			message: `${agent.name} completed without making edits for an implementation task`,
 			reason: "completion_guard",
-		}));
+		})));
 	}
 		if (options.outputPath && result.exitCode === 0) {
 			const resolvedOutput = resolveSingleOutput(options.outputPath, fullOutput, shared.outputSnapshot);
 			fullOutput = stripAcceptanceReport(resolvedOutput.fullOutput);
-			result.savedOutputPath = resolvedOutput.savedPath;
-			result.outputSaveError = resolvedOutput.saveError;
+			if (resolvedOutput.savedPath === undefined) delete result.savedOutputPath;
+			else result.savedOutputPath = resolvedOutput.savedPath;
+			if (resolvedOutput.saveError === undefined) delete result.outputSaveError;
+			else result.outputSaveError = resolvedOutput.saveError;
 			if (resolvedOutput.savedPath) {
 				result.outputReference = formatSavedOutputReference(resolvedOutput.savedPath, fullOutput);
 			}
@@ -1104,19 +1109,20 @@ async function runSingleAttempt(
 	result.finalOutput = options.outputMode === "file-only" && result.savedOutputPath && result.outputReference
 		? result.outputReference.message
 		: fullOutput;
-	result.controlEvents = allControlEvents.length ? allControlEvents : undefined;
+	if (allControlEvents.length) result.controlEvents = allControlEvents;
+	else delete result.controlEvents;
 	if (options.onUpdate) {
 		const finalText = result.finalOutput || result.error || "(no output)";
 		const progressSnapshot = snapshotProgress(progress);
 		const resultSnapshot = snapshotStreamResult(result, progressSnapshot);
 		options.onUpdate({
 			content: [{ type: "text", text: finalText }],
-			details: {
+			details: omitUndefined({
 				mode: "single",
 				results: [resultSnapshot],
 				progress: [progressSnapshot],
 				controlEvents: allControlEvents.length ? allControlEvents : undefined,
-			},
+			}),
 		});
 	}
 	return result;
@@ -1132,24 +1138,24 @@ export async function runSync(
 	task: string,
 	options: RunSyncOptions,
 ): Promise<SingleResult> {
-	options = {
+	options = omitUndefined({
 		...options,
 		capabilityCeiling: options.capabilityCeiling ?? resolveCurrentSubagentCapabilityCeiling(options.parentSessionId),
-	};
+	});
 	const agent = agents.find((a) => a.name === agentName);
 	if (!agent) {
-		return withRunContext({
+		return withRunContext(omitUndefinedAs<SingleResult>({
 			agent: agentName,
 			task,
 			exitCode: 1,
 			messages: [],
 			usage: emptyUsage(),
 			error: `Unknown agent: ${agentName}`,
-		}, options.context);
+		}), options.context);
 	}
 	const outputModeValidationError = validateFileOnlyOutputMode(options.outputMode, options.outputPath, `Single run (${agentName})`);
 	if (outputModeValidationError) {
-		return withRunContext({
+		return withRunContext(omitUndefinedAs<SingleResult>({
 			agent: agentName,
 			task,
 			exitCode: 1,
@@ -1157,11 +1163,11 @@ export async function runSync(
 			usage: emptyUsage(),
 			outputMode: options.outputMode,
 			error: outputModeValidationError,
-		}, options.context);
+		}), options.context);
 	}
 
 	const shareEnabled = options.share === true;
-	const effectiveAcceptance = resolveEffectiveAcceptance({
+	const effectiveAcceptance = resolveEffectiveAcceptance(omitUndefined({
 		explicit: options.acceptance,
 		agentName,
 		acceptanceRole: agent.acceptanceRole,
@@ -1171,7 +1177,7 @@ export async function runSync(
 		dynamic: options.acceptanceContext?.dynamic,
 		dynamicGroup: options.acceptanceContext?.dynamicGroup,
 		agentContract: options.agentContract,
-	});
+	}));
 	const acceptancePrompt = formatAcceptancePrompt(effectiveAcceptance, { reportOptional: isAgentContractV1(options.agentContract) });
 	const taskWithAcceptance = acceptancePrompt ? `${task}\n${acceptancePrompt}` : task;
 	const sessionEnabled = Boolean(options.sessionFile || options.sessionDir) || shareEnabled;
@@ -1210,7 +1216,7 @@ export async function runSync(
 		agent.fallbackModels,
 		options.availableModels,
 		options.preferredModelProvider,
-		{ scope: options.modelScope },
+		omitUndefined({ scope: options.modelScope }),
 	);
 	const attemptedModels: string[] = [];
 	const modelAttempts: ModelAttempt[] = [];
@@ -1232,14 +1238,14 @@ export async function runSync(
 			jsonlPath = artifactPathsResult.jsonlPath;
 		}
 		if (options.artifactConfig?.includeTranscript !== false) {
-			transcriptWriter = createChildTranscriptWriter({
+			transcriptWriter = createChildTranscriptWriter(omitUndefined({
 				transcriptPath: artifactPathsResult.transcriptPath,
 				source: "foreground",
 				runId: options.runId,
 				agent: agentName,
 				childIndex: options.index,
 				cwd: options.cwd ?? runtimeCwd,
-			});
+			}));
 			transcriptWriter.writeInitialUserMessage(taskWithAcceptance);
 		}
 	}
@@ -1283,7 +1289,7 @@ export async function runSync(
 					const childWrittenOutput = options.outputPath
 						? extractChildWrittenOutput(recoveredResult.messages, options.outputPath, options.cwd ?? runtimeCwd)
 						: undefined;
-					recoveredResult.acceptance = await evaluateAcceptance({
+					recoveredResult.acceptance = await evaluateAcceptance(omitUndefined({
 						acceptance: effectiveAcceptance,
 						output: acceptanceOutputByResult.get(recoveredResult) ?? recoveredResult.finalOutput ?? "",
 						fileOutput: childWrittenOutput !== undefined && options.outputPath
@@ -1291,7 +1297,7 @@ export async function runSync(
 							: undefined,
 						cwd: options.cwd ?? runtimeCwd,
 						reportOptional: isAgentContractV1(options.agentContract),
-					});
+					}));
 					const acceptanceFailure = acceptanceFailureMessage(recoveredResult.acceptance);
 					stripAcceptanceReportsFromMessages(recoveredResult.messages);
 					if (acceptanceFailure && recoveredResult.acceptance.explicit && recoveredResult.exitCode === 0 && !isAgentContractV1(options.agentContract)) {
@@ -1321,7 +1327,7 @@ export async function runSync(
 		const candidate = modelsToTry[modelIndex];
 		for (let startupAttemptIndex = 0; ; startupAttemptIndex++) {
 			const outputSnapshot = captureSingleOutputSnapshot(options.outputPath);
-			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, detachedAwareOptions, {
+			const result = await runSingleAttempt(runtimeCwd, agent, taskWithAcceptance, candidate, detachedAwareOptions, omitUndefined({
 				sessionEnabled,
 				systemPrompt,
 				resolvedSkillNames: resolvedSkills.length > 0 ? resolvedSkills.map((skill) => skill.name) : undefined,
@@ -1335,7 +1341,7 @@ export async function runSync(
 					.filter((modelCandidate): modelCandidate is string => Boolean(modelCandidate)),
 				outputSnapshot,
 				originalTask: task,
-			});
+			}));
 			lastResult = result;
 			if (startupAttemptIndex === 0) {
 				if (result.model) attemptedModels.push(result.model);
@@ -1345,18 +1351,18 @@ export async function runSync(
 			totalToolCount += result.progressSummary?.toolCount ?? 0;
 			totalDurationMs += result.progressSummary?.durationMs ?? 0;
 			const attemptSucceeded = result.exitCode === 0 && !result.error;
-			const attempt: ModelAttempt = {
+			const attempt: ModelAttempt = omitUndefined({
 				model: result.model ?? candidate ?? agent.model ?? "default",
 				success: attemptSucceeded,
 				exitCode: result.exitCode,
 				error: result.error,
 				usage: { ...result.usage },
-			};
+			});
 			modelAttempts.push(attempt);
 			if (result.detached || result.timedOut || result.turnBudgetExceeded) break modelAttemptsLoop;
 			if (attemptSucceeded) break modelAttemptsLoop;
 
-			const startupFailure = isRetryableSubagentStartupFailure({
+			const startupFailure = isRetryableSubagentStartupFailure(omitUndefined({
 				exitCode: result.exitCode,
 				error: result.error,
 				finalOutput: result.finalOutput,
@@ -1371,7 +1377,7 @@ export async function runSync(
 				timedOut: result.timedOut,
 				stopped: result.stopped,
 				turnBudgetExceeded: result.turnBudgetExceeded,
-			});
+			}));
 			const retryDelayMs = SUBAGENT_STARTUP_RETRY_DELAYS_MS[startupAttemptIndex];
 			if (startupFailure && retryDelayMs !== undefined) {
 				const retryNote = formatSubagentStartupRetryNote({
@@ -1385,7 +1391,7 @@ export async function runSync(
 					if (options.interruptSignal?.aborted) {
 						result.exitCode = 0;
 						result.interrupted = true;
-						result.error = undefined;
+						delete result.error;
 						result.finalOutput = "Interrupted. Waiting for explicit next action.";
 						if (result.progress) {
 							result.progress.status = "running";
@@ -1434,25 +1440,28 @@ export async function runSync(
 	} satisfies SingleResult, options.context);
 
 	result.usage = aggregateUsage;
-	result.attemptedModels = attemptedModels.length > 0 ? attemptedModels : undefined;
-	result.modelAttempts = modelAttempts.length > 0 ? modelAttempts : undefined;
+	if (attemptedModels.length > 0) result.attemptedModels = attemptedModels;
+	else delete result.attemptedModels;
+	if (modelAttempts.length > 0) result.modelAttempts = modelAttempts;
+	else delete result.modelAttempts;
 	result.progressSummary = {
 		toolCount: totalToolCount,
 		tokens: aggregateUsage.input + aggregateUsage.output,
 		durationMs: totalDurationMs,
 	};
-	if (transcriptWriter) result.transcriptPath = artifactPathsResult?.transcriptPath;
-	if (transcriptWriter?.getError()) result.transcriptError = transcriptWriter.getError();
+	if (transcriptWriter && artifactPathsResult?.transcriptPath) result.transcriptPath = artifactPathsResult.transcriptPath;
+	const transcriptError = transcriptWriter?.getError();
+	if (transcriptError) result.transcriptError = transcriptError;
 
 	if (artifactPathsResult && options.artifactConfig?.enabled !== false) {
 		result.artifactPaths = artifactPathsResult;
 		if (options.artifactConfig?.includeOutput !== false) {
-			writeArtifact(artifactPathsResult.outputPath, formatOutputArtifactContent({
+			writeArtifact(artifactPathsResult.outputPath, formatOutputArtifactContent(omitUndefined({
 				output: artifactOutputByResult.get(result) ?? result.finalOutput ?? "",
 				error: result.error,
 				transcriptPath: result.transcriptPath,
 				metadataPath: options.artifactConfig?.includeMetadata === false ? undefined : artifactPathsResult.metadataPath,
-			}));
+			})));
 		}
 		if (options.maxOutput) {
 			const config = { ...DEFAULT_MAX_OUTPUT, ...options.maxOutput };
@@ -1484,7 +1493,7 @@ export async function runSync(
 	} else if (result.turnBudgetExceeded) {
 		result.acceptance = buildSkippedAcceptanceLedger(effectiveAcceptance, { id: "turn-budget", message: "Acceptance was not evaluated because the subagent exceeded its turn budget." });
 	} else {
-		result.acceptance = await evaluateAcceptance({
+		result.acceptance = await evaluateAcceptance(omitUndefined({
 			acceptance: effectiveAcceptance,
 			output: acceptanceOutputByResult.get(result) ?? result.finalOutput ?? "",
 			fileOutput: childWrittenOutput !== undefined && options.outputPath
@@ -1492,7 +1501,7 @@ export async function runSync(
 				: undefined,
 			cwd: options.cwd ?? runtimeCwd,
 			reportOptional: isAgentContractV1(options.agentContract),
-		});
+		}));
 	}
 	const acceptanceFailure = acceptanceFailureMessage(result.acceptance);
 	stripAcceptanceReportsFromMessages(result.messages);

@@ -3,25 +3,6 @@
  */
 
 import { type Static, Type } from "typebox";
-import type { ChainStep, DynamicCollectSpec, DynamicExpandSpec, DynamicParallelTemplate, ParallelTaskItem } from "../shared/settings.ts";
-import type { AcceptanceInput, AgentContract, ControlConfig, JsonSchemaObject as JsonSchemaObjectType, OutputMode, ToolBudgetConfig } from "../shared/types.ts";
-
-interface TopLevelTaskItem {
-	agent: string;
-	task: string;
-	cwd?: string;
-	count?: number;
-	output?: string | boolean;
-	outputMode?: OutputMode;
-	reads?: string[] | boolean;
-	progress?: boolean;
-	model?: string;
-	skill?: string | string[] | boolean;
-	toolBudget?: ToolBudgetConfig;
-	outputSchema?: JsonSchemaObjectType;
-	acceptance?: AcceptanceInput;
-	agentContract?: AgentContract;
-}
 
 function keepTopLevelParameterDescriptions<T>(schema: T): T {
 	return pruneNestedDescriptions(schema, []) as T;
@@ -48,40 +29,27 @@ function isTopLevelParameterDescription(path: string[]): boolean {
 	return path.length === 2 && path[0] === "properties";
 }
 
-const SkillOverride = Type.Unsafe<string | string[] | boolean>({
-	anyOf: [
-		{ type: "array", items: { type: "string" } },
-		{ type: "boolean" },
-		{ type: "string" },
-	],
+const SkillOverride = Type.Union([
+	Type.Array(Type.String()),
+	Type.Boolean(),
+	Type.String(),
+], {
 	description: "Skill name(s) to make available (comma-separated), array of strings, or boolean (false disables, true uses default)",
 });
 
-const OutputOverride = Type.Unsafe<string | boolean>({
-	anyOf: [
-		{ type: "string" },
-		{ type: "boolean" },
-	],
-	description: "Output filename/path (string), or false to disable file output",
+const OutputOverride = Type.Union([Type.String(), Type.Boolean()], {
+	description: "Output filename/path (string), false to disable, or true to inherit the agent default",
 });
 
-const OutputModeOverride = Type.Unsafe<OutputMode>({
-	type: "string",
-	enum: ["inline", "file-only"],
+const OutputModeOverride = Type.Union([Type.Literal("inline"), Type.Literal("file-only")], {
 	description: "Return saved output inline (default) or only a concise file reference. file-only requires output to be a path.",
 });
 
-const ReadsOverride = Type.Unsafe<string[] | boolean>({
-	anyOf: [
-		{ type: "array", items: { type: "string" } },
-		{ type: "boolean" },
-	],
-	description: "Files to read before running (array of filenames), or false to disable",
+const ReadsOverride = Type.Union([Type.Array(Type.String()), Type.Boolean()], {
+	description: "Files to read before running, false to disable, or true to inherit the agent default",
 });
 
-const JsonSchemaObject = Type.Unsafe<JsonSchemaObjectType>({
-	type: "object",
-	additionalProperties: true,
+const JsonSchemaObject = Type.Record(Type.String(), Type.Unknown(), {
 	description: "JSON Schema object for strict structured output. Non-object roots are rejected.",
 });
 
@@ -97,28 +65,59 @@ const AcceptanceEvidenceKinds = [
 	"manual-notes",
 ];
 
-const AcceptanceOverride = Type.Unsafe<AcceptanceInput>({
-	anyOf: [
-		{ type: "string", enum: ["auto", "attested", "checked", "verified"] },
-		{
-			type: "string",
-			enum: ["reviewed"],
-			deprecated: true,
-			description: "Invalid as an explicit policy. Recognized only so preflight can explain that reviewed is an achieved status.",
-		},
-		{ type: "boolean", enum: [false] },
-		{ type: "object", additionalProperties: true },
-	],
+const AcceptanceEvidenceKind = Type.Union([
+	Type.Literal("changed-files"),
+	Type.Literal("tests-added"),
+	Type.Literal("commands-run"),
+	Type.Literal("validation-output"),
+	Type.Literal("residual-risks"),
+	Type.Literal("no-staged-files"),
+	Type.Literal("diff-summary"),
+	Type.Literal("review-findings"),
+	Type.Literal("manual-notes"),
+]);
+const AcceptanceGate = Type.Object({
+	id: Type.String(),
+	must: Type.String(),
+	evidence: Type.Optional(Type.Array(AcceptanceEvidenceKind)),
+	severity: Type.Optional(Type.Union([Type.Literal("required"), Type.Literal("recommended")])),
+}, { additionalProperties: false });
+const AcceptanceConfig = Type.Object({
+	level: Type.Optional(Type.Union([Type.Literal("auto"), Type.Literal("none"), Type.Literal("attested"), Type.Literal("checked"), Type.Literal("verified")])),
+	criteria: Type.Optional(Type.Array(Type.Union([Type.String(), AcceptanceGate]))),
+	evidence: Type.Optional(Type.Array(AcceptanceEvidenceKind)),
+	verify: Type.Optional(Type.Array(Type.Object({
+		id: Type.String(),
+		command: Type.String(),
+		timeoutMs: Type.Optional(Type.Number()),
+		cwd: Type.Optional(Type.String()),
+		env: Type.Optional(Type.Record(Type.String(), Type.String())),
+		allowFailure: Type.Optional(Type.Boolean()),
+	}, { additionalProperties: false }))),
+	review: Type.Optional(Type.Union([Type.Object({
+		agent: Type.Optional(Type.String()),
+		focus: Type.Optional(Type.String()),
+		required: Type.Optional(Type.Boolean()),
+	}, { additionalProperties: false }), Type.Literal(false)])),
+	stopRules: Type.Optional(Type.Array(Type.String())),
+	reason: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+const AcceptanceOverride = Type.Union([
+	Type.Literal("auto"),
+	Type.Literal("attested"),
+	Type.Literal("checked"),
+	Type.Literal("verified"),
+	Type.Literal(false),
+	AcceptanceConfig,
+], {
 	description: `Optional acceptance policy. For reviewer/read-only calls, omit acceptance. Example: { level: "checked", evidence: ["commands-run", "changed-files"] }. Supported evidence kinds: ${AcceptanceEvidenceKinds.join(", ")}. Evidence levels end at verified; use acceptance.review.required for review. Omitted means auto-inferred unless agentContract.version=1.`,
 });
 
-const AgentContractOverride = Type.Unsafe<AgentContract>(Type.Object({
-	version: Type.Integer({ enum: [1], description: "Opt into generic agent contract v1 for this run/child." }),
-}, { additionalProperties: false, description: "Opt-in compatibility contract. Omit to use current default behavior." }));
+const AgentContractOverride = Type.Object({
+	version: Type.Literal(1, { description: "Opt into generic agent contract v1 for this run/child." }),
+}, { additionalProperties: false, description: "Opt-in compatibility contract. Omit to use current default behavior." });
 
-const ChainGateOverride = Type.Unsafe<"execution" | "acceptance">({
-	type: "string",
-	enum: ["execution", "acceptance"],
+const ChainGateOverride = Type.Union([Type.Literal("execution"), Type.Literal("acceptance")], {
 	description: "For agentContract.version=1 chain steps, choose whether the chain advances on execution success or acceptance success. Defaults to execution.",
 });
 
@@ -127,22 +126,21 @@ const TurnBudgetOverride = Type.Object({
 	graceTurns: Type.Optional(Type.Integer({ minimum: 0 })),
 }, { additionalProperties: false, description: "Optional assistant-turn budget. At maxTurns the child is asked to wrap up; after graceTurns additional assistant turns it is aborted and partial output is returned." });
 
-const ToolBudgetBlock = Type.Unsafe<string[] | "*">({
-	anyOf: [
-		{ type: "array", minItems: 1, items: { type: "string", minLength: 1 } },
-		{ type: "string", enum: ["*"] },
-	],
-});
+const ToolBudgetBlock = Type.Union([
+	Type.Array(Type.String({ minLength: 1 }), { minItems: 1 }),
+	Type.Literal("*"),
+]);
 
-const ToolBudgetOverride = Type.Unsafe<ToolBudgetConfig>(Type.Object({
+const ToolBudgetOverride = Type.Object({
 	soft: Type.Optional(Type.Integer({ minimum: 1 })),
 	hard: Type.Integer({ minimum: 1 }),
 	block: Type.Optional(ToolBudgetBlock),
-}, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." }));
+}, { additionalProperties: false, description: "Optional child tool-call budget. soft nudges the child; after hard, block tools (default read/grep/find/ls, or '*' for all tools) are blocked so the child can finalize." });
 
-const TaskItem = Type.Unsafe<TopLevelTaskItem>(Type.Object({
+const TaskItem = Type.Object({
 	agent: Type.String(),
 	task: Type.String(),
+	label: Type.Optional(Type.String({ description: "Short user-facing label shown for this child in fleet status." })),
 	cwd: Type.Optional(Type.String()),
 	count: Type.Optional(Type.Integer({ minimum: 1, description: "Repeat this parallel task N times with the same settings." })),
 	output: Type.Optional(OutputOverride),
@@ -155,10 +153,10 @@ const TaskItem = Type.Unsafe<TopLevelTaskItem>(Type.Object({
 	outputSchema: Type.Optional(JsonSchemaObject),
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
-}));
+}, { additionalProperties: false });
 
 // Parallel task item (within a parallel step)
-export const ParallelTaskSchema = Type.Unsafe<ParallelTaskItem>(Type.Object({
+export const ParallelTaskSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {task}, {previous}, {chain_dir} variables. Defaults to {previous}." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -177,9 +175,9 @@ export const ParallelTaskSchema = Type.Unsafe<ParallelTaskItem>(Type.Object({
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
 	gateOn: Type.Optional(ChainGateOverride),
-}));
+}, { additionalProperties: false });
 
-export const DynamicExpandSchema = Type.Unsafe<DynamicExpandSpec>(Type.Object({
+export const DynamicExpandSchema = Type.Object({
 	from: Type.Object({
 		output: Type.String({ description: "Prior named structured output to expand from." }),
 		path: Type.String({ description: "JSON Pointer into the structured output, e.g. /items." }),
@@ -187,10 +185,10 @@ export const DynamicExpandSchema = Type.Unsafe<DynamicExpandSpec>(Type.Object({
 	item: Type.Optional(Type.String({ description: "Template variable name for each item. Defaults to item." })),
 	key: Type.Optional(Type.String({ description: "JSON Pointer relative to each item for stable child ids." })),
 	maxItems: Type.Optional(Type.Integer({ minimum: 0, description: "Required fanout bound unless configured globally." })),
-	onEmpty: Type.Optional(Type.String({ enum: ["skip", "fail"], description: "Empty input behavior. Defaults to skip." })),
-}, { additionalProperties: false }));
+	onEmpty: Type.Optional(Type.Union([Type.Literal("skip"), Type.Literal("fail")], { description: "Empty input behavior. Defaults to skip." })),
+}, { additionalProperties: false });
 
-export const DynamicParallelTemplateSchema = Type.Unsafe<DynamicParallelTemplate>(Type.Object({
+export const DynamicParallelTemplateSchema = Type.Object({
 	agent: Type.String(),
 	task: Type.Optional(Type.String({ description: "Task template with {item}, {item.path}, {task}, {previous}, {chain_dir}, and {outputs.name} variables." })),
 	phase: Type.Optional(Type.String({ description: "Optional phase/group label for status and graph rendering." })),
@@ -207,16 +205,15 @@ export const DynamicParallelTemplateSchema = Type.Unsafe<DynamicParallelTemplate
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
 	gateOn: Type.Optional(ChainGateOverride),
-}, { additionalProperties: false }));
+}, { additionalProperties: false });
 
-export const DynamicCollectSchema = Type.Unsafe<DynamicCollectSpec>(Type.Object({
+export const DynamicCollectSchema = Type.Object({
 	as: Type.String({ description: "Safe output name for the ordered collected result array." }),
 	outputSchema: Type.Optional(JsonSchemaObject),
-}, { additionalProperties: false }));
+}, { additionalProperties: false });
 
-// Flattened so chain steps do not need an object-shape anyOf/oneOf union.
-export const ChainItem = Type.Unsafe<ChainStep>(Type.Object({
-	agent: Type.Optional(Type.String({ description: "Sequential step agent name" })),
+const SequentialStepSchema = Type.Object({
+	agent: Type.String({ description: "Sequential step agent name" }),
 	task: Type.Optional(Type.String({
 		description: "Task template with variables: {task}=original request, {previous}=prior step's text response, {chain_dir}=shared folder, {outputs.name}=prior named output. Required for first step, defaults to '{previous}' for subsequent steps."
 	})),
@@ -235,39 +232,55 @@ export const ChainItem = Type.Unsafe<ChainStep>(Type.Object({
 	acceptance: Type.Optional(AcceptanceOverride),
 	agentContract: Type.Optional(AgentContractOverride),
 	gateOn: Type.Optional(ChainGateOverride),
-	parallel: Type.Optional(Type.Unsafe({
-		anyOf: [
-			Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" }),
-			DynamicParallelTemplateSchema,
-		],
-		description: "Static parallel tasks array, or a single dynamic fanout child template when expand/collect are present.",
-	})),
-	expand: Type.Optional(DynamicExpandSchema),
-	collect: Type.Optional(DynamicCollectSchema),
+}, { additionalProperties: false });
+
+const ParallelStepSchema = Type.Object({
+	parallel: Type.Array(ParallelTaskSchema, { minItems: 1, description: "Tasks to run in parallel" }),
 	concurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks (default: 4)" })),
 	failFast: Type.Optional(Type.Boolean({ description: "Stop on first failure (default: false)" })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for each parallel task."
 	})),
-}, {
-	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
-	additionalProperties: false,
-}));
+	cwd: Type.Optional(Type.String()),
+	agentContract: Type.Optional(AgentContractOverride),
+	gateOn: Type.Optional(ChainGateOverride),
+}, { additionalProperties: false });
 
-const ControlOverrides = Type.Unsafe<ControlConfig>(Type.Object({
+const DynamicParallelStepSchema = Type.Object({
+	expand: DynamicExpandSchema,
+	parallel: DynamicParallelTemplateSchema,
+	collect: DynamicCollectSchema,
+	concurrency: Type.Optional(Type.Number({ description: "Max concurrent tasks (default: 4)" })),
+	failFast: Type.Optional(Type.Boolean({ description: "Stop on first failure (default: false)" })),
+	phase: Type.Optional(Type.String()),
+	label: Type.Optional(Type.String()),
+	acceptance: Type.Optional(AcceptanceOverride),
+	agentContract: Type.Optional(AgentContractOverride),
+	gateOn: Type.Optional(ChainGateOverride),
+}, { additionalProperties: false });
+
+export const ChainItem = Type.Union([
+	SequentialStepSchema,
+	ParallelStepSchema,
+	DynamicParallelStepSchema,
+], {
+	description: "Chain step: use {agent, task?, ...} for sequential, {parallel: [...]} for static concurrent execution, or {expand, parallel: {...}, collect} for dynamic fanout.",
+});
+
+const ControlOverrides = Type.Object({
 	enabled: Type.Optional(Type.Boolean({ description: "Enable/disable subagent control attention tracking for this run" })),
 	needsAttentionAfterMs: Type.Optional(Type.Integer({ minimum: 1, description: "No-observed-activity window before a run needs attention" })),
 	activeNoticeAfterMs: Type.Optional(Type.Integer({ minimum: 1, description: "Active-long-running notice threshold by elapsed ms (default: 240000)" })),
 	activeNoticeAfterTurns: Type.Optional(Type.Integer({ minimum: 1, description: "Optional active-long-running notice threshold by assistant turns (disabled by default)" })),
 	activeNoticeAfterTokens: Type.Optional(Type.Integer({ minimum: 1, description: "Optional active-long-running notice threshold by total tokens (disabled by default)" })),
 	failedToolAttemptsBeforeAttention: Type.Optional(Type.Integer({ minimum: 1, description: "Consecutive mutating-tool failures before escalating to needs_attention (default: 3)" })),
-	notifyOn: Type.Optional(Type.Array(Type.String({ enum: ["active_long_running", "needs_attention"] }), {
+	notifyOn: Type.Optional(Type.Array(Type.Union([Type.Literal("active_long_running"), Type.Literal("needs_attention")]), {
 		description: "Control event types that should notify the parent/orchestrator. Defaults to active_long_running and needs_attention.",
 	})),
-	notifyChannels: Type.Optional(Type.Array(Type.String({ enum: ["event", "async", "intercom"] }), {
+	notifyChannels: Type.Optional(Type.Array(Type.Union([Type.Literal("event"), Type.Literal("async"), Type.Literal("intercom")]), {
 		description: "Notification channels to use when available. Defaults to event, async, and intercom.",
 	})),
-}));
+}, { additionalProperties: false });
 
 const SubagentParamsSchema = Type.Object({
 	agent: Type.Optional(Type.String({ description: "Agent name (SINGLE mode) or target for management get/update/delete" })),
@@ -286,18 +299,16 @@ const SubagentParamsSchema = Type.Object({
 		description: "Async run directory for action='status', action='stop', action='resume', or action='steer'."
 	})),
 	index: Type.Optional(Type.Integer({ minimum: 0, description: "Zero-based child index for actions that target a specific child or transcript." })),
-	view: Type.Optional(Type.Unsafe<"fleet" | "transcript">({
-		type: "string",
-		enum: ["fleet", "transcript"],
+	view: Type.Optional(Type.Union([Type.Literal("fleet"), Type.Literal("transcript")], {
 		description: "Optional status view. Use view='fleet' for a read-only active foreground/async fleet surface, or view='transcript' with id/dir (and optional index) to tail a run transcript.",
-	})),
+})),
 	lines: Type.Optional(Type.Integer({ minimum: 1, maximum: 500, description: "Maximum transcript lines for action='status', view='transcript'. Defaults to 80." })),
 	message: Type.Optional(Type.String({ description: "Follow-up message for action='resume' (revive paused, completed, or failed children, or reach a routed nested run) or live async guidance for action='steer'. Stopped runs are non-resumable. Use index to choose a child from multi-child runs." })),
 	steeringRecovery: Type.Optional(Type.Boolean({ description: "For action='steer', allow pause-and-revive recovery after a missed acknowledgment. Defaults true for direct tool calls; extension RPC steering forces false so callers retain exact child ownership." })),
 	additional: Type.Optional(Type.Integer({ minimum: 1, description: "Positive launches to add with action='grant-spawn-budget'. Root interactive parent with native user confirmation only; total grants cannot exceed the original configured cap." })),
-	scope: Type.Optional(Type.String({ enum: ["session", "user", "project"], description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
-	target: Type.Optional(Type.String({ enum: ["main", "children", "child"], description: "Target for action='watchdog.configure'. Defaults to main. Use target='child' with agent for a per-agent child watchdog override." })),
-	thinking: Type.Optional(Type.Unsafe<string | false>({ anyOf: [{ type: "string" }, { type: "boolean", enum: [false] }], description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
+	scope: Type.Optional(Type.Union([Type.Literal("session"), Type.Literal("user"), Type.Literal("project")], { description: "Scope for action='watchdog.configure'. Defaults to session to avoid persistent settings writes unless user/project is explicit." })),
+	target: Type.Optional(Type.Union([Type.Literal("main"), Type.Literal("children"), Type.Literal("child")], { description: "Target for action='watchdog.configure'. Defaults to main. Use target='child' with agent for a per-agent child watchdog override." })),
+	thinking: Type.Optional(Type.Union([Type.String(), Type.Literal(false)], { description: "Thinking level for action='watchdog.configure' (off/minimal/low/medium/high/xhigh/max, inherit, or false for off)." })),
 	schedule: Type.Optional(Type.String({ description: "Explicit one-shot schedule for action='schedule'. Only honored when scheduledRuns.enabled is true. Use '+10m' or a future ISO timestamp with timezone; scheduled runs always launch async with fresh context." })),
 	scheduleName: Type.Optional(Type.String({ description: "Optional display name for action='schedule'." })),
 	// Chain identifier for management (can't reuse 'chain' — that's the execution array)
@@ -305,24 +316,21 @@ const SubagentParamsSchema = Type.Object({
 		description: "Chain name for get/update/delete management actions"
 	})),
 	// Agent/chain configuration for create/update (nested to avoid conflicts with execution fields)
-	config: Type.Optional(Type.Unsafe({
-		anyOf: [
-			{ type: "object", additionalProperties: true },
-			{ type: "string" },
-		],
+	config: Type.Optional(Type.Union([
+		Type.Record(Type.String(), Type.Unknown()),
+		Type.String(),
+	], {
 		description: "Agent/chain config for create/update. Object or JSON string; presence of steps creates a chain."
-	})),
-	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, count?, output?, outputMode?, reads?, progress?}, ...]" })),
+})),
+	tasks: Type.Optional(Type.Array(TaskItem, { description: "PARALLEL mode: [{agent, task, label?, count?, output?, outputMode?, reads?, progress?}, ...]. Give each task a distinct label for fleet status." })),
 	concurrency: Type.Optional(Type.Integer({ minimum: 1, description: "Top-level PARALLEL mode only: max concurrent tasks. Defaults to config.parallel.concurrency or 4." })),
 	worktree: Type.Optional(Type.Boolean({
 		description: "Create isolated git worktrees for parallel tasks; requires clean git state."
 	})),
 	chain: Type.Optional(Type.Array(ChainItem, { description: "CHAIN mode: sequential steps; each result becomes {previous}. append-step takes one tail step and may use {chain_dir}/{outputs.name}." })),
-	context: Type.Optional(Type.Unsafe<"fresh" | "fork">({
-		type: "string",
-		enum: ["fresh", "fork"],
+	context: Type.Optional(Type.Union([Type.Literal("fresh"), Type.Literal("fork")], {
 		description: "'fresh' or 'fork' to branch from parent session. Explicit context overrides every child in the invocation. If omitted, each requested agent uses its own defaultContext; agents without defaultContext: 'fork' run fresh.",
-	})),
+})),
 	chainDir: Type.Optional(Type.String({ description: "Persistent chain artifact directory; defaults to user-scoped temp storage." })),
 	async: Type.Optional(Type.Boolean({ description: "Run in background (default: false, or per config)" })),
 	timeoutMs: Type.Optional(Type.Integer({ minimum: 1, description: "Timeout for foreground and async/background runs; foreground defaults to 30m absent call/agent. Alias maxRuntimeMs." })),
@@ -343,12 +351,13 @@ const SubagentParamsSchema = Type.Object({
 	// Solo agent overrides
 	output: Type.Optional(OutputOverride),
 	outputMode: Type.Optional(OutputModeOverride),
+	reads: Type.Optional(ReadsOverride),
 	skill: Type.Optional(SkillOverride),
 	model: Type.Optional(Type.String({ description: "Override model for single agent (e.g. 'anthropic/claude-sonnet-4')" })),
 	outputSchema: Type.Optional(JsonSchemaObject),
 	agentContract: Type.Optional(AgentContractOverride),
 	acceptance: Type.Optional(AcceptanceOverride),
-});
+}, { additionalProperties: false });
 
 export const SubagentParams = keepTopLevelParameterDescriptions(SubagentParamsSchema);
 export type SubagentToolParams = Static<typeof SubagentParams>;

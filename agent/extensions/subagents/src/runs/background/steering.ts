@@ -21,7 +21,7 @@ export function createSteeringStatus(): SteeringStatus {
 	return { requested: 0, scheduled: 0, pending: 0, delivered: 0, failed: 0, recovered: 0, recent: [] };
 }
 
-export function steeringStatus(status: Pick<AsyncStatus, "steering">): SteeringStatus {
+export function steeringStatus(status: { steering?: SteeringStatus | undefined }): SteeringStatus {
 	return status.steering ?? createSteeringStatus();
 }
 

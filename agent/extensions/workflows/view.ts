@@ -111,7 +111,7 @@ export function formatWorkflowResult(
 			previousPhase = agent.phase;
 			text += `\n  ${theme.fg("muted", `── ${inlineText(agent.phase)} ──`)}`;
 		}
-		const runtime = agent.startedAt === undefined ? "" : ` · ${elapsed({ startedAt: agent.startedAt, endedAt: agent.endedAt })}`;
+		const runtime = agent.startedAt === undefined ? "" : ` · ${elapsed({ startedAt: agent.startedAt, ...(agent.endedAt !== undefined ? { endedAt: agent.endedAt } : {}) })}`;
 		const context = [
 			inlineText(agent.agent),
 			agent.model ? inlineText(agent.model) : undefined,

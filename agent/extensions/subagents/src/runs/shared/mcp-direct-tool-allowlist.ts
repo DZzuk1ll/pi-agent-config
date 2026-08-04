@@ -2,7 +2,12 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
+import { Type, type Static } from "typebox";
+import { Value } from "typebox/value";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
 import { getAgentDir, getProjectConfigDir } from "../../shared/utils.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const CACHE_VERSION = 1;
 const CACHE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
@@ -21,25 +26,28 @@ const IMPORT_PATHS = {
 	vscode: [".vscode/mcp.json"],
 } as const;
 
-type ToolPrefix = "server" | "none" | "short";
 type ImportKind = keyof typeof IMPORT_PATHS;
 
-interface ServerEntry {
-	command?: string;
-	args?: string[];
-	socket?: string;
-	env?: Record<string, string>;
-	cwd?: string;
-	url?: string;
-	headers?: Record<string, string>;
-	auth?: "oauth" | "bearer" | false;
-	bearerToken?: string;
-	bearerTokenEnv?: string;
-	exposeResources?: boolean;
-	includeTools?: string[];
-	excludeTools?: string[];
-	directTools?: boolean | string[];
-}
+const ToolPrefixSchema = Type.Union([Type.Literal("server"), Type.Literal("none"), Type.Literal("short")]);
+type ToolPrefix = Static<typeof ToolPrefixSchema>;
+
+const ServerEntrySchema = Type.Object({
+	command: Type.Optional(Type.String()),
+	args: Type.Optional(Type.Array(Type.String())),
+	socket: Type.Optional(Type.String()),
+	env: Type.Optional(Type.Record(Type.String(), Type.String())),
+	cwd: Type.Optional(Type.String()),
+	url: Type.Optional(Type.String()),
+	headers: Type.Optional(Type.Record(Type.String(), Type.String())),
+	auth: Type.Optional(Type.Union([Type.Literal("oauth"), Type.Literal("bearer"), Type.Literal(false)])),
+	bearerToken: Type.Optional(Type.String()),
+	bearerTokenEnv: Type.Optional(Type.String()),
+	exposeResources: Type.Optional(Type.Boolean()),
+	includeTools: Type.Optional(Type.Array(Type.String())),
+	excludeTools: Type.Optional(Type.Array(Type.String())),
+	directTools: Type.Optional(Type.Union([Type.Boolean(), Type.Array(Type.String())])),
+}, { additionalProperties: true });
+type ServerEntry = Static<typeof ServerEntrySchema>;
 
 interface McpConfig {
 	mcpServers: Record<string, ServerEntry>;
@@ -50,26 +58,22 @@ interface McpConfig {
 	};
 }
 
-interface CachedTool {
-	name?: string;
-}
+const ServerCacheEntrySchema = Type.Object({
+	configHash: Type.Optional(Type.String()),
+	tools: Type.Optional(Type.Array(Type.Object({ name: Type.Optional(Type.String()) }, { additionalProperties: true }))),
+	resources: Type.Optional(Type.Array(Type.Object({
+		uri: Type.Optional(Type.String()),
+		name: Type.Optional(Type.String()),
+	}, { additionalProperties: true }))),
+	cachedAt: Type.Optional(Type.Number()),
+}, { additionalProperties: true });
+type ServerCacheEntry = Static<typeof ServerCacheEntrySchema>;
 
-interface CachedResource {
-	uri?: string;
-	name?: string;
-}
-
-interface ServerCacheEntry {
-	configHash?: string;
-	tools?: CachedTool[];
-	resources?: CachedResource[];
-	cachedAt?: number;
-}
-
-interface MetadataCache {
-	version: number;
-	servers: Record<string, ServerCacheEntry>;
-}
+const MetadataCacheSchema = Type.Object({
+	version: Type.Literal(CACHE_VERSION),
+	servers: Type.Record(Type.String(), ServerCacheEntrySchema),
+}, { additionalProperties: true });
+type MetadataCache = Static<typeof MetadataCacheSchema>;
 
 export interface ResolvedMcpDirectToolSelection { name: string; selector: string }
 
@@ -95,12 +99,7 @@ function loadMetadataCache(): MetadataCache | null {
 		return null;
 	}
 
-	if (!parsed || typeof parsed !== "object") return null;
-	const raw = parsed as Record<string, unknown>;
-	if (raw.version !== CACHE_VERSION || !raw.servers || typeof raw.servers !== "object" || Array.isArray(raw.servers)) {
-		return null;
-	}
-	return raw as unknown as MetadataCache;
+	return Value.Check(MetadataCacheSchema, parsed) ? parsed : null;
 }
 
 function loadMcpConfig(cwd: string): McpConfig {
@@ -139,22 +138,28 @@ function validateConfig(raw: unknown): McpConfig {
 	if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { mcpServers: {} };
 	const obj = raw as Record<string, unknown>;
 	const servers = obj.mcpServers ?? obj["mcp-servers"] ?? {};
-	return {
+	const rawSettings = obj.settings && typeof obj.settings === "object" && !Array.isArray(obj.settings)
+		? obj.settings as Record<string, unknown>
+		: undefined;
+	return omitUndefined({
 		mcpServers: servers && typeof servers === "object" && !Array.isArray(servers) ? servers as Record<string, ServerEntry> : {},
 		imports: Array.isArray(obj.imports) ? obj.imports.filter((value): value is ImportKind => isImportKind(value)) : undefined,
-		settings: obj.settings && typeof obj.settings === "object" && !Array.isArray(obj.settings)
-			? obj.settings as McpConfig["settings"]
+		settings: rawSettings
+			? omitUndefined({
+				toolPrefix: Value.Check(ToolPrefixSchema, rawSettings.toolPrefix) ? rawSettings.toolPrefix : undefined,
+				directTools: typeof rawSettings.directTools === "boolean" ? rawSettings.directTools : undefined,
+			})
 			: undefined,
-	};
+	});
 }
 
 function mergeConfigs(base: McpConfig, next: McpConfig): McpConfig {
 	const imports = [...(base.imports ?? []), ...(next.imports ?? [])];
-	return {
+	return omitUndefined({
 		mcpServers: { ...base.mcpServers, ...next.mcpServers },
 		imports: imports.length ? [...new Set(imports)] : undefined,
 		settings: next.settings ? { ...base.settings, ...next.settings } : base.settings,
-	};
+	});
 }
 
 function expandImports(config: McpConfig, cwd: string): McpConfig {
@@ -175,11 +180,11 @@ function expandImports(config: McpConfig, cwd: string): McpConfig {
 		}
 	}
 
-	return {
+	return omitUndefined({
 		imports: config.imports,
 		settings: config.settings,
 		mcpServers: { ...importedServers, ...config.mcpServers },
-	};
+	});
 }
 
 function resolveImportPath(importKind: ImportKind, cwd: string): string | null {
@@ -252,7 +257,7 @@ function parseSelections(selections: string[]): { servers: Set<string>; tools: M
 			const [server, tool] = item.split("/", 2);
 			if (server && tool) {
 				if (!tools.has(server)) tools.set(server, new Set());
-				tools.get(server)!.add(tool);
+				requirePresent(tools.get(server)).add(tool);
 			} else if (server) {
 				servers.add(server);
 			}

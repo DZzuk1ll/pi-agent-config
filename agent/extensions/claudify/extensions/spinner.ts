@@ -1,4 +1,4 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Loader } from "@earendil-works/pi-tui";
 import { registerPrototypePatch } from "../../_shared/runtime/prototype-patch.ts";
 
@@ -85,7 +85,8 @@ export function resolveSpinnerVerbs(customVerbs: readonly string[] | null, mode:
 
 function readSpinnerSettings(): SpinnerSettings {
 	const now = Date.now();
-	const bust = ((globalThis as any)[SPINNER_BUST_KEY] as number | undefined) ?? 0;
+	const rawBust = Reflect.get(globalThis, SPINNER_BUST_KEY);
+	const bust = typeof rawBust === "number" ? rawBust : 0;
 	if (bust !== _spinnerLastBust) {
 		_spinnerLastBust = bust;
 		_spinnerSettingsCache = null;
@@ -95,8 +96,8 @@ function readSpinnerSettings(): SpinnerSettings {
 	}
 	const raw = readSettings().values;
 	const adaptive = raw.themeAdaptive !== false;
-	const spinnerPreview = (globalThis as any)[SPINNER_COLOR_PREVIEW_KEY];
-	const statusPreview = (globalThis as any)[SPINNER_STATUS_COLOR_PREVIEW_KEY];
+	const spinnerPreview = Reflect.get(globalThis, SPINNER_COLOR_PREVIEW_KEY);
+	const statusPreview = Reflect.get(globalThis, SPINNER_STATUS_COLOR_PREVIEW_KEY);
 	// Spinner glyph and verb share one theme color so they read as a single working indicator.
 	const verbColor = typeof spinnerPreview === "string" && spinnerPreview.length > 0
 		? spinnerPreview
@@ -134,15 +135,17 @@ let _themeColorsLastAdaptive: boolean | null = null;
 let _themeColorsLastVerbKey: string | null = null;
 let _themeColorsLastStatusKey: string | null = null;
 
-function resolveThemeColor(theme: any, key: string, fallbackKey: string): string | null {
-	if (!theme || typeof theme.getFgAnsi !== "function") return null;
+function resolveThemeColor(theme: unknown, key: string, fallbackKey: string): string | null {
+	if (!theme || typeof theme !== "object") return null;
+	const getFgAnsi = Reflect.get(theme, "getFgAnsi");
+	if (typeof getFgAnsi !== "function") return null;
 	try {
-		const v = theme.getFgAnsi(key);
+		const v: unknown = Reflect.apply(getFgAnsi, theme, [key]);
 		if (typeof v === "string" && v.length > 0) return v;
 	} catch { /* ignore */ }
 	if (fallbackKey !== key) {
 		try {
-			const v = theme.getFgAnsi(fallbackKey);
+			const v: unknown = Reflect.apply(getFgAnsi, theme, [fallbackKey]);
 			if (typeof v === "string" && v.length > 0) return v;
 		} catch { /* ignore */ }
 	}
@@ -261,7 +264,7 @@ function shimmerActive(): boolean {
 	return _shimmerEnabled && _shimmerAnchorMs > 0;
 }
 
-function applyThemeColors(theme: any): void {
+function applyThemeColors(theme: unknown): void {
 	const settings = readSpinnerSettings();
 	const { adaptive, verbColor, statusColor } = settings;
 	_shimmerEnabled = settings.shimmer;
@@ -315,18 +318,40 @@ const LOADER_ACTIVE = Symbol.for("pi-claudify:loader-active");
 const LOADER_GENERATION = Symbol.for("pi-claudify:loader-generation");
 const ACTIVE_UI_SYMBOL = Symbol.for("pi-claudify:active-ui");
 
-function getLoaderIntervalMs(_loader: any): number {
+function getLoaderIntervalMs(_loader: unknown): number {
 	return LOADER_INTERVAL_MS;
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): void {
-	(timer as any)?.unref?.();
+	if (timer && typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+		timer.unref();
+	}
+}
+
+interface LoaderUiBridge {
+	theme?: unknown;
+	stopped?: boolean;
+	requestRender(): void;
+}
+
+interface LoaderBridge {
+	ui?: LoaderUiBridge;
+	currentFrame: number;
+	message: string;
+	messageColorFn(message: string): string;
+	intervalId: ReturnType<typeof setTimeout> | null;
+	setText(text: string): void;
+	stop(): void;
+	updateDisplay(): void;
+	[LOADER_LAST_TEXT]?: string;
+	[LOADER_ACTIVE]?: boolean;
+	[LOADER_GENERATION]?: number;
 }
 
 function installLoaderPatches(): Array<() => void> {
 	return [registerPrototypePatch(Loader.prototype, "updateDisplay", {
 	name: "claudify:loader-update-display",
-	override: function patchedUpdateDisplay() {
+	override: function patchedUpdateDisplay(this: LoaderBridge) {
 	applyThemeColors(this.ui?.theme);
 	const frame = OB_FRAMES[this.currentFrame % OB_FRAMES.length];
 	const message = typeof this.message === "string" && RAW_ANSI_RE.test(this.message)
@@ -334,11 +359,11 @@ function installLoaderPatches(): Array<() => void> {
 		: this.messageColorFn(this.message);
 	const glyphColor = shimmerActive() ? shimmerGlyphAnsi(shimmerElapsedMs()) : CLAUDE_ORANGE;
 	const nextText = `${glyphColor}${frame}${RESET} ${message}`;
-	if ((this as any)[LOADER_LAST_TEXT] === nextText) return;
-	(this as any)[LOADER_LAST_TEXT] = nextText;
+	if (this[LOADER_LAST_TEXT] === nextText) return;
+	this[LOADER_LAST_TEXT] = nextText;
 	this.setText(nextText);
-	if (this.ui && !(this.ui as any).stopped) {
-		(globalThis as any)[ACTIVE_UI_SYMBOL] = this.ui;
+	if (this.ui && !this.ui.stopped) {
+		Reflect.set(globalThis, ACTIVE_UI_SYMBOL, this.ui);
 		this.ui.requestRender();
 	}
 	},
@@ -346,25 +371,25 @@ function installLoaderPatches(): Array<() => void> {
 
 registerPrototypePatch(Loader.prototype, "start", {
 	name: "claudify:loader-start",
-	override: function patchedStart() {
+	override: function patchedStart(this: LoaderBridge) {
 	this.stop();
-	(this as any)[LOADER_ACTIVE] = true;
-	const generation = ((this as any)[LOADER_GENERATION] ?? 0) + 1;
-	(this as any)[LOADER_GENERATION] = generation;
-	delete (this as any)[LOADER_LAST_TEXT];
-	(this as any).updateDisplay();
+	this[LOADER_ACTIVE] = true;
+	const generation = (this[LOADER_GENERATION] ?? 0) + 1;
+	this[LOADER_GENERATION] = generation;
+	delete this[LOADER_LAST_TEXT];
+	this.updateDisplay();
 	const scheduleNext = () => {
-		if ((this as any)[LOADER_ACTIVE] !== true || (this as any)[LOADER_GENERATION] !== generation) return;
+		if (this[LOADER_ACTIVE] !== true || this[LOADER_GENERATION] !== generation) return;
 		const intervalMs = getLoaderIntervalMs(this);
 		const timer = setTimeout(() => {
-			(this as any).intervalId = null;
-			if ((this as any)[LOADER_ACTIVE] !== true || (this as any)[LOADER_GENERATION] !== generation) return;
-			(this as any).currentFrame = ((this as any).currentFrame + 1) % OB_FRAMES.length;
-			(this as any).updateDisplay();
+			this.intervalId = null;
+			if (this[LOADER_ACTIVE] !== true || this[LOADER_GENERATION] !== generation) return;
+			this.currentFrame = (this.currentFrame + 1) % OB_FRAMES.length;
+			this.updateDisplay();
 			scheduleNext();
 		}, intervalMs);
 		unrefTimer(timer);
-		(this as any).intervalId = timer;
+		this.intervalId = timer;
 	};
 	scheduleNext();
 	},
@@ -372,12 +397,12 @@ registerPrototypePatch(Loader.prototype, "start", {
 
 registerPrototypePatch(Loader.prototype, "stop", {
 	name: "claudify:loader-stop",
-	override: function patchedStop() {
-	(this as any)[LOADER_ACTIVE] = false;
-	(this as any)[LOADER_GENERATION] = ((this as any)[LOADER_GENERATION] ?? 0) + 1;
-	if ((this as any).intervalId) {
-		clearTimeout((this as any).intervalId);
-		(this as any).intervalId = null;
+	override: function patchedStop(this: LoaderBridge) {
+	this[LOADER_ACTIVE] = false;
+	this[LOADER_GENERATION] = (this[LOADER_GENERATION] ?? 0) + 1;
+	if (this.intervalId) {
+		clearTimeout(this.intervalId);
+		this.intervalId = null;
 	}
 	},
 })];
@@ -596,17 +621,28 @@ function formatCount(value: number): string {
 	return new Intl.NumberFormat("en-US").format(value);
 }
 
-function estimateResponseLength(message: any): number {
-	if (!Array.isArray(message?.content)) return 0;
-	return message.content.reduce((sum: number, block: any) =>
-		sum + (block?.type === "text" && typeof block.text === "string" ? block.text.length : 0), 0);
+function messageContent(message: unknown): unknown[] {
+	if (!message || typeof message !== "object") return [];
+	const content = Reflect.get(message, "content");
+	return Array.isArray(content) ? content : [];
 }
 
-function textBlockLengths(message: any): number[] {
-	if (!Array.isArray(message?.content)) return [];
+function textBlock(value: unknown): { type?: unknown; text?: unknown } {
+	return value && typeof value === "object" ? value as { type?: unknown; text?: unknown } : {};
+}
+
+function estimateResponseLength(message: unknown): number {
+	return messageContent(message).reduce<number>((sum, value) => {
+		const block = textBlock(value);
+		return sum + (block.type === "text" && typeof block.text === "string" ? block.text.length : 0);
+	}, 0);
+}
+
+function textBlockLengths(message: unknown): number[] {
+	const content = messageContent(message);
 	const lengths: number[] = [];
-	for (let i = 0; i < message.content.length; i++) {
-		const block = message.content[i];
+	for (let i = 0; i < content.length; i++) {
+		const block = textBlock(content[i]);
 		if (block?.type === "text" && typeof block.text === "string") {
 			lengths[i] = block.text.length;
 		}
@@ -654,7 +690,7 @@ export default function (pi: ExtensionAPI) {
 	let activeTurnId = 0;
 	let turnActive = false;
 	let lastWorkingMessage: string | null = null;
-	let activeCtx: { ui: any; hasUI: boolean } | null = null;
+	let activeCtx: Pick<ExtensionContext, "ui" | "hasUI"> | null = null;
 
 	function getEffortSuffix(): string {
 		try {
@@ -702,7 +738,7 @@ export default function (pi: ExtensionAPI) {
 		responseLength = Math.max(0, responseLength + responseTextBlockLengths[index] - previous);
 	}
 
-	function resetResponseTracking(message?: any): void {
+	function resetResponseTracking(message?: unknown): void {
 		responseTextBlockLengths = message ? textBlockLengths(message) : [];
 		responseLength = message ? estimateResponseLength(message) : 0;
 	}

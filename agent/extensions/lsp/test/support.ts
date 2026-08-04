@@ -39,31 +39,40 @@ class RequiredMap<K, V> extends Map<K, V> {
 }
 
 export function create_test_pi() {
-	const tools = new RequiredMap<
-		string,
-		{
-			name: string;
-			execute: Function;
-			constrainedSampling?: unknown;
-			parameters: { additionalProperties?: boolean };
-		}
-	>();
-	const commands = new RequiredMap<string, { handler: Function }>();
-	const events = new RequiredMap<string, Function>();
+	type TestToolResult = {
+		content: [{ type: 'text'; text: string }, ...Array<{ type: 'text'; text: string }>];
+		details?: unknown;
+		isError?: boolean;
+	};
+	type TestTool = {
+		name: string;
+		constrainedSampling?: unknown;
+		parameters: { additionalProperties?: boolean };
+		execute(
+			toolCallId: string,
+			params: Record<string, unknown>,
+			signal?: AbortSignal,
+			onUpdate?: unknown,
+			ctx?: ExtensionCommandContext,
+		): Promise<TestToolResult>;
+	};
+	type TestEventHandler = (event: {
+		systemPrompt: string;
+		systemPromptOptions?: { selectedTools?: string[] };
+	}) => Promise<{ systemPrompt: string }> | { systemPrompt: string };
+	type TestCommand = { handler(args: string, ctx: ExtensionCommandContext): Promise<void> };
+	const tools = new RequiredMap<string, TestTool>();
+	const commands = new RequiredMap<string, TestCommand>();
+	const events = new RequiredMap<string, TestEventHandler>();
 
 	const pi = {
-		registerTool(definition: {
-			name: string;
-			execute: Function;
-			constrainedSampling?: unknown;
-			parameters: { additionalProperties?: boolean };
-		}) {
+		registerTool(definition: TestTool) {
 			tools.set(definition.name, definition);
 		},
-		registerCommand(name: string, definition: { handler: Function }) {
+		registerCommand(name: string, definition: TestCommand) {
 			commands.set(name, definition);
 		},
-		on(name: string, handler: Function) {
+		on(name: string, handler: TestEventHandler) {
 			events.set(name, handler);
 		},
 	} as unknown as ExtensionAPI;
@@ -106,11 +115,11 @@ export function create_command_context(
 			hasUI: true,
 			ui: {
 				notify(message: string, level?: string) {
-					notifications.push({ message, level });
+					notifications.push({ message, ...(level === undefined ? {} : { level }) });
 				},
 				select: vi.fn(async () => selections.shift()),
 				custom: modal_results.length
-					? vi.fn(async (create_component: Function) => {
+					? vi.fn(async (create_component: (...args: unknown[]) => unknown) => {
 							create_component(
 								{ requestRender: vi.fn() },
 								{
@@ -131,11 +140,14 @@ export function create_command_context(
 }
 
 export function create_deferred<T>() {
-	let resolve!: (value: T | PromiseLike<T>) => void;
-	let reject!: (reason?: unknown) => void;
+	let pendingResolve: ((value: T | PromiseLike<T>) => void) | undefined;
+	let pendingReject: ((reason?: unknown) => void) | undefined;
 	const promise = new Promise<T>((res, rej) => {
-		resolve = res;
-		reject = rej;
+		pendingResolve = res;
+		pendingReject = rej;
 	});
+	if (!pendingResolve || !pendingReject) throw new Error('Promise executor did not initialize its callbacks');
+	const resolve = pendingResolve;
+	const reject = pendingReject;
 	return { promise, resolve, reject };
 }

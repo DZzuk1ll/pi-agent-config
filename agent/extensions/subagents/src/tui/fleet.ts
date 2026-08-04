@@ -1,5 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined, omitUndefinedAs } from "../../../_shared/runtime/omit-undefined.ts";
 import { getMarkdownTheme, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi, type Component, type MarkdownTheme } from "@earendil-works/pi-tui";
 import { getArtifactPaths, getArtifactsDir } from "../shared/artifacts.ts";
@@ -48,7 +49,7 @@ function belongsToCurrentSession(sessionId: string | undefined, currentSessionId
 
 function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 	const startedAt = job.startedAt ?? job.updatedAt ?? Date.now();
-	return {
+	return omitUndefinedAs<AsyncRunSummary>({
 		id: job.asyncId,
 		asyncDir: job.asyncDir,
 		...(job.sessionId ? { sessionId: job.sessionId } : {}),
@@ -76,7 +77,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 		...(job.currentStep !== undefined ? { currentStep: job.currentStep } : {}),
 		...(job.chainStepCount !== undefined ? { chainStepCount: job.chainStepCount } : {}),
 		...(job.parallelGroups?.length ? { parallelGroups: job.parallelGroups } : {}),
-		steps: (job.steps ?? job.agents?.map((agent, index) => ({ agent, index, status: job.status === "queued" ? "pending" as const : job.status })) ?? []).map((step, index) => ({
+		steps: (job.steps ?? job.agents?.map((agent, index) => ({ agent, index, status: job.status === "queued" ? "pending" as const : job.status })) ?? []).map((step, index) => omitUndefinedAs<AsyncStep>({
 			...step,
 			index: step.index ?? index,
 		})),
@@ -85,7 +86,7 @@ function trackedJobSummary(job: AsyncJobState): AsyncRunSummary {
 		...(job.totalTokens ? { totalTokens: job.totalTokens } : {}),
 		...(job.sessionFile ? { sessionFile: job.sessionFile } : {}),
 		...(job.nestedChildren?.length ? { nestedChildren: job.nestedChildren } : {}),
-	};
+	});
 }
 
 function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
@@ -98,12 +99,12 @@ function asyncItems(run: AsyncRunSummary, description?: string): FleetItem[] {
 		kind: "async" as const,
 		runId: run.id,
 		index: step.index,
-		agent: step.label ? `${step.label} (${step.agent})` : step.agent,
+		agent: step.agent,
 		state: step.status,
 		updatedAt: step.lastActivityAt ?? updatedAt,
 		run,
 		step,
-		...(description ? { description } : {}),
+		...(step.label?.trim() ? { description: step.label.trim() } : run.steps.length === 1 && description ? { description } : {}),
 	}));
 }
 
@@ -254,7 +255,7 @@ function foregroundRecentDetail(item: Extract<FleetItem, { kind: "foreground-rec
 function asyncDetail(item: Extract<FleetItem, { kind: "async" }>): string[] {
 	const status = readStatus(item.run.asyncDir);
 	if (status) {
-		return formatAsyncRunTranscript(status, item.run.asyncDir, { index: item.index, lines: TRANSCRIPT_LINES }).split("\n");
+		return formatAsyncRunTranscript(status, item.run.asyncDir, omitUndefined({ index: item.index, lines: TRANSCRIPT_LINES })).split("\n");
 	}
 	const outputPath = item.index !== undefined ? path.join(item.run.asyncDir, `output-${item.index}.log`) : undefined;
 	return [
@@ -392,7 +393,7 @@ function structuredHeader(item: FleetItem, width: number, theme: Theme, conversa
 	return lines.map((line) => truncateToWidth(line, width));
 }
 
-function fit(text: string, width: number): string {
+function fitText(text: string, width: number): string {
 	const clipped = truncateToWidth(text, Math.max(0, width));
 	return clipped + " ".repeat(Math.max(0, width - visibleWidth(clipped)));
 }
@@ -400,7 +401,7 @@ function fit(text: string, width: number): string {
 function rightAligned(left: string, right: string, width: number): string {
 	const rightWidth = visibleWidth(right);
 	const leftWidth = Math.max(0, width - rightWidth - 1);
-	return fit(left, leftWidth) + " ".repeat(Math.max(1, width - leftWidth - rightWidth)) + fit(right, rightWidth);
+	return fitText(left, leftWidth) + " ".repeat(Math.max(1, width - leftWidth - rightWidth)) + fitText(right, rightWidth);
 }
 
 interface FleetDetailSections {
@@ -645,16 +646,16 @@ export class SubagentFleetComponent implements Component {
 		for (let index = 0; index < this.bodyHeight; index++) {
 			lines.push(
 				this.theme.fg("border", "│")
-				+ fit(roster[index] ?? "", rosterWidth)
+				+ fitText(roster[index] ?? "", rosterWidth)
 				+ this.theme.fg("border", "│")
-				+ fit(visibleDetails[index] ?? "", detailWidth)
+				+ fitText(visibleDetails[index] ?? "", detailWidth)
 				+ this.theme.fg("border", "│"),
 			);
 		}
 		lines.push(this.theme.fg("border", `├${"─".repeat(rosterWidth)}┴${"─".repeat(detailWidth)}┤`));
 		const position = this.snapshot.items.length ? `${this.selected + 1}/${this.snapshot.items.length}` : "0/0";
 		const footer = ` ↑↓/jk agent · ⇧k/⇧j scroll · PgUp/PgDn page · x/Ctrl+O tools · r refresh · Esc close · ${position}`;
-		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
+		lines.push(this.theme.fg("border", "│") + fitText(this.theme.fg("dim", footer), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width));
 	}

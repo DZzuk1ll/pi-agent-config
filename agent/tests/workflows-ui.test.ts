@@ -44,6 +44,9 @@ const fleetStatusModule = await jiti.import<{
 	};
 	collectFleetStatusEntries(state: unknown): Array<Record<string, unknown>>;
 }>("../extensions/subagents/src/tui/fleet-status.ts");
+const fleetModule = await jiti.import<{
+	collectFleetSnapshot(state: unknown): { items: Array<Record<string, unknown>>; error?: string };
+}>("../extensions/subagents/src/tui/fleet.ts");
 const delegationAdaptersModule = await jiti.import<{
 	toSubagentDelegationV2ExecutionParams(request: Record<string, unknown>): Record<string, unknown>;
 }>("../extensions/subagents/src/slash/delegation-adapters.ts");
@@ -338,6 +341,42 @@ test("workflow-owned children are omitted from the automatic fleet status", () =
 	assert.deepEqual(entries, []);
 });
 
+test("async fleet rows show each child label instead of the shared run task", () => {
+	const state = {
+		foregroundControls: new Map(),
+		asyncJobs: new Map([["parallel-1", {
+			asyncId: "parallel-1",
+			asyncDir: "/tmp/parallel-1",
+			status: "running",
+			mode: "parallel",
+			description: "Read-only bounded analysis",
+			startedAt: 100,
+			updatedAt: 200,
+			steps: [
+				{ index: 0, agent: "Explore", label: "Persistence contracts", status: "running" },
+				{ index: 1, agent: "Explore", label: "Executor configuration", status: "running" },
+				{ index: 2, agent: "Explore", label: "Schema readiness", status: "running" },
+			],
+		}]]),
+	};
+
+	const compactRows = fleetStatusModule.collectFleetStatusEntries(state);
+	assert.deepEqual(compactRows.map(({ agent, description }) => ({ agent, description })), [
+		{ agent: "Explore", description: "Persistence contracts" },
+		{ agent: "Explore", description: "Executor configuration" },
+		{ agent: "Explore", description: "Schema readiness" },
+	]);
+	assert.ok(compactRows.every(({ description }) => description !== "Read-only bounded analysis"));
+
+	const snapshot = fleetModule.collectFleetSnapshot(state);
+	assert.equal(snapshot.error, undefined);
+	assert.deepEqual(snapshot.items.map(({ agent, description }) => ({ agent, description })), [
+		{ agent: "Explore", description: "Persistence contracts" },
+		{ agent: "Explore", description: "Executor configuration" },
+		{ agent: "Explore", description: "Schema readiness" },
+	]);
+});
+
 test("workflow focus prevents the subagent panel from stealing navigation keys", () => {
 	const focusedComponent = {
 		render: () => [],
@@ -478,11 +517,11 @@ test("pi-subagents transcript API returns bounded current-session pages without 
 		const root = getArtifactsDir(null, cwd, "project");
 		const transcriptPath = getArtifactPaths(root, runId, "Explore", 0).transcriptPath;
 		fs.mkdirSync(path.dirname(transcriptPath), { recursive: true });
-		fs.writeFileSync(transcriptPath, [
+		fs.writeFileSync(transcriptPath, `${[
 			JSON.stringify({ recordType: "message", role: "assistant", text: "inspecting", ts: 1 }),
 			JSON.stringify({ recordType: "tool_start", toolName: "read", toolCallId: "tool-1", argsPreview: "file.ts", ts: 2 }),
 			JSON.stringify({ recordType: "tool_end", toolName: "read", toolCallId: "tool-1", ts: 3 }),
-		].join("\n") + "\n");
+		].join("\n")}\n`);
 		const handlers = new Map<string, Set<(value: unknown) => void>>();
 		let response: Record<string, unknown> | undefined;
 		const bus = {
@@ -538,10 +577,10 @@ test("pi-subagents transcript API derives completed-run paths and paginates stab
 		const root = getArtifactsDir(null, cwd, "project");
 		const expectedPath = getArtifactPaths(root, runId, "Explore", 0).transcriptPath;
 		fs.mkdirSync(path.dirname(expectedPath), { recursive: true });
-		fs.writeFileSync(expectedPath, [
+		fs.writeFileSync(expectedPath, `${[
 			JSON.stringify({ recordType: "message", role: "assistant", text: "first", ts: 1 }),
 			JSON.stringify({ recordType: "message", role: "assistant", text: "second", ts: 2 }),
-		].join("\n") + "\n");
+		].join("\n")}\n`);
 		const handlers = new Map<string, Set<(value: unknown) => void>>();
 		let response: Record<string, unknown> | undefined;
 		const bus = {

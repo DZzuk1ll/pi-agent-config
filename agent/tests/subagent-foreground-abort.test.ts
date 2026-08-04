@@ -6,6 +6,8 @@ import * as path from "node:path";
 import test from "node:test";
 
 import { createJiti } from "../node_modules/jiti/lib/jiti.mjs";
+import { requirePresent } from "../extensions/_shared/runtime/require-present.ts";
+
 
 const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const piPackage = path.join(globalNodeModules, "@earendil-works/pi-coding-agent");
@@ -80,7 +82,7 @@ function writeIntercomFixture(root: string): string {
 const fs = require("node:fs");
 const path = require("node:path");
 process.on("SIGTERM", () => {});
-console.log(JSON.stringify({ type: "tool_execution_start", toolName: "intercom", args: {} }));
+console.log(JSON.stringify({ type: "tool_execution_start", toolCallId: "intercom-call", toolName: "intercom", args: {} }));
 fs.writeFileSync(path.join(process.env.PI_SUBAGENT_TEST_PID_DIR, process.pid + ".json"), JSON.stringify({ leader: process.pid }));
 setInterval(() => {}, 1000);
 `, { mode: 0o700 });
@@ -132,7 +134,7 @@ test("runSync Ctrl+C abort hard-kills a stubborn child tree", { skip: process.pl
 			acceptance: false,
 		});
 		const [pidFile] = await waitForFiles(pidDir, 1);
-		pids = JSON.parse(fs.readFileSync(path.join(pidDir, pidFile!), "utf8")) as { leader: number; descendant: number };
+		pids = JSON.parse(fs.readFileSync(path.join(pidDir, requirePresent(pidFile)), "utf8")) as { leader: number; descendant: number };
 		assert.equal(processExists(pids.leader), true);
 		assert.equal(processExists(pids.descendant), true);
 
@@ -399,7 +401,7 @@ test("parent abort wins an intercom detach race", { skip: process.platform === "
 			intercomEvents: events,
 		});
 		const [pidFile] = await waitForFiles(pidDir, 1);
-		leaderPid = (JSON.parse(fs.readFileSync(path.join(pidDir, pidFile!), "utf8")) as { leader: number }).leader;
+		leaderPid = (JSON.parse(fs.readFileSync(path.join(pidDir, requirePresent(pidFile)), "utf8")) as { leader: number }).leader;
 		controller.abort();
 		events.emit("pi-intercom:detach-request", {
 			requestId: "detach-after-abort",

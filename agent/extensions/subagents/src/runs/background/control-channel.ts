@@ -17,6 +17,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { POLL_INTERVAL_MS } from "../../shared/types.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
@@ -474,7 +475,7 @@ export function deliverInterruptRequest(input: {
 	now?: () => number;
 	source?: string;
 }): void {
-	const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+	const requestPath = requestAsyncInterrupt(input.asyncDir, input.source ? { source: input.source } : {}, omitUndefined({ now: input.now }));
 	if (typeof input.pid === "number" && input.pid > 0) {
 		try {
 			(input.kill ?? process.kill)(input.pid, input.signal ?? INTERRUPT_SIGNAL);
@@ -501,7 +502,7 @@ export function deliverTimeoutRequest(input: {
 	now?: () => number;
 	source?: string;
 }): void {
-	requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+	requestAsyncTimeout(input.asyncDir, input.source ? { source: input.source } : {}, omitUndefined({ now: input.now }));
 }
 
 export function deliverStopRequest(input: {
@@ -512,7 +513,7 @@ export function deliverStopRequest(input: {
 	now?: () => number;
 	source?: string;
 }): void {
-	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, { now: input.now });
+	requestAsyncStop(input.asyncDir, input.source ? { source: input.source } : {}, omitUndefined({ now: input.now }));
 }
 
 /**

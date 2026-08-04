@@ -176,14 +176,14 @@ function formatSpawnBudgetSection(input: DoctorReportInput): string[] {
 
 function formatPermissionSystemSection(): string[] {
 	const lines: string[] = [];
-	const parentSession = process.env["PI_SUBAGENT_PARENT_SESSION"] ?? "";
+	const parentSession = process.env.PI_SUBAGENT_PARENT_SESSION ?? "";
 	const trimmed = parentSession.trim();
 	if (trimmed) {
 		lines.push(`- parent session: set (${trimmed})`);
 	} else {
 		lines.push("- parent session: not set — ask forwarding from subprocess children will not reach a parent UI");
 	}
-	const isChild = process.env["PI_SUBAGENT_CHILD"] === "1";
+	const isChild = process.env.PI_SUBAGENT_CHILD === "1";
 	lines.push(`- subagent process: ${isChild ? "yes (PI_SUBAGENT_CHILD=1)" : "no"}`);
 	// Whether pi-permission-system is installed and where it stores config is
 	// outside pi-subagents' control, so we only report the forwarding signal we
@@ -221,7 +221,7 @@ export function buildDoctorReport(input: DoctorReportInput): string {
 		...lineFromCheck("intercom bridge", () => formatIntercomDiagnostic(deps.diagnoseIntercomBridge({
 			config: input.config.intercomBridge,
 			context: input.context,
-			orchestratorTarget: input.orchestratorTarget,
+			...(input.orchestratorTarget === undefined ? {} : { orchestratorTarget: input.orchestratorTarget }),
 		}), input.context).join("\n")).split("\n"),
 	];
 	return lines.join("\n");

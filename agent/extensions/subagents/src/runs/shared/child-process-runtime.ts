@@ -1,12 +1,16 @@
 import { spawn, type ChildProcess } from "node:child_process";
+import { omitUndefined, omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
 import type { ResolvedTurnBudget, TurnBudgetState } from "../../shared/types.ts";
 import { attachPostExitStdioGuard, isChildProcessTreeAlive, trySignalChildTree } from "../../shared/post-exit-stdio-guard.ts";
 import {
 	createBoundedByteTail,
 	createBoundedLineReader,
+	decodeEvent,
 	formatProtocolOutputLimit,
+	isDecodedLlmMessage,
 	MAX_CHILD_STDERR_BYTES,
 	projectChildLifecycle,
+	type DecodedChildEvent,
 	type ProtocolOutputLimit,
 } from "./child-protocol.ts";
 import { turnBudgetDecision, turnBudgetExceededMessage, turnBudgetState } from "./turn-budget.ts";
@@ -24,17 +28,7 @@ export function resolveRuntimeSignalRoute(
 	return "direct";
 }
 
-export interface ChildRuntimeEvent {
-	[key: string]: unknown;
-	type?: string;
-	willRetry?: unknown;
-	message?: {
-		role?: string;
-		stopReason?: string;
-		errorMessage?: string;
-		content?: unknown;
-	};
-}
+export type ChildRuntimeEvent = DecodedChildEvent;
 
 export interface ChildProcessRuntimeResult {
 	exitCode: number | null;
@@ -58,7 +52,7 @@ export interface ChildProcessRuntimeControls {
 	setWatchdogActive(active: boolean): void;
 }
 
-export interface ChildProcessRuntimeOptions<TEvent extends ChildRuntimeEvent = ChildRuntimeEvent> {
+export interface ChildProcessRuntimeOptions {
 	command: string;
 	args: string[];
 	cwd: string;
@@ -75,7 +69,7 @@ export interface ChildProcessRuntimeOptions<TEvent extends ChildRuntimeEvent = C
 	hardKillMs?: number;
 	maxStdoutLineBytes?: number;
 	maxStderrLineBytes?: number;
-	onEvent?(event: TEvent, controls: ChildProcessRuntimeControls): void;
+	onEvent?(event: DecodedChildEvent, controls: ChildProcessRuntimeControls): void;
 	onStdoutLine?(line: string): void;
 	onRawStdoutLine?(line: string): void;
 	onStderrLine?(line: string): void;
@@ -89,20 +83,22 @@ export interface ChildProcessRuntimeOptions<TEvent extends ChildRuntimeEvent = C
 }
 
 function assistantStartsToolCall(event: ChildRuntimeEvent): boolean {
+	if (!isDecodedLlmMessage(event.message)) return false;
 	const content = event.message?.content;
 	return Array.isArray(content) && content.some((part) => part && typeof part === "object" && Reflect.get(part, "type") === "toolCall");
 }
 
 function terminalAssistantStop(event: ChildRuntimeEvent): boolean {
 	return event.type === "message_end"
+		&& isDecodedLlmMessage(event.message)
 		&& event.message?.role === "assistant"
 		&& event.message.stopReason === "stop"
 		&& !assistantStartsToolCall(event);
 }
 
 /** Shared foreground/background Pi child runtime. Orchestration and persistence stay in adapters. */
-export function runChildProcess<TEvent extends ChildRuntimeEvent = ChildRuntimeEvent>(
-	options: ChildProcessRuntimeOptions<TEvent>,
+export function runChildProcess(
+	options: ChildProcessRuntimeOptions,
 ): Promise<ChildProcessRuntimeResult> {
 	return new Promise((resolve) => {
 		const processGroup = options.processGroup === true && process.platform !== "win32";
@@ -217,20 +213,27 @@ export function runChildProcess<TEvent extends ChildRuntimeEvent = ChildRuntimeE
 			options.onProtocolLimit?.(limit);
 			terminate("protocol", "SIGTERM");
 		};
-		const stdoutReader = createBoundedLineReader({
+		const stdoutReader = createBoundedLineReader(omitUndefined({
 			maxPendingLineBytes: options.maxStdoutLineBytes,
 			onLimit: failProtocol,
-			onLine(line) {
+			onLine(line: string) {
 				if (!line.trim()) return;
 				options.onStdoutLine?.(line);
-				let event: TEvent;
+				let parsed: unknown;
 				try {
-					event = JSON.parse(line) as TEvent;
+					parsed = JSON.parse(line) as unknown;
 				} catch {
 					stdoutTail.push(`${line}\n`);
 					options.onRawStdoutLine?.(line);
 					return;
 				}
+				const decoded = decodeEvent(parsed);
+				if (!decoded) {
+					stdoutTail.push(`${line}\n`);
+					options.onRawStdoutLine?.(line);
+					return;
+				}
+				const event = decoded;
 				try {
 					options.onEvent?.(event, controls);
 				} catch (error) {
@@ -259,7 +262,7 @@ export function runChildProcess<TEvent extends ChildRuntimeEvent = ChildRuntimeE
 					startFinalDrain();
 				}
 			},
-		});
+		}));
 		const stderrReader = createBoundedLineReader({
 			stream: "stderr",
 			maxPendingLineBytes: options.maxStderrLineBytes ?? MAX_CHILD_STDERR_BYTES,
@@ -311,7 +314,7 @@ export function runChildProcess<TEvent extends ChildRuntimeEvent = ChildRuntimeE
 			clearStdioGuard();
 			stdoutReader.end();
 			stderrReader.end();
-			resolve({
+			resolve(omitUndefinedAs<ChildProcessRuntimeResult>({
 				exitCode,
 				signal,
 				stderr: stderrTail.text(),
@@ -324,7 +327,7 @@ export function runChildProcess<TEvent extends ChildRuntimeEvent = ChildRuntimeE
 				terminalSeen,
 				turnCount,
 				turnBudget,
-			});
+			}));
 		};
 		child.on("exit", () => {
 			exited = true;

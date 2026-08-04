@@ -2,6 +2,8 @@ import type { DynamicParallelStep, ParallelTaskItem } from "../../shared/setting
 import type { ArtifactPaths, ChainOutputMap, JsonSchemaObject, SingleResult } from "../../shared/types.ts";
 import { getSingleResultOutput } from "../../shared/utils.ts";
 import { validateStructuredOutputValue } from "./structured-output.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export class DynamicFanoutError extends Error {}
 
@@ -94,7 +96,7 @@ export function resolveJsonPointer(value: unknown, pointer: string, label: strin
 			throw new DynamicFanoutError(`${label} does not exist.`);
 		}
 		const record = current as Record<string, unknown>;
-		if (!Object.prototype.hasOwnProperty.call(record, segment)) {
+		if (!Object.hasOwn(record, segment)) {
 			throw new DynamicFanoutError(`${label} does not exist.`);
 		}
 		current = record[segment];
@@ -154,8 +156,8 @@ function assertOnlyKeys(value: unknown, allowed: Set<string>, label: string): vo
 
 export function assertNoUnresolvedItemReferences(template: string, itemName: string, label: string): void {
 	for (const match of template.matchAll(/\{([^{}]*)\}/g)) {
-		const raw = match[0]!;
-		const reference = match[1]!;
+		const raw = requirePresent(match[0]);
+		const reference = requirePresent(match[1]);
 		if (reference === itemName || reference.startsWith(`${itemName}.`)) {
 			if (!ITEM_REF_PATTERN.test(raw) || reference === `${itemName}.` || reference.includes("..")) {
 				throw new DynamicFanoutError(`Invalid item reference '${raw}' in ${label}.`);
@@ -177,13 +179,13 @@ export function assertNoUnresolvedItemReferences(template: string, itemName: str
 
 export function hasDynamicFanoutFields(step: unknown): boolean {
 	return !!step && typeof step === "object" && !Array.isArray(step)
-		&& (Object.prototype.hasOwnProperty.call(step, "expand") || Object.prototype.hasOwnProperty.call(step, "collect"));
+		&& (Object.hasOwn(step, "expand") || Object.hasOwn(step, "collect"));
 }
 
 export function validateDynamicStepShape(step: DynamicParallelStep, stepIndex: number, config: DynamicFanoutConfig = {}): void {
 	const prefix = `Dynamic chain step ${stepIndex + 1}`;
 	assertOnlyKeys(step, config.allowRunnerFields ? RUNNER_DYNAMIC_STEP_KEYS : DYNAMIC_STEP_KEYS, prefix);
-	if (!step.expand || !step.expand.from) throw new DynamicFanoutError(`${prefix} requires expand.from.`);
+	if (!step.expand?.from) throw new DynamicFanoutError(`${prefix} requires expand.from.`);
 	assertOnlyKeys(step.expand, DYNAMIC_EXPAND_KEYS, `${prefix} expand`);
 	assertOnlyKeys(step.expand.from, DYNAMIC_EXPAND_FROM_KEYS, `${prefix} expand.from`);
 	if (!isSafeOutputName(step.expand.from.output)) throw new DynamicFanoutError(`${prefix} has invalid expand.from.output '${step.expand.from.output}'.`);

@@ -2,7 +2,7 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { formatDuration, formatModelThinking, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel, formatParallelOutcome } from "../../shared/status-format.ts";
-import { type ActivityState, type AsyncJobStep, type AsyncParallelGroupStatus, type AsyncStatus, type CostSummary, type NestedRunSummary, type SteeringStatus, type SubagentRunMode, type TokenUsage, type TurnBudgetState } from "../../shared/types.ts";
+import type { ActivityState, AsyncJobStep, AsyncParallelGroupStatus, AsyncStatus, CostSummary, NestedRunSummary, SteeringStatus, SubagentRunMode, TokenUsage, TurnBudgetState } from "../../shared/types.ts";
 import type { ResolvedSubagentCapabilityCeiling, SubagentCapabilityAudit } from "../shared/capability-ceiling.ts";
 import { readStatus } from "../../shared/utils.ts";
 import { attachRootChildrenToSteps, buildNestedRouteIndex, type NestedRoute, projectNestedEvents } from "../shared/nested-events.ts";
@@ -11,6 +11,9 @@ import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-grou
 import { contextModeLabel, summarizeContextModes, type ContextMode, type ContextSummary } from "../shared/context-mode.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { readProcessTerminal, sanitizeProcessTerminal } from "./process-terminal.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 interface AsyncRunStepSummary {
 	index: number;
@@ -188,13 +191,13 @@ function outputFileMtime(outputFile: string | undefined): number | undefined {
 }
 
 function deriveAsyncActivityState(asyncDir: string, status: AsyncStatus): { activityState?: ActivityState; lastActivityAt?: number } {
-	if (status.state !== "running") return { activityState: status.activityState, lastActivityAt: status.lastActivityAt };
+	if (status.state !== "running") return omitUndefined({ activityState: status.activityState, lastActivityAt: status.lastActivityAt });
 	const outputPath = status.outputFile ? (path.isAbsolute(status.outputFile) ? status.outputFile : path.join(asyncDir, status.outputFile)) : undefined;
 	const currentStep = typeof status.currentStep === "number" ? status.steps?.[status.currentStep] : undefined;
-	return {
+	return omitUndefined({
 		activityState: status.activityState,
 		lastActivityAt: status.lastActivityAt ?? outputFileMtime(outputPath) ?? currentStep?.lastActivityAt ?? currentStep?.startedAt ?? status.startedAt,
-	};
+	});
 }
 
 function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string }, nestedWarnings: string[] = [], nestedRoute?: NestedRoute): AsyncRunSummary {
@@ -202,8 +205,9 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		throw new Error(`Invalid async status '${path.join(asyncDir, "status.json")}': sessionId must be a string.`);
 	}
 	const { activityState, lastActivityAt } = deriveAsyncActivityState(asyncDir, status);
-	const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
-		?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+	const terminalIdentity = omitUndefined({ runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
+	const processTerminal = readProcessTerminal(asyncDir, terminalIdentity)
+		?? sanitizeProcessTerminal(status.processTerminal, terminalIdentity, path.join(asyncDir, "status.json"));
 	const steps = status.steps ?? [];
 	const chainStepCount = status.chainStepCount ?? steps.length;
 	const parallelGroups = normalizeParallelGroups(status.parallelGroups, steps.length, chainStepCount);
@@ -268,7 +272,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		};
 	});
 	attachRootChildrenToSteps(status.runId || path.basename(asyncDir), summarizedSteps, nestedChildren);
-	return {
+	return omitUndefined({
 		id: status.runId || path.basename(asyncDir),
 		asyncDir,
 		...(status.sessionId ? { sessionId: status.sessionId } : {}),
@@ -311,7 +315,7 @@ function statusToSummary(asyncDir: string, status: AsyncStatus & { cwd?: string 
 		...(status.totalTokens ? { totalTokens: status.totalTokens } : {}),
 		...(status.totalCost ? { totalCost: status.totalCost } : {}),
 		...(status.sessionFile ? { sessionFile: status.sessionFile } : {}),
-	};
+	});
 }
 
 export function summarizeAsyncStatus(asyncDir: string, status: AsyncStatus & { cwd?: string }): AsyncRunSummary {
@@ -347,7 +351,7 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 				? [resolution.id]
 				: resolution.kind === "scan"
 					? fs.readdirSync(asyncDirRoot).filter((entry) =>
-						(entry === options.runId || entry.startsWith(options.runId!))
+						(entry === options.runId || entry.startsWith(requirePresent(options.runId)))
 						&& resolveTargetedAsyncRun(asyncDirRoot, entry, options.sessionId).kind === "exact"
 					)
 					: [];
@@ -375,9 +379,10 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 	};
 	for (const entry of entries) {
 		const asyncDir = path.join(asyncDirRoot, entry);
+		try {
 		const reconciliation = options.reconcile === false
 			? undefined
-			: reconcileAsyncRun(asyncDir, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+			: reconcileAsyncRun(asyncDir, omitUndefined({ resultsDir: options.resultsDir, kill: options.kill, now: options.now }));
 		const status = (reconciliation?.status ?? readStatus(asyncDir)) as (AsyncStatus & { cwd?: string }) | null;
 		if (!status) continue;
 		// Filter before the nested-route lookup: the lookup builds an index over
@@ -391,13 +396,17 @@ export function listAsyncRuns(asyncDirRoot: string, options: AsyncRunListOptions
 		if (options.reconcile !== false) {
 			try {
 				nestedRoute = resolveNestedRoute(status.runId || path.basename(asyncDir));
-				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir: options.resultsDir, kill: options.kill, now: options.now });
+				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, omitUndefined({ resultsDir: options.resultsDir, kill: options.kill, now: options.now }));
 			} catch (error) {
 				nestedWarnings.push(`Nested status unavailable: ${getErrorMessage(error)}`);
 			}
 		}
 		const summary = statusToSummary(asyncDir, status, nestedWarnings, nestedRoute);
 		runs.push(summary);
+		} catch (error) {
+			// One corrupt run must not hide every other fleet entry.
+			console.warn(`Skipping invalid async run '${asyncDir}': ${getErrorMessage(error)}`);
+		}
 	}
 
 	const sorted = sortRuns(runs);
@@ -444,7 +453,7 @@ export function formatAsyncRunProgressLabel(run: Pick<AsyncRunSummary, "mode" | 
 	const chainStepCount = run.chainStepCount ?? stepCount;
 	const groups = normalizeParallelGroups(run.parallelGroups, run.steps.length, chainStepCount);
 	const activeGroup = run.currentStep !== undefined
-		? groups.find((group) => run.currentStep! >= group.start && run.currentStep! < group.start + group.count)
+		? groups.find((group) => requirePresent(run.currentStep) >= group.start && requirePresent(run.currentStep) < group.start + group.count)
 		: undefined;
 	if (activeGroup) {
 		const groupSteps = run.steps.slice(activeGroup.start, activeGroup.start + activeGroup.count);

@@ -40,8 +40,8 @@ export interface ChildWatchdogStateSnapshot {
 	seq: number;
 	lastUpdate: number;
 	followUpPending: boolean;
-	reason?: string;
-	timedOut?: boolean;
+	reason?: string | undefined;
+	timedOut?: boolean | undefined;
 }
 
 export function resolveChildWatchdogConfig(input: {

@@ -17,7 +17,7 @@ const MAX_RESPONSE_BYTES = 256 * 1024;
 const MAX_EVENT_TEXT = 8 * 1024;
 
 interface TranscriptEvents {
-	on(event: string, handler: (data: unknown) => void): (() => void) | void;
+	on(event: string, handler: (data: unknown) => void): (() => void) | undefined;
 	emit(event: string, data: unknown): void;
 }
 
@@ -78,7 +78,8 @@ function projectEvent(event: FleetTranscriptEvent): SubagentTranscriptEvent | un
 	if (event.kind === "assistant") {
 		const text = clip(event.text);
 		if (!text) return undefined;
-		return { kind: "assistant", text, ...(clip(event.model, 256) ? { model: clip(event.model, 256) } : {}), ...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}) };
+		const model = clip(event.model, 256);
+		return { kind: "assistant", text, ...(model ? { model } : {}), ...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}) };
 	}
 	if (event.kind === "user") {
 		const text = clip(event.text);
@@ -89,13 +90,16 @@ function projectEvent(event: FleetTranscriptEvent): SubagentTranscriptEvent | un
 		return text ? { kind: "notice", text, tone: event.tone, ...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}) } : undefined;
 	}
 	const name = clip(event.name, 160) ?? "tool";
+	const args = clip(event.args ?? event.argsPayload, 4 * 1024);
+	const output = clip(event.output);
+	const error = clip(event.error, 4 * 1024);
 	return {
 		kind: "tool",
 		name,
-		...(clip(event.args ?? event.argsPayload, 4 * 1024) ? { args: clip(event.args ?? event.argsPayload, 4 * 1024) } : {}),
-		...(clip(event.output) ? { output: clip(event.output) } : {}),
+		...(args ? { args } : {}),
+		...(output ? { output } : {}),
 		status: event.status,
-		...(clip(event.error, 4 * 1024) ? { error: clip(event.error, 4 * 1024) } : {}),
+		...(error ? { error } : {}),
 		...(event.startedAt !== undefined ? { startedAt: event.startedAt } : {}),
 		...(event.endedAt !== undefined ? { endedAt: event.endedAt } : {}),
 		...(event.timestamp !== undefined ? { timestamp: event.timestamp } : {}),
@@ -156,6 +160,7 @@ export function registerSubagentTranscriptApi(events: TranscriptEvents, state: S
 		const pageStart = target.live ? Math.max(0, projected.length - limit) : cursor;
 		const page = fitResponseEvents(projected.slice(pageStart, pageStart + limit));
 		const nextCursor = !target.live && cursor + page.length < projected.length ? cursor + page.length : undefined;
+		const warning = transcript.warning ? clip(transcript.warning, 2_000) : undefined;
 		respond({
 			status: "ok",
 			events: page,
@@ -163,7 +168,7 @@ export function registerSubagentTranscriptApi(events: TranscriptEvents, state: S
 			...(nextCursor !== undefined ? { nextCursor } : {}),
 			total: projected.length,
 			truncated: transcript.truncated || target.live && pageStart > 0 || page.length < Math.min(limit, Math.max(0, projected.length - pageStart)),
-			...(transcript.warning ? { warning: clip(transcript.warning, 2_000) } : {}),
+			...(warning === undefined ? {} : { warning }),
 		});
 	});
 	return {

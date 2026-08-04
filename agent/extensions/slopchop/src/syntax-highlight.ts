@@ -1,3 +1,5 @@
+
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
 export interface SyntaxSegment {
   text: string;
   token?: "attr" | "string" | "number" | "literal" | "meta";
@@ -10,7 +12,7 @@ function pushSegment(segments: SyntaxSegment[], text: string, token?: SyntaxSegm
     last.text += text;
     return;
   }
-  segments.push({ text, token });
+  segments.push({ text, ...(token === undefined ? {} : { token }) });
 }
 
 export function tokenizeJsonLine(text: string): SyntaxSegment[] {
@@ -27,13 +29,13 @@ export function tokenizeJsonLine(text: string): SyntaxSegment[] {
   };
 
   while (cursor < text.length) {
-    const char = text[cursor]!;
+    const char = requirePresent(text[cursor]);
 
     if (char === '"') {
       let end = cursor + 1;
       let escaped = false;
       while (end < text.length) {
-        const next = text[end]!;
+        const next = requirePresent(text[end]);
         if (escaped) {
           escaped = false;
         } else if (next === "\\") {
@@ -47,14 +49,14 @@ export function tokenizeJsonLine(text: string): SyntaxSegment[] {
 
       const tokenText = text.slice(cursor, end);
       let lookahead = end;
-      while (lookahead < text.length && /\s/.test(text[lookahead]!)) lookahead += 1;
+      while (lookahead < text.length && /\s/.test(requirePresent(text[lookahead]))) lookahead += 1;
       const token: SyntaxSegment["token"] = lookahead < text.length && text[lookahead] === ":" ? "attr" : "string";
       pushSegment(segments, tokenText, token);
       cursor = end;
       continue;
     }
 
-    if (/[\[{}\]:,]/.test(char)) {
+    if (/[[{}\]:,]/.test(char)) {
       pushSegment(segments, char, "meta");
       cursor += 1;
       continue;
@@ -62,7 +64,7 @@ export function tokenizeJsonLine(text: string): SyntaxSegment[] {
 
     if (/[-0-9]/.test(char)) {
       let end = cursor + 1;
-      while (end < text.length && /[0-9eE+\-.]/.test(text[end]!)) end += 1;
+      while (end < text.length && /[0-9eE+\-.]/.test(requirePresent(text[end]))) end += 1;
       pushPlain(cursor);
       pushSegment(segments, text.slice(cursor, end), "number");
       cursor = end;
@@ -80,7 +82,7 @@ export function tokenizeJsonLine(text: string): SyntaxSegment[] {
       continue;
     }
 
-    const nextSpecial = text.slice(cursor).search(/["\[{}\]:,-]|true|false|null|[0-9]/);
+    const nextSpecial = text.slice(cursor).search(/["[{}\]:,-]|true|false|null|[0-9]/);
     if (nextSpecial === -1) {
       pushSegment(segments, text.slice(cursor));
       break;

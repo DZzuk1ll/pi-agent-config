@@ -258,11 +258,11 @@ describe('redact_text', () => {
 	});
 
 	it('redacts GitHub fine-grained PATs', () => {
-		const input = 'github_pat_' + 'A'.repeat(30);
+		const input = `github_pat_${'A'.repeat(30)}`;
 		const { redacted, count } = redact_text(input);
 		expect(count).toBe(1);
 		expect(redacted).toContain('[REDACTED:GitHub Fine-grained PAT]');
-		expect(redacted).not.toContain('github_pat_' + 'A'.repeat(30));
+		expect(redacted).not.toContain(`github_pat_${'A'.repeat(30)}`);
 	});
 
 	it('redacts SSH config metadata from a config block', () => {

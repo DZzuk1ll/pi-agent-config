@@ -7,6 +7,8 @@ import { WorkflowArtifacts, aggregateUsage, loadWorkflowHistory, normalizeWorkfl
 import { WorkflowAdmission, WorkflowController } from "../extensions/workflows/controller.ts";
 import { DelegationClient, type AgentCallResult, type DelegationEvents } from "../extensions/workflows/delegation.ts";
 import { runWorkflowSandbox } from "../extensions/workflows/sandbox.ts";
+import { requirePresent } from "../extensions/_shared/runtime/require-present.ts";
+
 
 function tempDir(): string {
 	return fs.mkdtempSync(path.join(os.tmpdir(), "pi-workflow-test-"));
@@ -170,6 +172,51 @@ test("delegation client correlates the full V2 tuple and releases listeners", as
 	assert.equal(result.output, "right");
 	assert.equal(result.runId, "child-1");
 	assert.equal(bus.listenerCount(), baseline);
+});
+
+test("workflow agent cwd is sanitized and resolved from the workflow directory", async () => {
+	const cwd = tempDir();
+	try {
+		const sandboxResult = await runWorkflowSandbox({
+			source: "return await agent('work', { cwd: 'branch' });",
+			args: undefined,
+			cwd,
+			signal: new AbortController().signal,
+			onAgent: async (_prompt, options) => ({ ok: true, output: options.cwd ?? "" }),
+			onPhase: () => {},
+		});
+		assert.deepEqual(sandboxResult, { ok: true, output: "branch" });
+
+		const bus = new EventBus();
+		let requestCwd: unknown;
+		bus.on("prompt-template:subagent:request", (raw) => {
+			const request = raw as Record<string, unknown>;
+			requestCwd = request.cwd;
+			bus.emit("prompt-template:subagent:started", request);
+			bus.emit("prompt-template:subagent:response", {
+				...request,
+				status: "completed",
+				result: { kind: "text", text: "done" },
+			});
+		});
+		await new DelegationClient(bus, cwd).run({
+			ownerRunId: "wf-cwd",
+			nodeId: "agent-1",
+			prompt: "work",
+			call: { cwd: "branch" },
+			signal: new AbortController().signal,
+		});
+		assert.equal(requestCwd, path.join(cwd, "branch"));
+		await assert.rejects(new DelegationClient(bus, cwd).run({
+			ownerRunId: "wf-invalid-cwd",
+			nodeId: "agent-2",
+			prompt: "work",
+			call: { cwd: "bad\0path" },
+			signal: new AbortController().signal,
+		}), /cwd.*NUL/);
+	} finally {
+		fs.rmSync(cwd, { recursive: true, force: true });
+	}
 });
 
 test("delegation preserves bounded progress fields and rejects invalid counters", async () => {
@@ -350,7 +397,6 @@ test("workflow controller deduplicates progress and records its display fields",
 		startedAt: 0,
 		endedAt: 0,
 		runId: "child-1",
-		currentTool: "read",
 		preview: "done",
 		toolCount: 2,
 		durationMs: 50,
@@ -449,8 +495,8 @@ test("workflow artifact normalization is additive, bounded, and rejects malforme
 	assert.equal(normalizeWorkflowDetails({ state: "unknown", runId: "wf_bad", startedAt: 1 }), undefined);
 
 	const totals = aggregateUsage({
-		...normalized!,
-		agents: [{ ...normalized!.agents[0]!, usage: { input: Number.NaN, output: -1, cacheRead: 2, cacheWrite: 3, cost: 0.5, turns: 1, toolCalls: 1, durationMs: 10 } }],
+		...requirePresent(normalized),
+		agents: [{ ...requirePresent(requirePresent(normalized).agents[0]), usage: { input: Number.NaN, output: -1, cacheRead: 2, cacheWrite: 3, cost: 0.5, turns: 1, toolCalls: 1, durationMs: 10 } }],
 	});
 	assert.deepEqual(totals, { input: 0, output: 0, cacheRead: 2, cacheWrite: 3, cost: 0.5, turns: 1, toolCalls: 1, durationMs: 10 });
 });

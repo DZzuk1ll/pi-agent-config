@@ -1,15 +1,19 @@
+
+import { requirePresent } from "./require-present.ts";
 export type FinalRunState = "done" | "failed" | "killed" | "aborted";
 export type RunState = "starting" | "running" | FinalRunState;
 
 export class Deferred<T> {
 	readonly promise: Promise<T>;
-	private resolvePromise!: (value: T) => void;
+	private readonly resolvePromise: (value: T) => void;
 	private settled = false;
 
 	constructor() {
+		let resolvePromise: ((value: T) => void) | undefined;
 		this.promise = new Promise<T>((resolve) => {
-			this.resolvePromise = resolve;
+			resolvePromise = resolve;
 		});
+		this.resolvePromise = requirePresent(resolvePromise);
 	}
 
 	resolve(value: T): boolean {
@@ -63,7 +67,7 @@ export class SubscriptionBag {
 	private readonly cleanups = new Set<() => void>();
 	private disposed = false;
 
-	add(cleanup: (() => void) | void): () => void {
+	add(cleanup: (() => void) | undefined): () => void {
 		if (typeof cleanup !== "function") return () => {};
 		if (this.disposed) {
 			cleanup();
@@ -111,7 +115,11 @@ export class Semaphore {
 			return this.releaseHandle();
 		}
 		await new Promise<void>((resolve, reject) => {
-			const waiter: (typeof this.waiters)[number] = { resolve, reject, signal };
+			const waiter: (typeof this.waiters)[number] = {
+				resolve,
+				reject,
+				...(signal === undefined ? {} : { signal }),
+			};
 			if (signal) {
 				waiter.onAbort = () => {
 					const index = this.waiters.indexOf(waiter);
@@ -139,7 +147,7 @@ export class Semaphore {
 			if (released) return;
 			released = true;
 			while (this.waiters.length > 0) {
-				const waiter = this.waiters.shift()!;
+				const waiter = requirePresent(this.waiters.shift());
 				if (waiter.signal && waiter.onAbort) waiter.signal.removeEventListener("abort", waiter.onAbort);
 				if (waiter.signal?.aborted) {
 					waiter.reject(abortError(waiter.signal));

@@ -55,9 +55,9 @@ export function register_context_export_tool(pi: ExtensionAPI): void {
 			const store = get_context_store(scope);
 			const scope_options = {
 				...(params.global ? {} : scope),
-				global: params.global,
-				before: params.before,
-				after: params.after,
+				...(params.global === undefined ? {} : { global: params.global }),
+				...(params.before === undefined ? {} : { before: params.before }),
+				...(params.after === undefined ? {} : { after: params.after }),
 			};
 			const exported = store.export_content(
 				params.source_id,

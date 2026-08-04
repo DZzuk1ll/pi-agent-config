@@ -179,7 +179,7 @@ export function applyIntercomBridgeToAgent(agent: AgentConfig, bridge: IntercomB
 	if (tools === agent.tools && systemPrompt === agent.systemPrompt) return agent;
 	return {
 		...agent,
-		tools,
+		...(tools === undefined ? {} : { tools }),
 		systemPrompt,
 	};
 }

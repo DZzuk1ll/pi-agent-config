@@ -49,7 +49,11 @@ async function getMermaidParser(): Promise<((text: string) => Promise<void>) | n
 
 	try {
 		const mod = await import("mermaid");
-		const api = (mod as any).default ?? (mod as any).mermaidAPI ?? mod;
+		const moduleRecord = mod as unknown as Record<string, unknown>;
+		const api = (moduleRecord.default ?? moduleRecord.mermaidAPI ?? mod) as {
+			parse?: (text: string) => unknown;
+			initialize?: (options: { startOnLoad: boolean }) => void;
+		};
 		if (!api || typeof api.parse !== "function") {
 			mermaidParserError = "Mermaid parse API not available";
 			return null;
@@ -62,8 +66,8 @@ async function getMermaidParser(): Promise<((text: string) => Promise<void>) | n
 			}
 		}
 		mermaidParser = async (text: string) => {
-			const result = api.parse(text);
-			if (result && typeof result.then === "function") {
+			const result = api.parse?.(text);
+			if (result && typeof result === "object" && "then" in result && typeof result.then === "function") {
 				await result;
 			}
 		};
@@ -132,8 +136,12 @@ function extractText(content: unknown): string {
 	if (typeof content === "string") return content;
 	if (Array.isArray(content)) {
 		return content
-			.map((part: any) => (part && part.type === "text" ? part.text : ""))
-			.filter((part: string) => part.trim().length > 0)
+			.map((part: unknown) => {
+				if (!part || typeof part !== "object") return "";
+				const record = part as Record<string, unknown>;
+				return record.type === "text" && typeof record.text === "string" ? record.text : "";
+			})
+			.filter((part) => part.trim().length > 0)
 			.join("\n");
 	}
 	return "";
@@ -314,7 +322,7 @@ function splitIssuesFromContent(text: string): { ascii: string; issues: MermaidI
 function getLastAssistantText(entries: SessionEntry[]): string | null {
 	for (let i = entries.length - 1; i >= 0; i--) {
 		const entry = entries[i];
-		if (!entry || entry.type !== "message" || !("message" in entry)) continue;
+		if (entry?.type !== "message" || !("message" in entry)) continue;
 		if (entry.message.role !== "assistant" || !("content" in entry.message)) continue;
 		const text = extractText(entry.message.content);
 		if (text.trim()) return text;
@@ -404,8 +412,8 @@ async function processBlock(
 			index: blockIndex,
 			ascii,
 			lineCount,
-			variants: variants && variants.length > 0 ? variants : undefined,
-			issues: issues.length > 0 ? issues : undefined,
+			...(variants && variants.length > 0 ? { variants } : {}),
+			...(issues.length > 0 ? { issues } : {}),
 		},
 		issues,
 		notifications,
@@ -500,7 +508,7 @@ export default function (pi: ExtensionAPI) {
 			mermaidParserWarned = true;
 		};
 
-		let parser = await getMermaidParser();
+		const parser = await getMermaidParser();
 		if (!parser) warnParserUnavailable();
 
 		if (blocks.length > MAX_BLOCKS) {
@@ -569,7 +577,7 @@ export default function (pi: ExtensionAPI) {
 		let assistantText = "";
 		for (let i = event.messages.length - 1; i >= 0; i--) {
 			const msg = event.messages[i];
-			if (!msg || msg.role !== "assistant" || !("content" in msg)) continue;
+			if (msg?.role !== "assistant" || !("content" in msg)) continue;
 			assistantText = extractText(msg.content);
 			if (assistantText.trim()) break;
 		}

@@ -1,6 +1,8 @@
 import { formatDuration, formatTokens, shortenPath } from "../../shared/formatters.ts";
 import { formatActivityLabel } from "../../shared/status-format.ts";
-import type { ActivityState, NestedRunSummary, NestedStepSummary } from "../../shared/types.ts";
+import type { ActivityState, NestedRunSummary, } from "../../shared/types.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export interface NestedRunCounts {
 	total: number;
@@ -45,7 +47,7 @@ export function formatNestedAggregate(children: NestedRunSummary[] | undefined):
 
 function nestedRunLabel(run: NestedRunSummary): string {
 	if (run.agent) return run.agent;
-	if (run.agents?.length) return run.agents.length === 1 ? run.agents[0]! : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
+	if (run.agents?.length) return run.agents.length === 1 ? requirePresent(run.agents[0]) : `${run.agents.slice(0, 2).join(", ")}${run.agents.length > 2 ? ` +${run.agents.length - 2}` : ""}`;
 	return run.id;
 }
 
@@ -80,7 +82,7 @@ function formatNestedRunLines(children: NestedRunSummary[] | undefined, options:
 			return;
 		}
 		for (let index = 0; index < items.length; index++) {
-			const child = items[index]!;
+			const child = requirePresent(items[index]);
 			if (lines.length >= options.maxLines) {
 				const aggregate = formatNestedAggregate(items.slice(index));
 				if (aggregate) lines[lines.length - 1] = `${indent}↳ ${aggregate}`;

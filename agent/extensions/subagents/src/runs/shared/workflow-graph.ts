@@ -1,5 +1,8 @@
 import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialStep } from "../../shared/settings.ts";
 import type { SingleResult, SubagentRunMode, WorkflowGraphNode, WorkflowGraphSnapshot, WorkflowNodeStatus } from "../../shared/types.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export interface WorkflowGraphBuildInput {
 	runId: string;
@@ -77,17 +80,17 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 	let currentNodeId: string | undefined;
 
 	for (let stepIndex = 0; stepIndex < input.steps.length; stepIndex++) {
-		const step = input.steps[stepIndex]!;
+		const step = requirePresent(input.steps[stepIndex]);
 		if (isParallelStep(step)) {
 			const groupId = `step-${stepIndex}`;
 			const children: WorkflowGraphNode[] = [];
 			const childStatuses: WorkflowNodeStatus[] = [];
 			for (let taskIndex = 0; taskIndex < step.parallel.length; taskIndex++) {
-				const task = step.parallel[taskIndex]!;
+				const task = requirePresent(step.parallel[taskIndex]);
 				const status = nodeStatus(input, flatIndex);
 				childStatuses.push(status);
 				const childId = `step-${stepIndex}-agent-${taskIndex}`;
-				const child: WorkflowGraphNode = {
+				const child: WorkflowGraphNode = omitUndefined({
 					id: childId,
 					kind: "agent",
 					agent: task.agent,
@@ -100,7 +103,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 					structured: Boolean(task.outputSchema),
 					acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
 					error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
-				};
+				});
 				children.push(child);
 				pushPhase(phases, task.phase, childId);
 				if (status === "running" || input.currentFlatIndex === flatIndex) currentNodeId = childId;
@@ -126,11 +129,11 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 			const children: WorkflowGraphNode[] = [];
 			const childStatuses: WorkflowNodeStatus[] = [];
 			for (let taskIndex = 0; taskIndex < materialized.length; taskIndex++) {
-				const task = materialized[taskIndex]!;
+				const task = requirePresent(materialized[taskIndex]);
 				const status = nodeStatus(input, task.flatIndex);
 				childStatuses.push(status);
 				const childId = `step-${stepIndex}-item-${task.itemKey.replace(/[^a-zA-Z0-9_-]/g, "-")}`;
-				const child: WorkflowGraphNode = {
+				const child: WorkflowGraphNode = omitUndefined({
 					id: childId,
 					kind: "agent",
 					agent: task.agent,
@@ -144,14 +147,14 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 					structured: task.structured,
 					acceptanceStatus: input.results?.[task.flatIndex]?.acceptance?.status,
 					error: input.stepStatuses?.[task.flatIndex]?.error ?? input.results?.[task.flatIndex]?.error ?? task.error,
-				};
+				});
 				children.push(child);
 				pushPhase(phases, child.phase, childId);
 				if (status === "running" || input.currentFlatIndex === task.flatIndex) currentNodeId = childId;
 			}
 			const groupStatus = groupOverride?.status ?? (children.length > 0 ? summarizeParallelStatuses(childStatuses) : (input.currentStepIndex === stepIndex ? "running" : "pending"));
 			if (input.currentStepIndex === stepIndex && !currentNodeId) currentNodeId = groupId;
-			nodes.push({
+			nodes.push(omitUndefined({
 				id: groupId,
 				kind: "dynamic-parallel-group",
 				label: step.label?.trim() || step.parallel.label?.trim() || `Dynamic fanout (${step.collect.as})`,
@@ -161,15 +164,15 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 				structured: Boolean(step.collect.outputSchema),
 				acceptanceStatus: groupOverride?.acceptance?.status,
 				error: groupOverride?.error,
-				dynamic: {
+				dynamic: omitUndefined({
 					sourceOutput: step.expand.from.output,
 					sourcePath: step.expand.from.path,
 					itemName: step.expand.item ?? "item",
 					maxItems: step.expand.maxItems,
 					collectAs: step.collect.as,
-				},
+				}),
 				children,
-			});
+			}));
 			if (materialized.length > 0) flatIndex = Math.max(flatIndex, ...materialized.map((child) => child.flatIndex + 1));
 			continue;
 		}
@@ -177,7 +180,7 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 		const seq = step as SequentialStep;
 		const status = nodeStatus(input, flatIndex);
 		const id = `step-${stepIndex}`;
-		nodes.push({
+		nodes.push(omitUndefined({
 			id,
 			kind: "step",
 			agent: seq.agent,
@@ -190,17 +193,17 @@ export function buildWorkflowGraphSnapshot(input: WorkflowGraphBuildInput): Work
 			structured: Boolean(seq.outputSchema),
 			acceptanceStatus: input.results?.[flatIndex]?.acceptance?.status,
 			error: input.stepStatuses?.[flatIndex]?.error ?? input.results?.[flatIndex]?.error,
-		});
+		}));
 		pushPhase(phases, seq.phase, id);
 		if (status === "running" || input.currentFlatIndex === flatIndex || input.currentStepIndex === stepIndex) currentNodeId = id;
 		flatIndex++;
 	}
 
-	return {
+	return omitUndefined({
 		runId: input.runId,
 		mode: input.mode ?? "chain",
 		phases,
 		nodes,
 		currentNodeId,
-	};
+	});
 }

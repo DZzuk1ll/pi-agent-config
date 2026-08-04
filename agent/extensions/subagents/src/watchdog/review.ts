@@ -1,8 +1,9 @@
 import { Agent, type AgentTool, type StreamFn, type ThinkingLevel } from "@earendil-works/pi-agent-core";
 import { createReadOnlyTools, convertToLlm, type ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { streamSimple } from "@earendil-works/pi-ai/compat";
-import type { Model } from "@earendil-works/pi-ai";
+import type { Api, Model } from "@earendil-works/pi-ai";
 import { Type, type Static } from "typebox";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import { resolveModelCandidate } from "../runs/shared/model-fallback.ts";
 import { resolveEffectiveThinking, splitKnownThinkingSuffix, THINKING_LEVELS, toModelInfo } from "../shared/model-info.ts";
 import type { WatchdogReviewFunction, WatchdogReviewRequest } from "./runtime.ts";
@@ -32,7 +33,7 @@ type WatchdogWarnParams = Static<typeof WatchdogWarnParams>;
 
 type WatchdogContextProvider = ExtensionContext | (() => ExtensionContext | undefined);
 
-type RegistryModel = Model<any>;
+type RegistryModel = Model<Api>;
 
 interface WatchdogReviewAuth {
 	apiKey?: string;
@@ -134,7 +135,7 @@ export async function resolveWatchdogReviewModel(
 				configThinking: config.main.thinking,
 				ctx,
 				allowContextThinking: false,
-				currentThinkingLevel: options.currentThinkingLevel,
+				...(options.currentThinkingLevel === undefined ? {} : { currentThinkingLevel: options.currentThinkingLevel }),
 			}),
 			auth: await resolveReviewAuth(ctx, resolved.model),
 			explicit: true,
@@ -152,7 +153,7 @@ export async function resolveWatchdogReviewModel(
 			configThinking: config.main.thinking,
 			ctx,
 			allowContextThinking: true,
-			currentThinkingLevel: options.currentThinkingLevel,
+			...(options.currentThinkingLevel === undefined ? {} : { currentThinkingLevel: options.currentThinkingLevel }),
 		}),
 		auth: await resolveReviewAuth(ctx, currentModel),
 		explicit: false,
@@ -250,9 +251,9 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		const ctx = resolveContext(provider);
 		if (!ctx) throw new Error("Main watchdog review cannot run without an active Pi extension context.");
 		if (ctx.signal?.aborted || request.signal?.aborted) return { stopReason: "aborted" };
-		const selection = await resolveWatchdogReviewModel(ctx, request.config, {
+		const selection = await resolveWatchdogReviewModel(ctx, request.config, omitUndefined({
 			currentThinkingLevel: options.getThinkingLevel?.(),
-		});
+		}));
 		if (ctx.signal?.aborted || request.signal?.aborted) return { stopReason: "aborted" };
 		const auth = selection.auth;
 		const registeredProvider = (ctx.modelRegistry as {
@@ -261,12 +262,15 @@ export function createMainWatchdogReview(provider: WatchdogContextProvider, opti
 		const baseStreamFn = options.streamFn ?? (registeredProvider?.streamSimple && registeredProvider.api === selection.model.api
 			? registeredProvider.streamSimple
 			: streamSimple);
-		const streamFn: StreamFn = (model, context, streamOptions) => baseStreamFn(model, context, {
-			...streamOptions,
-			...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
-			env: auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined,
-			headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
-		});
+		const streamFn: StreamFn = (model, context, streamOptions) => {
+			const env = auth.env || streamOptions?.env ? { ...(auth.env ?? {}), ...(streamOptions?.env ?? {}) } : undefined;
+			return baseStreamFn(model, context, {
+				...streamOptions,
+				...(auth.apiKey ? { apiKey: auth.apiKey } : {}),
+				...(env === undefined ? {} : { env }),
+				headers: { ...(streamOptions?.headers ?? {}), ...(auth.headers ?? {}) },
+			});
+		};
 		const tools = [
 			...(options.createReadOnlyTools ?? createReadOnlyTools)(ctx.cwd).filter((tool) => WATCHDOG_ALLOWED_TOOL_NAMES.has(tool.name) && tool.name !== "watchdog_warn"),
 			createWatchdogWarnTool(request),

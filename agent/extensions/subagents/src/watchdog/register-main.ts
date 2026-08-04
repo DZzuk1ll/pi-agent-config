@@ -14,6 +14,8 @@ import {
 	type WatchdogWarningDetails,
 } from "./types.ts";
 import { createWatchdogWarningMessage } from "./warning-format.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 interface RegisterMainWatchdogOptions {
 	runtime?: MainWatchdogRuntime;
@@ -153,7 +155,7 @@ export function buildWatchdogStatus(snapshot: ReturnType<MainWatchdogRuntime["ge
 function parseTestCommand(input: string): { severity: "concern" | "blocker"; text: string } | undefined {
 	const match = input.match(/^test\s+(concern|blocker)\s+([\s\S]+)$/);
 	if (!match) return undefined;
-	return { severity: match[1] as "concern" | "blocker", text: match[2]!.trim() };
+	return { severity: match[1] as "concern" | "blocker", text: requirePresent(match[2]).trim() };
 }
 
 function formatThinking(value: ThinkingLevel | false | undefined): string {

@@ -15,11 +15,104 @@ function node(source: string, options: Partial<Parameters<typeof runChildProcess
 }
 
 const linger = "setInterval(() => {}, 1000)";
+const usage = {
+	input: 1,
+	output: 1,
+	cacheRead: 0,
+	cacheWrite: 0,
+	totalTokens: 2,
+	cost: { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, total: 0 },
+};
+
+function assistantMessage(stopReason: "stop" | "toolUse", text = "") {
+	return {
+		role: "assistant",
+		content: text ? [{ type: "text", text }] : [],
+		api: "test",
+		provider: "test",
+		model: "test",
+		usage,
+		stopReason,
+		timestamp: 1,
+	};
+}
 
 describe("shared child process runtime", () => {
+	it("keeps invalid JSONL values as bounded raw stdout without lifecycle callbacks", async () => {
+		const events: string[] = [];
+		const raw: string[] = [];
+		const lines = [
+			"null",
+			"[]",
+			JSON.stringify("plain"),
+			"not-json",
+			JSON.stringify({ type: "message_start" }),
+			JSON.stringify({ type: "message_update", message: null }),
+			JSON.stringify({ type: "message_end", message: { role: 1, content: [] } }),
+			JSON.stringify({ type: "message_end", message: assistantMessage("stop") }),
+		];
+		const result = await node(`for (const line of ${JSON.stringify(lines)}) console.log(line)`, {
+			onEvent: (event) => events.push(event.type ?? ""),
+			onRawStdoutLine: (line) => raw.push(line),
+		});
+
+		expect(events).toEqual(["message_end"]);
+		expect(raw).toEqual(lines.slice(0, -1));
+		expect(result.turnCount).toBe(1);
+		expect(result.terminalSeen).toBe(true);
+	});
+
+	it("rejects malformed nested usage and tool events while accepting string user messages", async () => {
+		const malformedUsage = {
+			...assistantMessage("stop"),
+			usage: { ...usage, input: "oops" },
+		};
+		const lines = [
+			JSON.stringify({ type: "message_end", message: malformedUsage }),
+			JSON.stringify({ type: "message_end", message: { ...assistantMessage("stop"), content: [{ type: "image", data: "x", mimeType: "image/png" }] } }),
+			JSON.stringify({ type: "tool_execution_start", toolCallId: "call", toolName: 42, args: {} }),
+			JSON.stringify({ type: "agent_end", willRetry: false, messages: [{}] }),
+			JSON.stringify({ type: "message_start", message: { role: "user", content: "hello", timestamp: 1 } }),
+			JSON.stringify({
+				type: "message_end",
+				message: { role: "custom", customType: "notice", content: "keep going", display: true, timestamp: 2 },
+			}),
+		];
+		const events: string[] = [];
+		const raw: string[] = [];
+		const result = await node(`for (const line of ${JSON.stringify(lines)}) console.log(line)`, {
+			onEvent: (event) => events.push(event.type ?? ""),
+			onRawStdoutLine: (line) => raw.push(line),
+		});
+
+		expect(events).toEqual(["message_start", "message_end"]);
+		expect(raw).toEqual(lines.slice(0, 4));
+		expect(result.turnCount).toBe(0);
+	});
+
+	it("keeps malformed non-lifecycle session events out of callbacks", async () => {
+		const lines = [
+			JSON.stringify({ type: "queue_update", steering: 42, followUp: [] }),
+			JSON.stringify({ type: "compaction_start", reason: 42 }),
+			JSON.stringify({ type: "auto_retry_start", attempt: "bad", maxAttempts: 3, delayMs: 10, errorMessage: "retry" }),
+			JSON.stringify({ type: "bash_execution_update", delta: 42 }),
+			JSON.stringify({ type: "queue_update", steering: ["next"], followUp: [] }),
+		];
+		const events: string[] = [];
+		const raw: string[] = [];
+		await node(`for (const line of ${JSON.stringify(lines)}) console.log(line)`, {
+			onEvent: (event) => events.push(event.type),
+			onRawStdoutLine: (line) => raw.push(line),
+		});
+
+		expect(events).toEqual(["queue_update"]);
+		expect(raw).toEqual(lines.slice(0, 4));
+	});
+
 	it("parses events, bounds tails, and completes normal exits", async () => {
 		const events: string[] = [];
-		const result = await node(`console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"stop",content:[{type:"text",text:"done"}]}}))`, {
+		const event = { type: "message_end", message: assistantMessage("stop", "done") };
+		const result = await node(`console.log(${JSON.stringify(JSON.stringify(event))})`, {
 			onEvent: (event) => events.push(event.type ?? ""),
 		});
 		expect(events).toEqual(["message_end"]);
@@ -43,7 +136,8 @@ describe("shared child process runtime", () => {
 	});
 
 	it("enforces turn budgets and stdout protocol limits", async () => {
-		const budgeted = await node(`console.log(JSON.stringify({type:"message_end",message:{role:"assistant",stopReason:"toolUse",content:[{type:"text",text:"more"}]}}));${linger}`, {
+		const event = { type: "message_end", message: assistantMessage("toolUse", "more") };
+		const budgeted = await node(`console.log(${JSON.stringify(JSON.stringify(event))});${linger}`, {
 			turnBudget: { maxTurns: 1, graceTurns: 0 },
 		});
 		expect(budgeted.terminationReason).toBe("turn-budget");
@@ -55,10 +149,11 @@ describe("shared child process runtime", () => {
 
 	it("waits for the watchdog tail before final drain", async () => {
 		let tailed = false;
-		const result = await node(`console.log(JSON.stringify({type:"watchdog"}));console.log(JSON.stringify({type:"agent_settled"}));${linger}`, {
+		const watchdogEvent = { type: "subagent.watchdog.status", seq: 1, phase: "reviewing", ts: 1, followUpPending: true };
+		const result = await node(`console.log(${JSON.stringify(JSON.stringify(watchdogEvent))});console.log(JSON.stringify({type:"agent_settled"}));${linger}`, {
 			watchdogTailMs: 20,
 			onEvent(event, controls) {
-				if (event.type === "watchdog") controls.setWatchdogActive(true);
+				if (event.type === "subagent.watchdog.status") controls.setWatchdogActive(true);
 			},
 			onWatchdogTail: () => { tailed = true; },
 		});

@@ -4,11 +4,12 @@ import { extname, relative, resolve } from "node:path";
 
 import type {
 	BashToolDetails,
-	EditToolDetails,
 	ExtensionAPI,
+	ExtensionContext,
 	GrepToolDetails,
 	ReadToolDetails,
 	Theme,
+	ThemeColor,
 } from "@earendil-works/pi-coding-agent";
 import {
 	AssistantMessageComponent,
@@ -26,7 +27,7 @@ import {
 	createWriteTool,
 } from "@earendil-works/pi-coding-agent";
 import {
-	Box,
+	type Component,
 	Container,
 	deleteAllKittyImages,
 	getCapabilities,
@@ -44,6 +45,7 @@ import {
 import * as Diff from "diff";
 import type { BundledLanguage, BundledTheme } from "shiki";
 import { registerPrototypePatch as registerPrototypePatchBase } from "../../_shared/runtime/prototype-patch.ts";
+import { omitUndefined } from "../../_shared/runtime/omit-undefined.ts";
 
 import { ClaudifyScreen } from "./claudify-screen.ts";
 import { installClaudeFooter, normalizeHexColor, patchEditorBorderColor } from "./footer.ts";
@@ -63,8 +65,6 @@ import {
 	resolveMessageChromeSettings,
 	resolveWorkedVerbs,
 	type MessageChromeSettings,
-	type MessageSpacing,
-	type MessageStyle,
 	type WorkedVerbMode,
 } from "./message-chrome.ts";
 import {
@@ -75,6 +75,8 @@ import {
 	themeOverrideIdentity,
 	type ThemeOverrideTarget,
 } from "./theme-sync.ts";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 const prototypePatchDisposers: Array<() => void> = [];
 const registerPrototypePatch: typeof registerPrototypePatchBase = (...args) => {
@@ -84,6 +86,28 @@ const registerPrototypePatch: typeof registerPrototypePatchBase = (...args) => {
 };
 function disposePrototypePatches(): void {
 	for (const dispose of prototypePatchDisposers.splice(0).reverse()) dispose();
+}
+
+type PropertyRecord = Record<PropertyKey, unknown>;
+
+function propertyRecord(value: unknown): PropertyRecord | undefined {
+	return value && typeof value === "object" ? value as PropertyRecord : undefined;
+}
+
+function stringRecord(value: unknown): Record<string, unknown> | undefined {
+	return value && typeof value === "object" && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+interface ThemeStorageBridge {
+	mode?: unknown;
+	fgColors?: Map<string, unknown> | Record<string, unknown>;
+	bgColors?: Map<string, unknown> | Record<string, unknown>;
+}
+
+function themeStorage(theme: unknown): ThemeStorageBridge {
+	return propertyRecord(theme) as ThemeStorageBridge | undefined ?? {};
 }
 
 const RESET = "\x1b[0m";
@@ -102,7 +126,8 @@ const WRAP_MARK = "\uE000";
 const KITTY_IMAGE_PREFIX = "\x1b_G";
 const ITERM2_IMAGE_PREFIX = "\x1b]1337;File=";
 
-let toolBackgroundMode: "default" | "transparent" | "outlines" = "transparent";
+type ToolBackgroundMode = "default" | "transparent" | "outlines";
+let toolBackgroundMode: ToolBackgroundMode = "transparent";
 
 const CLAUDE_TOOL_GLYPH = "⏺";
 const CLAUDE_RESULT_GLYPH = "⎿";
@@ -155,15 +180,16 @@ export const COMMON_COLOR_KEYS: readonly string[] = [
 	"syntaxKeyword", "syntaxFunction", "syntaxString", "syntaxType",
 ];
 function bustSpinnerSettingsCache(): void {
-	const current = ((globalThis as any)[SPINNER_BUST_KEY] as number | undefined) ?? 0;
-	(globalThis as any)[SPINNER_BUST_KEY] = current + 1;
+	const rawCurrent = Reflect.get(globalThis, SPINNER_BUST_KEY);
+	const current = typeof rawCurrent === "number" ? rawCurrent : 0;
+	Reflect.set(globalThis, SPINNER_BUST_KEY, current + 1);
 }
 
 function getMessageChromeSettings(): MessageChromeSettings {
 	return resolveMessageChromeSettings(readSettings().values);
 }
 
-function applyHiddenThinkingLabel(ctx: any): void {
+function applyHiddenThinkingLabel(ctx: Pick<ExtensionContext, "hasUI" | "ui">): void {
 	if (!ctx?.hasUI || typeof ctx.ui?.setHiddenThinkingLabel !== "function") return;
 	const label = getMessageChromeSettings().hiddenThinkingLabel;
 	ctx.ui.setHiddenThinkingLabel(label || DEFAULT_HIDDEN_THINKING_LABEL);
@@ -181,26 +207,26 @@ function syncToolBackgroundMode(): void {
 }
 
 function setThemeBg(theme: unknown, key: string, value: string): void {
-	const themeAny = theme as any;
-	if (themeAny.bgColors instanceof Map) {
-		themeAny.bgColors.set(key, value);
-	} else if (themeAny.bgColors && typeof themeAny.bgColors === "object") {
-		themeAny.bgColors[key] = value;
+	const colors = themeStorage(theme).bgColors;
+	if (colors instanceof Map) {
+		colors.set(key, value);
+	} else if (colors) {
+		colors[key] = value;
 	}
 }
 
 function getThemeFg(theme: unknown, key: string): string | undefined {
-	const themeAny = theme as any;
-	const value = themeAny?.fgColors instanceof Map ? themeAny.fgColors.get(key) : themeAny?.fgColors?.[key];
+	const colors = themeStorage(theme).fgColors;
+	const value = colors instanceof Map ? colors.get(key) : colors?.[key];
 	return typeof value === "string" ? value : undefined;
 }
 
 function setThemeFg(theme: unknown, key: string, value: string): void {
-	const themeAny = theme as any;
-	if (themeAny.fgColors instanceof Map) {
-		themeAny.fgColors.set(key, value);
-	} else if (themeAny.fgColors && typeof themeAny.fgColors === "object") {
-		themeAny.fgColors[key] = value;
+	const colors = themeStorage(theme).fgColors;
+	if (colors instanceof Map) {
+		colors.set(key, value);
+	} else if (colors) {
+		colors[key] = value;
 	}
 }
 
@@ -245,12 +271,12 @@ const originalThemeAccent = new WeakMap<object, AccentSnapshot>();
  * theme's real accent; accentColor="theme" then had nothing to restore. The
  * container forwards through the Proxy, so it identifies the logical theme. */
 function themeAccentIdentity(theme: unknown): object | null {
-	const fgColors = (theme as any)?.fgColors;
+	const fgColors = themeStorage(theme).fgColors;
 	return fgColors && typeof fgColors === "object" ? (fgColors as object) : null;
 }
 
 function themeFgKeys(theme: unknown): string[] {
-	const fgColors = (theme as any)?.fgColors;
+	const fgColors = themeStorage(theme).fgColors;
 	if (fgColors instanceof Map) return [...fgColors.keys()];
 	if (fgColors && typeof fgColors === "object") return Object.keys(fgColors);
 	return [];
@@ -299,12 +325,12 @@ function ansiFromHex(theme: unknown, hex: CustomHexColor, layer: "foreground" | 
 	const rgb = colorToRgb(hex);
 	if (!rgb) return null;
 	const normalized = `#${[rgb.r, rgb.g, rgb.b].map((channel) => channel.toString(16).padStart(2, "0")).join("")}`;
-	const mode = (theme as any)?.mode === "256color" ? "256color" : "truecolor";
+	const mode = themeStorage(theme).mode === "256color" ? "256color" : "truecolor";
 	// Constructing a minimal pi Theme delegates 256-color conversion to pi's
 	// own rgbTo256 implementation instead of maintaining a second quantizer.
 	const converter = new PiTheme(
-		{ accent: normalized, thinkingXhigh: normalized } as any,
-		{ userMessageBg: normalized } as any,
+		{ accent: normalized, thinkingXhigh: normalized } as unknown as Record<ThemeColor, string | number>,
+		{ userMessageBg: normalized } as unknown as ConstructorParameters<typeof PiTheme>[1],
 		mode,
 	);
 	return layer === "foreground" ? converter.getFgAnsi("accent") : converter.getBgAnsi("userMessageBg");
@@ -333,7 +359,7 @@ export function applyAccentOverride(theme: unknown): void {
 	const snapshot = originalThemeAccent.get(identity);
 	const accentColor = readSettings().values.accentColor;
 	const customAccent = storedHexColor(accentColor);
-	const colorMode = (theme as any).mode === "256color" ? "ansi256" : "truecolor";
+	const colorMode = themeStorage(theme).mode === "256color" ? "ansi256" : "truecolor";
 	const target = accentColor === "theme"
 		? snapshot?.original ?? current
 		: customAccent
@@ -362,8 +388,8 @@ let userBoxThemePrefixFg: string | null = null;
 let userBoxCustomBg: { hex: CustomHexColor; ansi: string } | null = null;
 
 function getThemeBg(theme: unknown, key: string): string | undefined {
-	const themeAny = theme as any;
-	const value = themeAny?.bgColors instanceof Map ? themeAny.bgColors.get(key) : themeAny?.bgColors?.[key];
+	const colors = themeStorage(theme).bgColors;
+	const value = colors instanceof Map ? colors.get(key) : colors?.[key];
 	return typeof value === "string" ? value : undefined;
 }
 
@@ -453,7 +479,7 @@ function isToolExecutionLike(value: unknown): value is { toolName: string; toolC
 }
 
 function isBashToolExecution(value: unknown): boolean {
-	return isToolExecutionLike(value) && (value as any).toolName === "bash";
+	return isToolExecutionLike(value) && value.toolName === "bash";
 }
 
 function shouldStackConsecutiveBash(): boolean {
@@ -471,8 +497,33 @@ function readOnlyToolGroupLimit(): number {
 		: 5;
 }
 
-function toolComponentRecord(value: unknown): Record<string, any> {
-	return value as Record<string, any>;
+interface ToolComponentArgsBridge {
+	command?: string;
+	cmd?: string;
+	path?: string;
+	pattern?: string;
+	offset?: unknown;
+	limit?: unknown;
+}
+
+interface ToolComponentResultBridge {
+	isError?: boolean;
+	content?: unknown;
+	details?: { truncation?: { truncated?: boolean }; server?: string };
+}
+
+interface ToolComponentBridge {
+	toolName?: string;
+	toolCallId?: string;
+	cwd?: string;
+	expanded?: boolean;
+	args?: ToolComponentArgsBridge;
+	result?: ToolComponentResultBridge;
+	_ccMcpServer?: string;
+}
+
+function toolComponentRecord(value: unknown): ToolComponentBridge {
+	return propertyRecord(value) as ToolComponentBridge | undefined ?? {};
 }
 
 function componentCwd(value: unknown): string {
@@ -556,7 +607,7 @@ function uniqueLeadingGrepFiles(text: string, limit: number): string[] {
 	return files;
 }
 
-function formatOffsetLimit(args: any): string {
+function formatOffsetLimit(args: ToolComponentArgsBridge | undefined): string {
 	const parts: string[] = [];
 	if (args?.offset !== undefined && args?.offset !== null) parts.push(`offset=${args.offset}`);
 	if (args?.limit !== undefined && args?.limit !== null) parts.push(`limit=${args.limit}`);
@@ -586,7 +637,7 @@ function listInspectionTarget(value: unknown): string {
 	return shortPath(componentCwd(value), rec.args?.path ?? ".");
 }
 
-function readInspectionStatus(value: unknown): string {
+function _readInspectionStatus(value: unknown): string {
 	const rec = toolComponentRecord(value);
 	if (!rec.result) return "Reading...";
 	if (rec.result?.isError) return "failed";
@@ -596,7 +647,7 @@ function readInspectionStatus(value: unknown): string {
 	return `${plural(lines, "line")} loaded${suffix}`;
 }
 
-function grepInspectionStatus(value: unknown): string {
+function _grepInspectionStatus(value: unknown): string {
 	const rec = toolComponentRecord(value);
 	if (!rec.result) return "Searching...";
 	if (rec.result?.isError) return "failed";
@@ -610,7 +661,7 @@ function grepInspectionStatus(value: unknown): string {
 	return status;
 }
 
-function findInspectionStatus(value: unknown): string {
+function _findInspectionStatus(value: unknown): string {
 	const rec = toolComponentRecord(value);
 	if (!rec.result) return "Finding...";
 	if (rec.result?.isError) return "failed";
@@ -623,7 +674,7 @@ function findInspectionStatus(value: unknown): string {
 	return status;
 }
 
-function listInspectionStatus(value: unknown): string {
+function _listInspectionStatus(value: unknown): string {
 	const rec = toolComponentRecord(value);
 	if (!rec.result) return "Listing...";
 	if (rec.result?.isError) return "failed";
@@ -635,7 +686,7 @@ function listInspectionStatus(value: unknown): string {
 	return status;
 }
 
-function bashReadInspectionTarget(value: unknown): string {
+function _bashReadInspectionTarget(value: unknown): string {
 	const info = bashReadDisplayInfo(value);
 	if (!info) return "";
 	const range = info.rangeLabel ? ` (${info.rangeLabel})` : "";
@@ -654,7 +705,7 @@ function isSettledInspectionTool(value: unknown): boolean {
 	return !!toolComponentRecord(value).result;
 }
 
-function bashReadInspectionStatus(value: unknown): string {
+function _bashReadInspectionStatus(value: unknown): string {
 	const rec = toolComponentRecord(value);
 	if (!rec.result) return "Reading...";
 	if (rec.result?.isError) return "failed";
@@ -728,8 +779,9 @@ function renderInspectionGroup(group: unknown[], width: number): string[] {
 	return renderedCore;
 }
 
-function renderWithGroupedReadOnlyInspectionTools(container: any, width: number): string[] | null {
-	const children = Array.isArray(container?.children) ? container.children : null;
+function renderWithGroupedReadOnlyInspectionTools(container: unknown, width: number): string[] | null {
+	const childrenValue = propertyRecord(container)?.children;
+	const children = Array.isArray(childrenValue) ? childrenValue : null;
 	if (!children || !hasConsecutiveReadOnlyInspectionToolChildren(children)) return null;
 
 	const rendered: string[] = [];
@@ -750,7 +802,10 @@ function renderWithGroupedReadOnlyInspectionTools(container: any, width: number)
 		}
 		flushGroup();
 		const currentIsBash = isBashToolExecution(child);
-		const childLines = typeof child?.render === "function" ? child.render(width) : [];
+		const childRecord = propertyRecord(child);
+		const render = childRecord?.render;
+		const childLines = typeof render === "function" ? Reflect.apply(render, child, [width]) : [];
+		if (!Array.isArray(childLines) || !childLines.every((line) => typeof line === "string")) continue;
 		rendered.push(...(currentIsBash && previousWasBash ? dropLeadingSpacerLine(childLines) : childLines));
 		previousWasBash = currentIsBash;
 	}
@@ -773,16 +828,20 @@ function dropLeadingSpacerLine(lines: string[]): string[] {
 	return first !== undefined && isBlankLine(first) ? lines.slice(1) : lines;
 }
 
-function renderWithStackedConsecutiveBash(container: any, width: number): string[] | null {
+function renderWithStackedConsecutiveBash(container: unknown, width: number): string[] | null {
 	if (!shouldStackConsecutiveBash()) return null;
-	const children = Array.isArray(container?.children) ? container.children : null;
+	const childrenValue = propertyRecord(container)?.children;
+	const children = Array.isArray(childrenValue) ? childrenValue : null;
 	if (!children || !hasConsecutiveBashToolChildren(children)) return null;
 
 	const rendered: string[] = [];
 	let previousWasBash = false;
 	for (const child of children) {
 		const currentIsBash = isBashToolExecution(child);
-		const childLines = typeof child?.render === "function" ? child.render(width) : [];
+		const childRecord = propertyRecord(child);
+		const render = childRecord?.render;
+		const childLines = typeof render === "function" ? Reflect.apply(render, child, [width]) : [];
+		if (!Array.isArray(childLines) || !childLines.every((line) => typeof line === "string")) continue;
 		rendered.push(...(currentIsBash && previousWasBash ? dropLeadingSpacerLine(childLines) : childLines));
 		previousWasBash = currentIsBash;
 	}
@@ -821,21 +880,39 @@ function splitRenderedImageBlock(lines: string[]): { textLines: string[]; imageL
 	return { textLines, imageLines: lines.slice(imageStart) };
 }
 
+interface ToolRenderCacheEntry {
+	width: number;
+	mode: ToolBackgroundMode;
+	themeRevision: number;
+	lines: string[];
+}
+
+type ContainerPatchBridge = Container & {
+	[TOOL_THEME_REVISION]?: number;
+	[TOOL_RENDER_CACHE]?: ToolRenderCacheEntry;
+	updateDisplay?: () => void;
+};
+
+function requireRenderedLines(value: unknown, source: string): string[] {
+	if (Array.isArray(value) && value.every((line) => typeof line === "string")) return value;
+	throw new TypeError(`${source} returned a non-string-lines value`);
+}
+
 function patchGlobalToolBorders(): void {
-	const proto = Container.prototype as any;
+	const proto = Container.prototype;
 	registerPrototypePatch(proto, "render", {
 		name: "claudify:container-render",
 		order: 100,
-		wrap: (originalRender) => function patchedContainerRender(width: number): string[] {
+		wrap: (originalRender) => function patchedContainerRender(this: ContainerPatchBridge, width: number): string[] {
 		const themeSync = ensureThemeOverrides();
 		if (!themeSync.enabled) return originalRender.call(this, width);
 		syncToolBackgroundMode();
 
 		const toolExecution = isToolExecutionLike(this);
-		if (toolExecution && (this as any)[TOOL_THEME_REVISION] !== themeSync.revision) {
+		if (toolExecution && this[TOOL_THEME_REVISION] !== themeSync.revision) {
 			clearToolRenderCache(this);
-			if (typeof (this as any).updateDisplay === "function") (this as any).updateDisplay();
-			(this as any)[TOOL_THEME_REVISION] = themeSync.revision;
+			this.updateDisplay?.();
+			this[TOOL_THEME_REVISION] = themeSync.revision;
 		}
 
 		if (!toolExecution) {
@@ -846,7 +923,7 @@ function patchGlobalToolBorders(): void {
 		}
 
 		if (toolExecution) {
-			const cached = (this as any)[TOOL_RENDER_CACHE];
+			const cached = this[TOOL_RENDER_CACHE];
 			if (cached?.width === width
 				&& cached?.mode === toolBackgroundMode
 				&& cached?.themeRevision === themeSync.revision) {
@@ -854,11 +931,11 @@ function patchGlobalToolBorders(): void {
 			}
 		}
 
-		const rendered = originalRender.call(this, width);
-		if (!Array.isArray(rendered) || rendered.length === 0) return rendered;
+		const rendered = requireRenderedLines(originalRender.call(this, width), "Container.render");
+		if (rendered.length === 0) return rendered;
 		if (!toolExecution) return rendered;
 		if (toolBackgroundMode === "default") {
-			(this as any)[TOOL_RENDER_CACHE] = {
+			this[TOOL_RENDER_CACHE] = {
 				width,
 				mode: toolBackgroundMode,
 				themeRevision: themeSync.revision,
@@ -868,14 +945,22 @@ function patchGlobalToolBorders(): void {
 		}
 
 		let start = 0;
-		while (start < rendered.length && isBlankLine(rendered[start])) start++;
+		while (start < rendered.length) {
+			const line = rendered[start];
+			if (line === undefined || !isBlankLine(line)) break;
+			start++;
+		}
 		let end = rendered.length - 1;
-		while (end >= start && isBlankLine(rendered[end])) end--;
+		while (end >= start) {
+			const line = rendered[end];
+			if (line === undefined || !isBlankLine(line)) break;
+			end--;
+		}
 		if (start > end) return rendered;
 
 		const { textLines, imageLines } = splitRenderedImageBlock(rendered.slice(start, end + 1));
 		if (imageLines.length > 0) {
-			(this as any)[TOOL_RENDER_CACHE] = {
+			this[TOOL_RENDER_CACHE] = {
 				width,
 				mode: toolBackgroundMode,
 				themeRevision: themeSync.revision,
@@ -895,7 +980,7 @@ function patchGlobalToolBorders(): void {
 			result = [spacerLine, ...core, ...imageLines];
 		}
 
-		(this as any)[TOOL_RENDER_CACHE] = {
+		this[TOOL_RENDER_CACHE] = {
 			width,
 			mode: toolBackgroundMode,
 			themeRevision: themeSync.revision,
@@ -921,11 +1006,11 @@ function hashText(text: string): string {
 	return (hash >>> 0).toString(36);
 }
 
-function expandHint(theme: Theme): string {
+function _expandHint(theme: Theme): string {
 	return theme.fg("muted", " (ctrl+o to expand)");
 }
 
-function clearStateKeys(state: Record<string, unknown> | undefined, ...keys: string[]): void {
+function _clearStateKeys(state: Record<string, unknown> | undefined, ...keys: string[]): void {
 	if (!state) return;
 	for (const key of keys) {
 		delete state[key];
@@ -934,11 +1019,13 @@ function clearStateKeys(state: Record<string, unknown> | undefined, ...keys: str
 
 function clearToolRenderCache(value: unknown): void {
 	if (!value || typeof value !== "object") return;
-	delete (value as any)[TOOL_RENDER_CACHE];
+	Reflect.deleteProperty(value, TOOL_RENDER_CACHE);
 }
 
 function unrefTimer(timer: ReturnType<typeof setTimeout> | null | undefined): void {
-	(timer as any)?.unref?.();
+	if (timer && typeof timer === "object" && "unref" in timer && typeof timer.unref === "function") {
+		timer.unref();
+	}
 }
 
 const OSC133_ZONE_START = "\x1b]133;A\x07";
@@ -961,7 +1048,7 @@ function workedVerbs(): readonly string[] {
 }
 
 function workedDurationText(ms: number, seed?: number, verbs: readonly string[] = workedVerbs()): string {
-	return `${WORKED_LINE_FG}${formatWorkedLine(ms, { seed, verbs })}${RESET}`;
+	return `${WORKED_LINE_FG}${formatWorkedLine(ms, omitUndefined({ seed, verbs }))}${RESET}`;
 }
 
 function inlineWorkedDurationText(ms: number, seed?: number, verbs?: readonly string[]): string {
@@ -981,17 +1068,50 @@ function stripWorkedDurationLine(text: string): string {
 		.replace(/\n{3,}/g, "\n\n");
 }
 
-function hasWorkedDurationLine(message: any): boolean {
-	if (!Array.isArray(message?.content)) return false;
-	return message.content.some((block: any) => {
-		if (block?.type !== "text" || typeof block.text !== "string" || !block.text.includes(WORKED_DURATION_GLYPH)) return false;
+interface MutableTextBlock {
+	type: "text";
+	text: string;
+}
+
+interface MutableAssistantMessage {
+	role: "assistant";
+	content: unknown[];
+	stopReason?: string;
+	[WORKED_DURATION_KEY]?: number;
+}
+
+function mutableAssistantMessage(value: unknown): MutableAssistantMessage | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as PropertyRecord;
+	return record.role === "assistant" && Array.isArray(record.content)
+		? value as MutableAssistantMessage
+		: undefined;
+}
+
+function mutableTextBlock(value: unknown): MutableTextBlock | undefined {
+	if (!value || typeof value !== "object") return undefined;
+	const record = value as PropertyRecord;
+	return record.type === "text" && typeof record.text === "string"
+		? value as MutableTextBlock
+		: undefined;
+}
+
+function hasWorkedDurationLine(value: unknown): boolean {
+	const message = mutableAssistantMessage(value);
+	if (!message) return false;
+	return message.content.some((value) => {
+		const block = mutableTextBlock(value);
+		if (!block?.text.includes(WORKED_DURATION_GLYPH)) return false;
 		return block.text.split(/\r?\n/).some(isWorkedDurationLine);
 	});
 }
 
-export function appendWorkedDurationLine(message: any, durationMs: number, seed?: number, verbs?: readonly string[]): void {
-	if (!message || message.role !== "assistant" || !Array.isArray(message.content)) return;
-	const textBlocks = message.content.filter((block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim());
+export function appendWorkedDurationLine(value: unknown, durationMs: number, seed?: number, verbs?: readonly string[]): void {
+	const message = mutableAssistantMessage(value);
+	if (!message) return;
+	const textBlocks = message.content
+		.map(mutableTextBlock)
+		.filter((block): block is MutableTextBlock => !!block?.text.trim());
 	const lastText = textBlocks[textBlocks.length - 1];
 	if (!lastText) return;
 	const text = lastText.text.includes(WORKED_DURATION_GLYPH) ? stripWorkedDurationLine(lastText.text) : lastText.text;
@@ -1037,9 +1157,9 @@ function colorFirstTranscriptPrefix(lines: string[], prefixGlyph: string, colore
 
 class DottedParagraph {
 	private md: InstanceType<typeof Markdown>;
-	private cachedWidth?: number;
-	private cachedChromeKey?: string;
-	private cachedLines?: string[];
+	private cachedWidth: number | undefined;
+	private cachedChromeKey: string | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(text: string, markdownTheme: ConstructorParameters<typeof Markdown>[3]) {
 		this.md = new Markdown(text, 0, 0, markdownTheme);
@@ -1087,9 +1207,9 @@ class DottedParagraph {
 
 class ThinkingParagraph {
 	private md: InstanceType<typeof Markdown>;
-	private cachedWidth?: number;
-	private cachedChromeKey?: string;
-	private cachedLines?: string[];
+	private cachedWidth: number | undefined;
+	private cachedChromeKey: string | undefined;
+	private cachedLines: string[] | undefined;
 
 	constructor(
 		text: string,
@@ -1171,26 +1291,40 @@ class ThinkingParagraph {
 }
 
 function patchCustomMessageRender(): void {
-	const proto = CustomMessageComponent.prototype as any;
+	const proto = CustomMessageComponent.prototype;
 	registerPrototypePatch(proto, "render", {
 		name: "claudify:custom-message-render",
-		wrap: (originalRender) => function patchedCustomMessageRender(width: number) {
+		wrap: (originalRender) => function patchedCustomMessageRender(this: object, width: number) {
 		const lines = originalRender.call(this, width);
 		return Array.isArray(lines) ? lines.map(normalizeLeadingCheckGlyph) : lines;
 		},
 	});
 }
 
+interface TextComponentBridge extends Component {
+	setText(text: string): void;
+}
+
+type CompactionSummaryBridge = Container & {
+	expanded?: boolean;
+	message: { summary: string };
+	paddingX: number;
+	paddingY: number;
+	setBgFn?: (color: undefined) => void;
+};
+
 function patchCompactionSummaryMessages(): void {
-	const proto = CompactionSummaryMessageComponent.prototype as any;
+	const proto = CompactionSummaryMessageComponent.prototype;
 	registerPrototypePatch(proto, "updateDisplay", {
 		name: "claudify:compaction-summary",
-		wrap: (originalUpdateDisplay) => function patchedCompactionSummaryDisplay() {
+		wrap: (originalUpdateDisplay) => function patchedCompactionSummaryDisplay(this: CompactionSummaryBridge) {
 		originalUpdateDisplay.call(this);
 		const summary = this.expanded && Array.isArray(this.children)
 			? this.children[this.children.length - 1]
 			: undefined;
-		if (summary && typeof summary.setText === "function") summary.setText(this.message.summary);
+		if (summary && "setText" in summary && typeof summary.setText === "function") {
+			(summary as TextComponentBridge).setText(this.message.summary);
+		}
 		this.paddingX = 0;
 		this.paddingY = 0;
 		this.setBgFn?.(undefined);
@@ -1216,7 +1350,7 @@ function stripOsc133Zones(line: string): string {
 }
 
 function stripBackgroundAnsi(text: string): string {
-	return text.replace(/\x1b\[([0-9;]*)m/g, (match, paramsText: string) => {
+	return text.replace(/\x1b\[([0-9;]*)m/g, (_match, paramsText: string) => {
 		const params = paramsText === "" ? ["0"] : paramsText.split(";");
 		const kept: string[] = [];
 		for (let i = 0; i < params.length; i++) {
@@ -1311,19 +1445,24 @@ function colorizeUserPrefix(line: string): string {
 }
 
 function patchUserMessageRender(): void {
-	const proto = UserMessageComponent.prototype as any;
+	const proto = UserMessageComponent.prototype;
 	registerPrototypePatch(proto, "render", {
 		name: "claudify:user-message-render",
 		order: 100,
-		wrap: (originalRender) => function patchedUserMessageRender(width: number) {
+		wrap: (originalRender) => function patchedUserMessageRender(this: Container, width: number) {
 		// Duck-typed, not instanceof: the extension and pi can resolve separate
 		// copies of pi-tui, which makes instanceof fail across the boundary.
-		for (const child of (this as any).children ?? []) {
-			const markdown = child as any;
+		for (const child of this.children) {
+			const markdown = child as unknown as {
+				render?: (width: number) => string[];
+				defaultTextStyle?: { bgColor?: string };
+				paddingX?: number;
+				invalidate?: () => void;
+			};
 			if (!markdown || typeof markdown.render !== "function") continue;
 			let dirty = false;
 			if (markdown.defaultTextStyle?.bgColor) {
-				markdown.defaultTextStyle.bgColor = undefined;
+				delete markdown.defaultTextStyle.bgColor;
 				dirty = true;
 			}
 			// pi pads user markdown one column; the ❯ prefix supplies the indent.
@@ -1354,39 +1493,52 @@ function patchUserMessageRender(): void {
 	});
 }
 
+interface MarkdownBridge extends Component {
+	text?: string;
+	defaultTextStyle?: { italic?: boolean };
+}
+
+type AssistantMessageComponentBridge = Container & {
+	contentContainer?: Container;
+	markdownTheme: ConstructorParameters<typeof Markdown>[3];
+	[WORKED_START_KEY]?: number;
+};
+
 function patchAssistantMessages(): void {
-	const proto = AssistantMessageComponent.prototype as any;
+	const proto = AssistantMessageComponent.prototype;
 	registerPrototypePatch(proto, "updateContent", {
 		name: "claudify:assistant-message",
-		wrap: (originalUpdateContent) => function patchedUpdateContent(message: any) {
-		if (!(this as any)[WORKED_START_KEY]) {
-			(this as any)[WORKED_START_KEY] = Date.now();
+		wrap: (originalUpdateContent) => function patchedUpdateContent(this: AssistantMessageComponentBridge, value: unknown) {
+		if (!this[WORKED_START_KEY]) {
+			this[WORKED_START_KEY] = Date.now();
 		}
-		if (!message || !Array.isArray(message.content)) {
-			return originalUpdateContent.call(this, message);
+		const message = mutableAssistantMessage(value);
+		if (!message) {
+			return originalUpdateContent.call(this, value);
 		}
 		// Call original to build all children (text, thinking, spacers, errors)
 		originalUpdateContent.call(this, message);
 		// Replace text-block Markdown children with DottedParagraph wrappers
-		const container = (this as any).contentContainer;
+		const container = this.contentContainer;
 		if (!container?.children) return;
-		const mdTheme = (this as any).markdownTheme;
+		const mdTheme = this.markdownTheme;
 		for (let i = container.children.length - 1; i >= 0; i--) {
 			const child = container.children[i];
 			if (child instanceof Markdown) {
-				const text = (child as any).text;
+				const markdown = child as unknown as MarkdownBridge;
+				const text = markdown.text;
 				if (!text) continue;
-				const isThinking = !!(child as any).defaultTextStyle?.italic;
+				const isThinking = !!markdown.defaultTextStyle?.italic;
 				if (isThinking) {
-					const style = (child as any).defaultTextStyle;
+					const style = markdown.defaultTextStyle;
 					container.children[i] = new ThinkingParagraph(text, mdTheme, style);
 				} else {
 					container.children[i] = new DottedParagraph(text, mdTheme);
 				}
 			}
 		}
-		const explicitDuration = (message as any)[WORKED_DURATION_KEY];
-		const componentStart = (this as any)[WORKED_START_KEY];
+		const explicitDuration = message[WORKED_DURATION_KEY];
+		const componentStart = this[WORKED_START_KEY];
 		const isFinished = typeof message.stopReason === "string" && message.stopReason.length > 0;
 		const isFinalAssistantMessage = isFinished && message.stopReason !== "toolUse";
 		const fallbackStart = typeof currentAgentWorkStartMs === "number" ? currentAgentWorkStartMs : componentStart;
@@ -1395,16 +1547,17 @@ function patchAssistantMessages(): void {
 			: isFinalAssistantMessage && typeof fallbackStart === "number"
 				? Date.now() - fallbackStart
 				: undefined;
-		const hasAssistantText = message.content.some((block: any) => block?.type === "text" && typeof block.text === "string" && block.text.trim());
+		const hasAssistantText = message.content.some((value) => !!mutableTextBlock(value)?.text.trim());
 		if (typeof workedDuration === "number" && isFinalAssistantMessage && hasAssistantText && !hasWorkedDurationLine(message)) {
 			container.children.push(new Spacer(1), new Text(workedDurationText(workedDuration, componentStart), 0, 0));
 		}
+		return undefined;
 		},
 	});
 }
 
 function patchToolRenderCacheInvalidation(): void {
-	const proto = ToolExecutionComponent.prototype as any;
+	const proto = ToolExecutionComponent.prototype;
 
 	const methods = [
 		"updateDisplay",
@@ -1422,7 +1575,7 @@ function patchToolRenderCacheInvalidation(): void {
 		registerPrototypePatch(proto, method, {
 			name: `claudify:tool-cache:${method}`,
 			order: 100,
-			wrap: (original) => function patchedToolMutation(...args: any[]) {
+			wrap: (original) => function patchedToolMutation(this: object, ...args: unknown[]) {
 			clearToolRenderCache(this);
 			const result = original.apply(this, args);
 			clearToolRenderCache(this);
@@ -1432,12 +1585,18 @@ function patchToolRenderCacheInvalidation(): void {
 	}
 }
 
-function deleteRenderedKittyImages(component: any): void {
+interface ImageToolBridge {
+	imageComponents?: Component[];
+	imageSpacers?: Component[];
+	removeChild?: (child: Component) => void;
+}
+
+function deleteRenderedKittyImages(component: ImageToolBridge): void {
 	if (!process.stdout.isTTY || getCapabilities().images !== "kitty" || !Array.isArray(component.imageComponents) || component.imageComponents.length === 0) return;
 	try { process.stdout.write(deleteAllKittyImages()); } catch { /* noop */ }
 }
 
-function removeImageChildren(component: any): void {
+function removeImageChildren(component: ImageToolBridge): void {
 	deleteRenderedKittyImages(component);
 	const children = [
 		...(Array.isArray(component.imageComponents) ? component.imageComponents : []),
@@ -1451,13 +1610,13 @@ function removeImageChildren(component: any): void {
 }
 
 function patchReadImageExpansion(): void {
-	const proto = ToolExecutionComponent.prototype as any;
+	const proto = ToolExecutionComponent.prototype;
 	registerPrototypePatch(proto, "updateDisplay", {
 		name: "claudify:read-image-expansion",
 		order: 200,
-		wrap: (originalUpdateDisplay) => function patchedReadImageUpdateDisplay(...args: any[]) {
+		wrap: (originalUpdateDisplay) => function patchedReadImageUpdateDisplay(this: ImageToolBridge & ToolComponentBridge, ...args: unknown[]) {
 		const result = originalUpdateDisplay.apply(this, args);
-		const hasImage = Array.isArray(this.result?.content) && this.result.content.some((block: any) => block?.type === "image");
+		const hasImage = Array.isArray(this.result?.content) && this.result.content.some((block) => propertyRecord(block)?.type === "image");
 		if (this.toolName === "read" && hasImage && this.expanded !== true) {
 			removeImageChildren(this);
 			clearToolRenderCache(this);
@@ -1472,11 +1631,14 @@ function patchReadImageExpansion(): void {
  * column further than assistant text. Claude Code aligns both at column 0.
  */
 function patchToolRowIndent(): void {
-	const proto = ToolExecutionComponent.prototype as any;
+	const proto = ToolExecutionComponent.prototype;
 	registerPrototypePatch(proto, "updateDisplay", {
 		name: "claudify:tool-row-indent",
 		order: 300,
-		wrap: (originalUpdateDisplay) => function patchedToolIndentUpdateDisplay(...args: any[]) {
+		wrap: (originalUpdateDisplay) => function patchedToolIndentUpdateDisplay(this: {
+			contentBox?: { paddingX: number; invalidate?: () => void };
+			contentText?: { paddingX: number; invalidate?: () => void };
+		}, ...args: unknown[]) {
 		for (const box of [this.contentBox, this.contentText]) {
 			if (box && box.paddingX !== 0) {
 				box.paddingX = 0;
@@ -1488,12 +1650,38 @@ function patchToolRowIndent(): void {
 	});
 }
 
+interface ToolRenderContext {
+	cwd?: string;
+	state: Record<string, unknown>;
+	args?: Record<string, unknown>;
+	argsComplete?: boolean;
+	executionStarted?: boolean;
+	isPartial?: boolean;
+	isError?: boolean;
+	expanded?: boolean;
+	toolCallId?: string;
+	invalidate: () => void;
+	lastComponent?: unknown;
+	showImages?: boolean;
+}
+
+interface ToolRendererOptions {
+	expanded: boolean;
+	isPartial: boolean;
+}
+
+interface ToolRendererResult {
+	content?: unknown;
+	details?: unknown;
+	isError?: boolean;
+}
+
 function patchToolExecutionRenderers(): void {
-	const proto = ToolExecutionComponent.prototype as any;
+	const proto = ToolExecutionComponent.prototype;
 	registerPrototypePatch(proto, "hasRendererDefinition", {
 		name: "claudify:has-renderer",
 		order: 100,
-		wrap: (originalHasRendererDefinition) => function patchedHasRendererDefinition() {
+		wrap: (originalHasRendererDefinition) => function patchedHasRendererDefinition(this: ToolComponentBridge & object) {
 			return originalHasRendererDefinition.call(this) || shouldUseGenericToolRenderer(this?.toolName);
 		},
 	});
@@ -1501,14 +1689,14 @@ function patchToolExecutionRenderers(): void {
 	registerPrototypePatch(proto, "getCallRenderer", {
 		name: "claudify:call-renderer",
 		order: 100,
-		wrap: (originalGetCallRenderer) => function patchedGetCallRenderer() {
+		wrap: (originalGetCallRenderer) => function patchedGetCallRenderer(this: ToolComponentBridge & object) {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
-			return (args: any, theme: Theme, ctx: any) =>
+			return (args: unknown, theme: Theme, ctx: ToolRenderContext) =>
 				renderApplyPatchCall(args, theme, ctx, (path: string) => shortPath(ctx.cwd ?? process.cwd(), path));
 		}
 		if (shouldUseGenericToolRenderer(toolName)) {
-			return (args: any, theme: Theme, ctx: any) => renderGenericToolCall(toolName, args, theme, ctx);
+			return (args: unknown, theme: Theme, ctx: ToolRenderContext) => renderGenericToolCall(toolName, args, theme, ctx);
 		}
 		return originalGetCallRenderer.call(this);
 		},
@@ -1517,14 +1705,14 @@ function patchToolExecutionRenderers(): void {
 	registerPrototypePatch(proto, "getResultRenderer", {
 		name: "claudify:result-renderer",
 		order: 100,
-		wrap: (originalGetResultRenderer) => function patchedGetResultRenderer() {
+		wrap: (originalGetResultRenderer) => function patchedGetResultRenderer(this: ToolComponentBridge & object) {
 		const toolName = typeof this?.toolName === "string" ? this.toolName : "";
 		if (toolName === "apply_patch") {
-			return (result: any, options: any, theme: Theme, ctx: any) =>
-				renderApplyPatchResult({ content: result.content, details: result.details }, options.isPartial, theme, ctx);
+			return (result: ToolRendererResult, options: ToolRendererOptions, theme: Theme, ctx: ToolRenderContext) =>
+					renderApplyPatchResult({ content: result.content, details: result.details }, options.isPartial === true, theme, ctx);
 		}
 		if (shouldUseGenericToolRenderer(toolName)) {
-			return (result: any, options: any, theme: Theme, ctx: any) =>
+			return (result: ToolRendererResult, options: ToolRendererOptions, theme: Theme, ctx: ToolRenderContext) =>
 				renderGenericToolResult(toolName, result, options, theme, ctx);
 		}
 		return originalGetResultRenderer.call(this);
@@ -1544,7 +1732,7 @@ function shortPath(cwd: string, filePath: string): string {
 // Status dot — flickers green/gray while pending
 // ---------------------------------------------------------------------------
 
-function isBlinkOn(): boolean {
+function _isBlinkOn(): boolean {
 	return Math.floor(Date.now() / 500) % 2 === 0;
 }
 
@@ -1576,11 +1764,11 @@ function resultSentence(theme: Theme, text: string): string {
 	return claudeChromeEnabled() ? `${FG_DEFAULT}${text}${RESET}` : theme.fg("muted", text);
 }
 
-function setToolStatus(ctx: any, status: "pending" | "success" | "error"): void {
+function setToolStatus(ctx: ToolRenderContext, status: "pending" | "success" | "error"): void {
 	ctx.state._toolStatus = status;
 }
 
-function syncToolCallStatus(ctx: any): void {
+function syncToolCallStatus(ctx: ToolRenderContext): void {
 	if (!ctx?.executionStarted || ctx?.isPartial) {
 		setToolStatus(ctx, "pending");
 		return;
@@ -1588,14 +1776,14 @@ function syncToolCallStatus(ctx: any): void {
 	setToolStatus(ctx, ctx.isError ? "error" : "success");
 }
 
-function shouldRevealCallArgs(ctx: any): boolean {
+function shouldRevealCallArgs(ctx: ToolRenderContext): boolean {
 	if (ctx?.argsComplete === true || ctx?.executionStarted === true) return true;
 	const args = ctx?.args;
 	if (!args || typeof args !== "object") return false;
 	return Object.keys(args).some((key) => args[key] !== undefined && args[key] !== null && args[key] !== "");
 }
 
-function stableCallSummary(ctx: any, key: string, build: () => string, reveal = shouldRevealCallArgs(ctx)): string {
+function stableCallSummary(ctx: ToolRenderContext, key: string, build: () => string, reveal = shouldRevealCallArgs(ctx)): string {
 	const state = ctx?.state;
 	const cached = state?.[key];
 	const completeKey = `${key}Complete`;
@@ -1611,8 +1799,8 @@ function stableCallSummary(ctx: any, key: string, build: () => string, reveal = 
 	return summary;
 }
 
-function hasOwnArg(args: any, key: string): boolean {
-	return !!args && Object.prototype.hasOwnProperty.call(args, key);
+function hasOwnArg(args: unknown, key: string): boolean {
+	return !!stringRecord(args) && Object.hasOwn(args as object, key);
 }
 
 function fileExistsForTool(cwd: string, filePath: string): boolean {
@@ -1626,7 +1814,7 @@ function fileExistsForTool(cwd: string, filePath: string): boolean {
 
 const WRITE_EXISTED_BEFORE = new Map<string, boolean>();
 
-function getWriteWasNewFile(ctx: any, cwd: string, filePath: string, reveal = shouldRevealCallArgs(ctx)): boolean | undefined {
+function _getWriteWasNewFile(ctx: ToolRenderContext, cwd: string, filePath: string, reveal = shouldRevealCallArgs(ctx)): boolean | undefined {
 	if (typeof ctx?.state?._writeWasNewFile === "boolean") return ctx.state._writeWasNewFile;
 	if (!filePath || !reveal) return undefined;
 	const existedBefore = typeof ctx?.toolCallId === "string" ? WRITE_EXISTED_BEFORE.get(ctx.toolCallId) : undefined;
@@ -1635,7 +1823,7 @@ function getWriteWasNewFile(ctx: any, cwd: string, filePath: string, reveal = sh
 	return wasNew;
 }
 
-function toolStatusDot(ctx: any, theme: Theme): string {
+function toolStatusDot(ctx: ToolRenderContext, theme: Theme): string {
 	const status = ctx.state?._toolStatus as "pending" | "success" | "error" | undefined;
 	if (!claudeChromeEnabled()) {
 		if (status === "error") return `${theme.fg("error", CLAUDE_TOOL_GLYPH)} `;
@@ -1662,7 +1850,7 @@ function branchLead(text: string, _continued = false): string {
 }
 
 function withBranch(content: string, _theme: Theme, _isError = false, continued = false): string {
-	if (!content || !content.trim()) return "";
+	if (!content?.trim()) return "";
 	const lines = content.split("\n");
 	const first = lines[0] ?? "";
 	if (lines.length === 1) return branchLead(first, continued);
@@ -1689,9 +1877,10 @@ function indentBranchBlock(block: string): string {
 const MAX_BLINKING_TOOLS = 5;
 const BLINK_INTERVAL_MS = 500;
 
-type BlinkEntry = { key: any; order: number; invalidate: () => void };
+type BlinkState = Record<string, unknown>;
+type BlinkEntry = { key: BlinkState; order: number; invalidate: () => void };
 
-const _blinkContexts = new Map<any, BlinkEntry>();
+const _blinkContexts = new Map<BlinkState, BlinkEntry>();
 let _globalBlinkTimer: ReturnType<typeof setTimeout> | null = null;
 let _blinkOrder = 0;
 let _globalBlinkPhase = true;
@@ -1700,8 +1889,8 @@ function getBlinkIntervalMs(): number {
 	return BLINK_INTERVAL_MS;
 }
 
-function getBlinkKey(ctx: any): any {
-	return ctx?.state ?? ctx;
+function getBlinkKey(ctx: ToolRenderContext): BlinkState {
+	return ctx.state;
 }
 
 function getBlinkingEntries(): BlinkEntry[] {
@@ -1747,10 +1936,11 @@ function _stopGlobalBlinkTimerIfEmpty(): void {
 	}
 }
 
-function setupBlinkTimer(ctx: any): void {
+function setupBlinkTimer(ctx: ToolRenderContext): void {
 	const key = getBlinkKey(ctx);
 	if (!key) return;
-	const invalidate = typeof ctx?.invalidate === "function" ? () => ctx.invalidate() : () => {};
+	const ctxInvalidate = ctx.invalidate;
+	const invalidate = typeof ctxInvalidate === "function" ? () => ctxInvalidate() : () => {};
 	const existing = _blinkContexts.get(key);
 	if (existing) {
 		// Already tracked — just refresh the invalidate fn, skip expensive recalc
@@ -1764,7 +1954,7 @@ function setupBlinkTimer(ctx: any): void {
 	_scheduleGlobalBlinkTimer();
 }
 
-function clearBlinkTimer(ctx: any): void {
+function clearBlinkTimer(ctx: ToolRenderContext): void {
 	const key = getBlinkKey(ctx);
 	if (!key) return;
 	_blinkContexts.delete(key);
@@ -1774,7 +1964,7 @@ function clearBlinkTimer(ctx: any): void {
 	_scheduleGlobalBlinkTimer();
 }
 
-function blinkDot(ctx: any, theme: Theme): string {
+function blinkDot(ctx: ToolRenderContext, theme: Theme): string {
 	setupBlinkTimer(ctx);
 	const key = getBlinkKey(ctx);
 	if (key?._blinkActive !== true) return theme.fg("muted", CLAUDE_TOOL_GLYPH);
@@ -1867,7 +2057,7 @@ function padToWidth(line: string, width: number): string {
 
 function markedContinuationPrefix(prefix: string): string {
 	const plain = stripAnsi(prefix);
-	const branchMatch = /^(\s*)(?:│  |├─ |└─ )/.exec(plain);
+	const branchMatch = /^(\s*)(?:│ {2}|├─ |└─ )/.exec(plain);
 	if (branchMatch) {
 		return `${branchMatch[1]}${TOOL_RULE}│${TRANSPARENT_RESET}  `;
 	}
@@ -1945,8 +2135,8 @@ class BashPreviewText extends Text {
 	private maxVisualLines = 0;
 	private theme?: Theme;
 	private previewKey = "";
-	private previewCachedWidth?: number;
-	private previewCachedLines?: string[];
+	private previewCachedWidth: number | undefined;
+	private previewCachedLines: string[] | undefined;
 
 	constructor() {
 		super("", 0, 0);
@@ -1987,9 +2177,9 @@ class BashPreviewText extends Text {
 
 class ToolText extends Text {
 	private value = "";
-	private toolCachedValue?: string;
-	private toolCachedWidth?: number;
-	private toolCachedLines?: string[];
+	private toolCachedValue: string | undefined;
+	private toolCachedWidth: number | undefined;
+	private toolCachedLines: string[] | undefined;
 
 	constructor(text = "") {
 		super("", 0, 0);
@@ -2192,7 +2382,7 @@ function classifyNlRead(tokens: readonly string[]): BashDisplayInfo | null {
 		if (right[0] !== "sed" || right.includes("|")) return null;
 		rangeLabel = parseSedPrintRange(right);
 	}
-	return { kind: "read", label: "Read", path, rangeLabel, suppressCollapsedHint: true };
+	return omitUndefined({ kind: "read", label: "Read", path, rangeLabel, suppressCollapsedHint: true });
 }
 
 function classifySedRead(tokens: readonly string[]): BashDisplayInfo | null {
@@ -2361,10 +2551,10 @@ let diffThemePreview: string | null | undefined;
 
 function loadDiffConfig(): DiffUserConfig {
 	const settings = readSettings().values;
-	return {
+	return omitUndefined({
 		diffTheme: diffThemePreview === undefined ? settings.diffTheme : (diffThemePreview ?? undefined),
 		diffColors: settings.diffColors,
-	};
+	});
 }
 
 // 6x6x6 color cube channel values used by pi's 256color fallback.
@@ -2436,30 +2626,32 @@ function hexToFgAnsi(hex: string): string {
 
 type Rgb = { r: number; g: number; b: number };
 
-function safeFgAnsi(theme: any, key: string): string | null {
+function safeThemeAnsi(theme: unknown, methodName: "getFgAnsi" | "getBgAnsi", key: string): string | null {
+	if (!theme || typeof theme !== "object") return null;
+	const method = Reflect.get(theme, methodName);
+	if (typeof method !== "function") return null;
 	try {
-		const ansi = theme?.getFgAnsi?.(key);
+		const ansi: unknown = Reflect.apply(method, theme, [key]);
 		return typeof ansi === "string" && ansi.length > 0 ? ansi : null;
 	} catch {
 		return null;
 	}
 }
 
-function safeBgAnsi(theme: any, key: string): string | null {
-	try {
-		const ansi = theme?.getBgAnsi?.(key);
-		return typeof ansi === "string" && ansi.length > 0 ? ansi : null;
-	} catch {
-		return null;
-	}
+function safeFgAnsi(theme: unknown, key: string): string | null {
+	return safeThemeAnsi(theme, "getFgAnsi", key);
 }
 
-function themeFgRgb(theme: any, key: string): Rgb | null {
+function safeBgAnsi(theme: unknown, key: string): string | null {
+	return safeThemeAnsi(theme, "getBgAnsi", key);
+}
+
+function themeFgRgb(theme: unknown, key: string): Rgb | null {
 	const ansi = safeFgAnsi(theme, key);
 	return ansi ? parseAnsiRgb(ansi) : null;
 }
 
-function themeBgRgb(theme: any, key: string): Rgb | null {
+function themeBgRgb(theme: unknown, key: string): Rgb | null {
 	const ansi = safeBgAnsi(theme, key);
 	return ansi ? parseAnsiRgb(ansi) : null;
 }
@@ -2495,7 +2687,8 @@ function claudeChromeEnabled(): boolean {
 // Claude Code highlights diff content with a Monokai palette (fg 248,248,242,
 // keywords 102,217,239, numbers 190,132,255).
 let DIFF_THEME: BundledTheme = (process.env.DIFF_THEME as BundledTheme | undefined) ?? "monokai";
-let codeToAnsiLoader: Promise<any> | null = null;
+type CodeToAnsi = typeof import("@shikijs/cli").codeToANSI;
+let codeToAnsiLoader: Promise<CodeToAnsi> | null = null;
 
 const SPLIT_MIN_WIDTH = 150;
 const SPLIT_MIN_CODE_WIDTH = 60;
@@ -2558,7 +2751,7 @@ let DEFAULT_DIFF_COLORS: DiffColors = { fgAdd: FG_ADD, fgDel: FG_DEL, fgCtx: FG_
 let autoDerivePending = true;
 let hasExplicitBgConfig = false;
 
-function mixBg(
+function _mixBg(
 	base: { r: number; g: number; b: number },
 	accent: { r: number; g: number; b: number },
 	intensity: number,
@@ -2593,7 +2786,7 @@ function rgbToBgAnsi(c: { r: number; g: number; b: number }): string {
 	return `\x1b[48;2;${Math.round(c.r)};${Math.round(c.g)};${Math.round(c.b)}m`;
 }
 
-function autoDeriveBgFromTheme(theme: any): void {
+function autoDeriveBgFromTheme(theme: unknown): void {
 	// The Claude palette is fixed, not derived — bail before touching diff colors.
 	if (claudeDiffPaletteEnabled()) {
 		BG_EMPTY = TRANSPARENT_BG;
@@ -2608,7 +2801,7 @@ function autoDeriveBgFromTheme(theme: any): void {
 	// the panel color the row will sit on) so the tinted backgrounds blend in
 	// instead of forcing a hardcoded dark hue. Falls back to the universal
 	// dark palette when the theme is unavailable or themeAdaptive=false.
-	const useTheme = themeAdaptiveEnabled() && theme;
+	const useTheme = themeAdaptiveEnabled() && !!theme;
 	const addFgRgb = (useTheme && themeFgRgb(theme, "toolDiffAdded")) || UNIVERSAL_DIFF_ADD_FG;
 	const delFgRgb = (useTheme && themeFgRgb(theme, "toolDiffRemoved")) || UNIVERSAL_DIFF_DEL_FG;
 	const base = (useTheme && themeBgRgb(theme, "toolSuccessBg")) || FALLBACK_BASE_BG;
@@ -2635,7 +2828,7 @@ function autoDeriveBgFromTheme(theme: any): void {
 // updates don't clobber their config.
 const _explicitFgFields = new Set<"fgAdd" | "fgDel" | "fgDim" | "fgLnum" | "fgRule" | "fgStripe" | "fgSafeMuted">();
 
-function applyThemePaletteIfNeeded(theme: any): void {
+function applyThemePaletteIfNeeded(theme: unknown): void {
 	if (!theme) return;
 	// Runs before the adaptive/cache guards: the accent override applies even with
 	// adaptive colors off, and re-checks its setting on every call.
@@ -2774,9 +2967,9 @@ function applyDiffPalette(): void {
 	autoDerivePending = !hasExplicitBgConfig;
 }
 
-function resolveDiffColors(theme?: any): DiffColors {
+function resolveDiffColors(theme?: unknown): DiffColors {
 	applyThemePaletteIfNeeded(theme);
-	if (autoDerivePending && theme?.getFgAnsi) {
+	if (autoDerivePending && safeFgAnsi(theme, "text")) {
 		autoDeriveBgFromTheme(theme);
 		autoDerivePending = false;
 	}
@@ -2797,7 +2990,22 @@ interface ParsedDiff {
 	chars: number;
 }
 
-function diffStrip(value: string): string {
+function isParsedDiff(value: unknown): value is ParsedDiff {
+	if (!value || typeof value !== "object") return false;
+	const record = value as Record<string, unknown>;
+	return Array.isArray(record.lines)
+		&& record.lines.every((line) => {
+			const item = stringRecord(line);
+			return !!item
+				&& (item.type === "add" || item.type === "del" || item.type === "ctx" || item.type === "sep")
+				&& typeof item.content === "string";
+		})
+		&& typeof record.added === "number"
+		&& typeof record.removed === "number"
+		&& typeof record.chars === "number";
+}
+
+function _diffStrip(value: string): string {
 	return value.replace(ANSI_RE, "");
 }
 
@@ -2808,7 +3016,7 @@ function tabs(text: string): string {
 function termW(): number {
 	const raw =
 		process.stdout.columns ||
-		(process.stderr as any).columns ||
+		process.stderr.columns ||
 		Number.parseInt(process.env.COLUMNS ?? "", 10) ||
 		DEFAULT_TERM_WIDTH;
 	return Math.max(40, Math.min(raw - 4, MAX_TERM_WIDTH));
@@ -2825,7 +3033,7 @@ function adaptiveWrapRows(tw?: number): number {
 	return MAX_WRAP_ROWS_NARROW;
 }
 
-function fit(value: string, width: number): string {
+function fitWidth(value: string, width: number): string {
 	if (width <= 0) return "";
 	const valueWidth = visibleWidth(value);
 	if (valueWidth <= width) return value + " ".repeat(width - valueWidth);
@@ -3168,7 +3376,7 @@ export function parseDiff(oldContent: string, newContent: string, ctxLines = 3):
 	return { lines, added, removed, chars: oldContent.length + newContent.length };
 }
 
-function getCachedParsedDiff(ctx: any, key: string, oldContent: string, newContent: string): ParsedDiff {
+function getCachedParsedDiff(ctx: ToolRenderContext, key: string, oldContent: string, newContent: string): ParsedDiff {
 	if (ctx.state?._parsedDiffKey === key && ctx.state._parsedDiff) {
 		return ctx.state._parsedDiff as ParsedDiff;
 	}
@@ -3393,7 +3601,7 @@ export async function renderUnified(
 		const dels: Array<{ l: DiffLine; hl: string }> = [];
 		while (index < vis.length) {
 			const candidate = vis[index];
-			if (!candidate || candidate.type !== "del") break;
+			if (candidate?.type !== "del") break;
 			const plain = candidate.content;
 			dels.push({ l: candidate, hl: claude ? plain : (oldHL[oldIndex] ?? plain) });
 			oldIndex++;
@@ -3402,7 +3610,7 @@ export async function renderUnified(
 		const adds: Array<{ l: DiffLine; hl: string }> = [];
 		while (index < vis.length) {
 			const candidate = vis[index];
-			if (!candidate || candidate.type !== "add") break;
+			if (candidate?.type !== "add") break;
 			adds.push({ l: candidate, hl: newHL[newIndex] ?? candidate.content });
 			newIndex++;
 			index++;
@@ -3422,10 +3630,10 @@ export async function renderUnified(
 
 		if (emphasized && canHL) {
 			for (const { d, wd } of pairs) {
-				emitRow(d.l.oldNum, "-", BG_GUTTER_DEL, `${dc.fgDel}${D_BOLD}`, injectBg(d.hl, wd!.oldRanges, BG_DEL, BG_DEL_W), BG_DEL);
+				emitRow(d.l.oldNum, "-", BG_GUTTER_DEL, `${dc.fgDel}${D_BOLD}`, injectBg(d.hl, requirePresent(wd).oldRanges, BG_DEL, BG_DEL_W), BG_DEL);
 			}
 			for (const { a, wd } of pairs) {
-				emitRow(a.l.newNum, "+", BG_GUTTER_ADD, `${dc.fgAdd}${D_BOLD}`, injectBg(a.hl, wd!.newRanges, BG_ADD, BG_ADD_W), BG_ADD);
+				emitRow(a.l.newNum, "+", BG_GUTTER_ADD, `${dc.fgAdd}${D_BOLD}`, injectBg(a.hl, requirePresent(wd).newRanges, BG_ADD, BG_ADD_W), BG_ADD);
 			}
 			continue;
 		}
@@ -3474,13 +3682,13 @@ async function renderSplit(
 		const adds: DiffLine[] = [];
 		while (i < diff.lines.length) {
 			const candidate = diff.lines[i];
-			if (!candidate || candidate.type !== "del") break;
+			if (candidate?.type !== "del") break;
 			dels.push(candidate);
 			i++;
 		}
 		while (i < diff.lines.length) {
 			const candidate = diff.lines[i];
-			if (!candidate || candidate.type !== "add") break;
+			if (candidate?.type !== "add") break;
 			adds.push(candidate);
 			i++;
 		}
@@ -3523,8 +3731,8 @@ async function renderSplit(
 		if (line.type === "sep") {
 			const gap = line.newNum;
 			const label = gap && gap > 0 ? `··· ${gap} lines ···` : "···";
-			const gutter = `${BG_BASE} ${FG_DIM}${fit("", nw + 2)}${D_RST}${FG_RULE}│${D_RST} `;
-			return { gutter, contGutter: gutter, bodyRows: [`${BG_BASE}${FG_DIM}${fit(label, cw)}${D_RST}`] };
+			const gutter = `${BG_BASE} ${FG_DIM}${fitWidth("", nw + 2)}${D_RST}${FG_RULE}│${D_RST} `;
+			return { gutter, contGutter: gutter, bodyRows: [`${BG_BASE}${FG_DIM}${fitWidth(label, cw)}${D_RST}`] };
 		}
 		const isDel = line.type === "del";
 		const isAdd = line.type === "add";
@@ -3596,17 +3804,21 @@ async function renderSplit(
 	return out.join("\n");
 }
 
-function getEditOperations(input: any): Array<{ oldText: string; newText: string }> {
-	if (Array.isArray(input?.edits)) {
-		return input.edits
-			.map((edit: any) => ({
-				oldText: typeof edit?.oldText === "string" ? edit.oldText : typeof edit?.old_text === "string" ? edit.old_text : "",
-				newText: typeof edit?.newText === "string" ? edit.newText : typeof edit?.new_text === "string" ? edit.new_text : "",
-			}))
+function getEditOperations(input: unknown): Array<{ oldText: string; newText: string }> {
+	const record = stringRecord(input);
+	if (Array.isArray(record?.edits)) {
+		return record.edits
+			.map((value: unknown) => {
+				const edit = stringRecord(value);
+				return {
+					oldText: typeof edit?.oldText === "string" ? edit.oldText : typeof edit?.old_text === "string" ? edit.old_text : "",
+					newText: typeof edit?.newText === "string" ? edit.newText : typeof edit?.new_text === "string" ? edit.new_text : "",
+				};
+			})
 			.filter((edit: { oldText: string; newText: string }) => edit.oldText && edit.oldText !== edit.newText);
 	}
-	const oldText = typeof input?.oldText === "string" ? input.oldText : typeof input?.old_text === "string" ? input.old_text : "";
-	const newText = typeof input?.newText === "string" ? input.newText : typeof input?.new_text === "string" ? input.new_text : "";
+	const oldText = typeof record?.oldText === "string" ? record.oldText : typeof record?.old_text === "string" ? record.old_text : "";
+	const newText = typeof record?.newText === "string" ? record.newText : typeof record?.new_text === "string" ? record.new_text : "";
 	return oldText && oldText !== newText ? [{ oldText, newText }] : [];
 }
 
@@ -3621,7 +3833,7 @@ function summarizeEditOperations(operations: Array<{ oldText: string; newText: s
 
 type EditOperationSummary = ReturnType<typeof summarizeEditOperations>;
 
-function getCachedEditOperationSummary(ctx: any, key: string, operations: Array<{ oldText: string; newText: string }>): EditOperationSummary {
+function getCachedEditOperationSummary(ctx: ToolRenderContext, key: string, operations: Array<{ oldText: string; newText: string }>): EditOperationSummary {
 	if (ctx.state?._editSummaryKey === key && ctx.state._editSummary) {
 		return ctx.state._editSummary as EditOperationSummary;
 	}
@@ -3758,7 +3970,7 @@ async function computeLocalizedEditDiffs(filePath: string, operations: Array<{ o
 }
 
 function renderEditPreviewBody(
-	ctx: any,
+	ctx: ToolRenderContext,
 	key: string,
 	theme: Theme,
 	language: BundledLanguage | undefined,
@@ -3772,18 +3984,20 @@ function renderEditPreviewBody(
 	if (operations.length === 1) {
 		const [diff] = diffs;
 		if (!diff) return;
-		const line = lines[0] ?? getFirstChangedNewLine(diff);
+		const _line = lines[0] ?? getFirstChangedNewLine(diff);
 		renderSplit(diff, language, ctx.expanded ? MAX_PREVIEW_LINES : 32, dc, branchWidth)
 			.then((rendered) => {
 				if (ctx.state._pk !== key) return;
-				ctx.state._ptBody = `${resultSentence(theme, describeEdit(diff.added, diff.removed, ccEmphasis()))}\n${rendered}`;
-				ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+				const body = `${resultSentence(theme, describeEdit(diff.added, diff.removed, ccEmphasis()))}\n${rendered}`;
+				ctx.state._ptBody = body;
+				ctx.state._ptDisplay = indentBranchBlock(withBranch(body, theme, false, true));
 				ctx.invalidate();
 			})
 			.catch(() => {
 				if (ctx.state._pk !== key) return;
-				ctx.state._ptBody = resultSentence(theme, describeEdit(diff.added, diff.removed, ccEmphasis()));
-				ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+				const body = resultSentence(theme, describeEdit(diff.added, diff.removed, ccEmphasis()));
+				ctx.state._ptBody = body;
+				ctx.state._ptDisplay = indentBranchBlock(withBranch(body, theme, false, true));
 				ctx.invalidate();
 			});
 		return;
@@ -3806,14 +4020,16 @@ function renderEditPreviewBody(
 			const suffix = remainder > 0
 				? `\n${theme.fg("muted", `… ${remainder} more edit blocks${ctx.expanded ? "" : " (ctrl+o to expand)"}`)}`
 				: "";
-			ctx.state._ptBody = `${operations.length} edits ${summary}\n\n${sections.join("\n\n")}${suffix}`;
-			ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+			const body = `${operations.length} edits ${summary}\n\n${sections.join("\n\n")}${suffix}`;
+			ctx.state._ptBody = body;
+			ctx.state._ptDisplay = indentBranchBlock(withBranch(body, theme, false, true));
 			ctx.invalidate();
 		})
 		.catch(() => {
 			if (ctx.state._pk !== key) return;
-			ctx.state._ptBody = `${operations.length} edits ${summary}`;
-			ctx.state._ptDisplay = indentBranchBlock(withBranch(ctx.state._ptBody, theme, false, true));
+			const body = `${operations.length} edits ${summary}`;
+			ctx.state._ptBody = body;
+			ctx.state._ptDisplay = indentBranchBlock(withBranch(body, theme, false, true));
 			ctx.invalidate();
 		});
 }
@@ -3840,15 +4056,16 @@ function prefixThinkingLine(text: string, _theme: Theme | undefined): string {
 }
 
 function registerThinkingLabels(pi: ExtensionAPI): void {
-	const patchMessage = (event: any, theme?: Theme) => {
+	const patchMessage = (event: unknown, theme?: Theme) => {
 		// Keep theme-derived border / dim text colors in sync with the
 		// active pi theme. Cheap when the theme hasn't changed (identity check).
 		if (theme) applyThemePaletteIfNeeded(theme);
-		const message = event?.message;
-		if (!message || message.role !== "assistant" || !Array.isArray(message.content)) return;
+		const message = propertyRecord(propertyRecord(event)?.message);
+		if (message?.role !== "assistant" || !Array.isArray(message.content)) return;
 		for (const block of message.content) {
-			if (block && block.type === "thinking" && typeof block.thinking === "string") {
-				block.thinking = prefixThinkingLine(block.thinking, theme);
+			const record = propertyRecord(block);
+			if (record?.type === "thinking" && typeof record.thinking === "string") {
+				record.thinking = prefixThinkingLine(record.thinking, theme);
 			}
 		}
 	};
@@ -3867,29 +4084,30 @@ function registerThinkingLabels(pi: ExtensionAPI): void {
 		}
 		currentAssistantMessageStartMs = undefined;
 	});
-	pi.on("message_start", async (event: any) => {
-		const message = event?.message;
+	pi.on("message_start", async (event) => {
+		const message = event.message;
 		if (message?.role === "user" && currentAgentWorkStartMs === undefined) {
 			currentAgentWorkStartMs = Date.now();
 		}
 		if (message?.role === "assistant") {
 			currentAssistantMessageStartMs = Date.now();
-			(message as any)[WORKED_START_KEY] = currentAssistantMessageStartMs;
+			Reflect.set(message, WORKED_START_KEY, currentAssistantMessageStartMs);
 		}
 	});
 	pi.on("message_update", async (event, ctx) => patchMessage(event, ctx.ui?.theme));
 	pi.on("message_end", async (event, ctx) => {
-		const message = (event as any)?.message;
+		const message = event.message;
 		if (message?.role === "assistant") {
+			const messageRecord = propertyRecord(message);
 			const started = typeof currentAgentWorkStartMs === "number"
 				? currentAgentWorkStartMs
-				: typeof (message as any)[WORKED_START_KEY] === "number"
-					? (message as any)[WORKED_START_KEY]
+				: typeof messageRecord?.[WORKED_START_KEY] === "number"
+					? messageRecord[WORKED_START_KEY]
 					: currentAssistantMessageStartMs;
 			const isFinalAssistantMessage = message.stopReason !== "toolUse";
 			if (started !== undefined && isFinalAssistantMessage) {
 				const durationMs = Date.now() - started;
-				(message as any)[WORKED_DURATION_KEY] = durationMs;
+				Reflect.set(message, WORKED_DURATION_KEY, durationMs);
 				// Mutate the message itself before pi renders/persists it. This is more
 				// reliable than the spinner because pi removes the loader on agent_end,
 				// and more reliable than component monkey-patching when extensions are
@@ -3905,9 +4123,9 @@ function registerThinkingLabels(pi: ExtensionAPI): void {
 		currentAssistantMessageStartMs = undefined;
 	});
 	pi.on("context", async (event) => {
-		if (!Array.isArray((event as any).messages)) return;
-		for (const msg of (event as any).messages) {
-			if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+		if (!Array.isArray(event.messages)) return;
+		for (const msg of event.messages) {
+			if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
 			for (const block of msg.content) {
 				if (block && block.type === "thinking" && typeof block.thinking === "string") {
 					block.thinking = stripThinkingPresentationArtifacts(block.thinking);
@@ -4042,7 +4260,7 @@ function genericToolLabel(name: string): string {
 	return isMcpToolName(name) ? "MCP" : humanizeToolName(name);
 }
 
-function renderGenericToolCall(name: string, args: any, theme: Theme, ctx: any): Text {
+function renderGenericToolCall(name: string, args: unknown, theme: Theme, ctx: ToolRenderContext): Text {
 	syncToolCallStatus(ctx);
 	ctx.state._openAiPatchFiles = [];
 	const sp = (path: string) => shortPath(ctx.cwd ?? process.cwd(), path);
@@ -4050,7 +4268,7 @@ function renderGenericToolCall(name: string, args: any, theme: Theme, ctx: any):
 	return makeText(ctx.lastComponent, toolHeader(genericToolLabel(name), summary, theme, toolStatusDot(ctx, theme)));
 }
 
-function renderGenericToolResult(name: string, result: any, options: any, theme: Theme, ctx: any): Text {
+function renderGenericToolResult(name: string, result: ToolRendererResult, options: ToolRendererOptions, theme: Theme, ctx: ToolRenderContext): Text {
 	if (isMcpToolName(name)) {
 		return renderMcpToolResult(result, !!options?.expanded, !!options?.isPartial, theme, ctx);
 	}
@@ -4064,25 +4282,30 @@ function renderGenericToolResult(name: string, result: any, options: any, theme:
 	);
 }
 
-function getTextContent(result: any): string {
-	if (!Array.isArray(result?.content)) return "";
-	return result.content
-		.filter((block: any) => block?.type === "text" && typeof block.text === "string")
-		.map((block: any) => block.text)
+function getTextContent(result: unknown): string {
+	const content = propertyRecord(result)?.content;
+	if (!Array.isArray(content)) return "";
+	return content
+		.map(propertyRecord)
+		.filter((block): block is PropertyRecord => block?.type === "text" && typeof block.text === "string")
+		.map((block) => block.text as string)
 		.join("\n");
 }
 
-function getStringArg(args: any, ...keys: string[]): string {
+
+function getStringArg(args: unknown, ...keys: string[]): string {
+	const record = stringRecord(args);
 	for (const key of keys) {
-		const value = args?.[key];
+		const value = record?.[key];
 		if (typeof value === "string" && value.trim()) return value.trim();
 	}
 	return "";
 }
 
-function getStringArrayArg(args: any, ...keys: string[]): string[] {
+function getStringArrayArg(args: unknown, ...keys: string[]): string[] {
+	const record = stringRecord(args);
 	for (const key of keys) {
-		const value = args?.[key];
+		const value = record?.[key];
 		if (!Array.isArray(value)) continue;
 		const items = value.filter((item): item is string => typeof item === "string" && item.trim().length > 0);
 		if (items.length > 0) return items;
@@ -4139,7 +4362,7 @@ interface ApplyPatchResultMeta {
 
 function buildApplyPatchResultMeta(preview: ApplyPatchPreview): ApplyPatchResultMeta {
 	const firstChange = preview.changes[0];
-	return {
+	return omitUndefined({
 		changeCount: preview.changes.length,
 		totalAdded: preview.totalAdded,
 		totalRemoved: preview.totalRemoved,
@@ -4155,7 +4378,7 @@ function buildApplyPatchResultMeta(preview: ApplyPatchPreview): ApplyPatchResult
 				removed: firstChange.diff.removed,
 			}
 			: undefined,
-	};
+	});
 }
 
 function countDiffHunks(diff: ParsedDiff): number {
@@ -4370,7 +4593,7 @@ function parseApplyPatchPreview(patchText: string, sp: (path: string) => string,
 			kind,
 			path,
 			displayPath,
-			moveTo,
+			...(moveTo !== undefined ? { moveTo } : {}),
 			diff,
 			language: lang(moveTo || path),
 			hunks: countDiffHunks(diff),
@@ -4408,7 +4631,7 @@ function formatApplyPatchLine(change: ApplyPatchChangePreview, theme: Theme): st
 	return formatLineMeta(change.line, theme);
 }
 
-function getCachedApplyPatchPreview(patchText: string, sp: (path: string) => string, ctx: any): ApplyPatchPreview | null {
+function getCachedApplyPatchPreview(patchText: string, sp: (path: string) => string, ctx: ToolRenderContext): ApplyPatchPreview | null {
 	if (!patchText) return null;
 	const key = `apply-meta:${ctx.cwd ?? process.cwd()}:${hashText(patchText)}`;
 	if (ctx.state?._applyPatchMetaKey === key && ctx.state._applyPatchPreview) {
@@ -4427,14 +4650,14 @@ function getCachedApplyPatchPreview(patchText: string, sp: (path: string) => str
 	}
 }
 
-function getApplyPatchResultMeta(args: any, ctx: any, sp: (path: string) => string): ApplyPatchResultMeta | null {
+function getApplyPatchResultMeta(args: unknown, ctx: ToolRenderContext, sp: (path: string) => string): ApplyPatchResultMeta | null {
 	const patchText = getStringArg(args ?? ctx?.args, "patchText", "patch_text");
 	if (!patchText) return null;
 	const preview = getCachedApplyPatchPreview(patchText, sp, ctx);
 	return preview && ctx.state?._applyPatchMeta ? (ctx.state._applyPatchMeta as ApplyPatchResultMeta) : null;
 }
 
-function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: string) => string): Text {
+function renderApplyPatchCall(args: unknown, theme: Theme, ctx: ToolRenderContext, sp: (path: string) => string): Text {
 	syncToolCallStatus(ctx);
 	const patchText = getStringArg(args, "patchText", "patch_text");
 	const summary = stableCallSummary(ctx, "_callSummary", () => summarizeOpenAiToolCall("apply_patch", args, theme, sp));
@@ -4452,8 +4675,9 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 	const key = `apply-preview:${ctx.state._applyPatchMetaKey ?? hashText(patchText)}:${diffWidth}:${ctx.expanded ? 1 : 0}`;
 	if (ctx.state._applyPatchPreviewKey !== key) {
 		ctx.state._applyPatchPreviewKey = key;
-		ctx.state._applyPatchPreviewBody = theme.fg("muted", "(rendering…)");
-		ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+		const renderingBody = theme.fg("muted", "(rendering…)");
+		ctx.state._applyPatchPreviewBody = renderingBody;
+		ctx.state._applyPatchPreviewDisplay = withBranch(renderingBody, theme, false, true);
 		const dc = resolveDiffColors(theme);
 		if (preview.changes.length === 1) {
 			const [change] = preview.changes;
@@ -4461,14 +4685,16 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 			renderSplit(change.diff, change.language, ctx.expanded ? MAX_PREVIEW_LINES : 32, dc, diffWidth)
 				.then((rendered) => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
-					ctx.state._applyPatchPreviewBody = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					const body = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}\n${rendered}`;
+					ctx.state._applyPatchPreviewBody = body;
+					ctx.state._applyPatchPreviewDisplay = withBranch(body, theme, false, true);
 					ctx.invalidate();
 				})
 				.catch(() => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
-					ctx.state._applyPatchPreviewBody = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					const body = `${describeApplyPatchChange(change)} ${change.summary}${formatApplyPatchLine(change, theme)}`;
+					ctx.state._applyPatchPreviewBody = body;
+					ctx.state._applyPatchPreviewDisplay = withBranch(body, theme, false, true);
 					ctx.invalidate();
 				});
 		} else {
@@ -4490,14 +4716,16 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 						? `\n${theme.fg("muted", `… ${remainder} more file patches${ctx.expanded ? "" : " (ctrl+o to expand)"}`)}`
 						: "";
 					const summary = `${preview.changes.length} files ${preview.summary}`;
-					ctx.state._applyPatchPreviewBody = `${summary}\n\n${sections.join("\n\n")}${suffix}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					const body = `${summary}\n\n${sections.join("\n\n")}${suffix}`;
+					ctx.state._applyPatchPreviewBody = body;
+					ctx.state._applyPatchPreviewDisplay = withBranch(body, theme, false, true);
 					ctx.invalidate();
 				})
 				.catch(() => {
 					if (ctx.state._applyPatchPreviewKey !== key) return;
-					ctx.state._applyPatchPreviewBody = `${preview.changes.length} files ${preview.summary}`;
-					ctx.state._applyPatchPreviewDisplay = withBranch(ctx.state._applyPatchPreviewBody, theme, false, true);
+					const body = `${preview.changes.length} files ${preview.summary}`;
+					ctx.state._applyPatchPreviewBody = body;
+					ctx.state._applyPatchPreviewDisplay = withBranch(body, theme, false, true);
 					ctx.invalidate();
 				});
 		}
@@ -4507,7 +4735,7 @@ function renderApplyPatchCall(args: any, theme: Theme, ctx: any, sp: (path: stri
 	return makeText(ctx.lastComponent, body ? `${hdr}\n${body}` : hdr);
 }
 
-function renderApplyPatchResult(result: any, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderApplyPatchResult(result: ToolRendererResult, isPartial: boolean, theme: Theme, ctx: ToolRenderContext): Text {
 	if (isPartial) {
 		setupBlinkTimer(ctx);
 		return makeText(ctx.lastComponent, withBranch(theme.fg("dim", "Applying Patch..."), theme));
@@ -4577,7 +4805,7 @@ function serverFromQualifiedName(qualified: string): string {
  * The MCP server a call is addressed to, or "" when it cannot be determined.
  * Generic over servers and over every naming convention — nothing is hardcoded.
  */
-export function mcpServerName(toolName: unknown, args: any): string {
+export function mcpServerName(toolName: unknown, args: unknown): string {
 	const name = typeof toolName === "string" ? toolName : "";
 
 	// A direct tool, whose server was recorded when the adapter registered it.
@@ -4616,7 +4844,7 @@ function mcpServerForComponent(value: unknown): string {
  * Only reached when grouping is switched off — Claude Code shows no per-call MCP
  * row at all, so the aggregate clause normally renders instead of this.
  */
-function summarizeMcpToolCall(name: string, args: any, theme: Theme): string {
+function summarizeMcpToolCall(name: string, args: unknown, theme: Theme): string {
 	const server = mcpServerName(name, args);
 
 	// A direct tool: the call *is* the MCP tool, so name it.
@@ -4636,12 +4864,12 @@ function summarizeMcpToolCall(name: string, args: any, theme: Theme): string {
 	return other ? summarizeText(other, 72) : theme.fg("muted", "status");
 }
 
-function summarizeGenericToolCall(name: string, args: any, theme: Theme, sp: (path: string) => string): string {
+function summarizeGenericToolCall(name: string, args: unknown, theme: Theme, sp: (path: string) => string): string {
 	if (isMcpToolName(name)) return summarizeMcpToolCall(name, args, theme);
 	return summarizeOpenAiToolCall(name, args, theme, sp);
 }
 
-function renderMcpToolResult(result: any, expanded: boolean, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderMcpToolResult(result: ToolRendererResult, expanded: boolean, isPartial: boolean, theme: Theme, ctx: ToolRenderContext): Text {
 	if (isPartial) {
 		setupBlinkTimer(ctx);
 		return makeText(ctx.lastComponent, withBranch(theme.fg("dim", "MCP running..."), theme));
@@ -4675,7 +4903,7 @@ function renderMcpToolResult(result: any, expanded: boolean, isPartial: boolean,
 	return makeText(ctx.lastComponent, withBranch(preview, theme));
 }
 
-function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (path: string) => string): string {
+function summarizeOpenAiToolCall(name: string, args: unknown, theme: Theme, sp: (path: string) => string): string {
 	switch (name) {
 		case "apply_patch": {
 			const patchText = getStringArg(args, "patchText", "patch_text");
@@ -4715,7 +4943,8 @@ function summarizeOpenAiToolCall(name: string, args: any, theme: Theme, sp: (pat
 		case "question":
 			return summarizeText(getStringArg(args, "question") || "ask user", 72);
 		case "questionnaire": {
-			const questions = Array.isArray(args?.questions) ? args.questions.length : 0;
+			const rawQuestions = stringRecord(args)?.questions;
+			const questions = Array.isArray(rawQuestions) ? rawQuestions.length : 0;
 			return questions > 0 ? `${questions} questions` : theme.fg("muted", "questionnaire");
 		}
 		case "context_tag":
@@ -4830,7 +5059,7 @@ function formatOpenAiSuccessLine(name: string, line: string, theme: Theme): stri
 	return theme.fg("muted", trimmed);
 }
 
-function renderTaskListResult(lines: string[], expanded: boolean, theme: Theme, ctx: any): Text {
+function renderTaskListResult(lines: string[], expanded: boolean, theme: Theme, ctx: ToolRenderContext): Text {
 	const tasks = lines.map(parseTaskListLine).filter((task): task is ParsedTaskListLine => task !== null);
 	if (tasks.length === 0) {
 		const text = lines.length === 0 ? theme.fg("muted", "no tasks") : buildPreviewText(lines.map((line) => theme.fg("dim", line)), expanded, theme, previewLimit());
@@ -4858,12 +5087,19 @@ function renderTaskListResult(lines: string[], expanded: boolean, theme: Theme, 
 	return makeText(ctx.lastComponent, withBranch(`${summary}\n${preview.join("\n")}`, theme));
 }
 
-function getFirstImageBlock(result: any): { data: string; mimeType: string } | undefined {
-	if (!Array.isArray(result?.content)) return undefined;
-	return result.content.find((block: any) => block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string");
+function getFirstImageBlock(result: unknown): { data: string; mimeType: string } | undefined {
+	const content = propertyRecord(result)?.content;
+	if (!Array.isArray(content)) return undefined;
+	for (const value of content) {
+		const block = propertyRecord(value);
+		if (block?.type === "image" && typeof block.data === "string" && typeof block.mimeType === "string") {
+			return { data: block.data, mimeType: block.mimeType };
+		}
+	}
+	return undefined;
 }
 
-function getReadImageFallback(result: any, ctx: any): string {
+function getReadImageFallback(result: unknown, ctx: ToolRenderContext): string {
 	const image = getFirstImageBlock(result);
 	if (!image) return "";
 	let dimensions: ImageDimensions | undefined;
@@ -4877,7 +5113,7 @@ function getReadImageFallback(result: any, ctx: any): string {
 	return imageFallback(image.mimeType, dimensions, filename);
 }
 
-function renderReadImageResult(result: any, expanded: boolean, theme: Theme, ctx: any): Text {
+function renderReadImageResult(result: ToolRendererResult, expanded: boolean, theme: Theme, ctx: ToolRenderContext): Text {
 	const image = getFirstImageBlock(result);
 	const mimeType = image?.mimeType ?? "image";
 	const summary = `${theme.fg("success", "Image loaded")} ${theme.fg("muted", `[${mimeType}]`)}`;
@@ -4897,7 +5133,7 @@ function renderReadImageResult(result: any, expanded: boolean, theme: Theme, ctx
 	return makeText(ctx.lastComponent, withBranch(lines.join("\n"), theme));
 }
 
-function formatCapturedOpenAiResult(name: string, result: any, theme: Theme, ctx: any): string | undefined {
+function formatCapturedOpenAiResult(name: string, result: ToolRendererResult, theme: Theme, ctx: ToolRenderContext): string | undefined {
 	if (ctx.isError) return undefined;
 	if (name === "webfetch") {
 		return theme.fg("muted", `Received ${Buffer.byteLength(getTextContent(result), "utf8")} bytes`);
@@ -4910,7 +5146,7 @@ function formatCapturedOpenAiResult(name: string, result: any, theme: Theme, ctx
 	return undefined;
 }
 
-function renderOpenAiToolResult(name: string, result: any, expanded: boolean, isPartial: boolean, theme: Theme, ctx: any): Text {
+function renderOpenAiToolResult(name: string, result: ToolRendererResult, expanded: boolean, isPartial: boolean, theme: Theme, ctx: ToolRenderContext): Text {
 	if (isPartial) {
 		if (name === "Agent") {
 			return makeText(ctx.lastComponent, withBranch(theme.fg("dim", "Initializing…"), theme));
@@ -5027,8 +5263,8 @@ export default function (pi: ExtensionAPI): void {
 								return;
 							}
 							const previewKey = key === "spinnerColor" ? SPINNER_COLOR_PREVIEW_KEY : SPINNER_STATUS_COLOR_PREVIEW_KEY;
-							if (typeof value === "string") (globalThis as any)[previewKey] = value;
-							else delete (globalThis as any)[previewKey];
+							if (typeof value === "string") Reflect.set(globalThis, previewKey, value);
+							else Reflect.deleteProperty(globalThis, previewKey);
 							bustSpinnerSettingsCache();
 							tui.requestRender();
 						},
@@ -5097,7 +5333,7 @@ export default function (pi: ExtensionAPI): void {
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
 			if (getFirstImageBlock(result)) return renderReadImageResult(result, expanded, theme, ctx);
 			const details = result.details as ReadToolDetails | undefined;
-			const content = result.content.find((block: any) => block?.type === "text");
+			const content = result.content.find((block) => block?.type === "text");
 			if (content?.type !== "text") return makeText(ctx.lastComponent, withBranch(theme.fg("error", "No text content"), theme));
 			const lines = content.text.split("\n");
 			// A failed read is not content: reporting it as "1 line loaded" hides the error.
@@ -5187,7 +5423,7 @@ export default function (pi: ExtensionAPI): void {
 		renderCall(args, theme, ctx) {
 			syncToolCallStatus(ctx);
 			const summary = stableCallSummary(ctx, "_callSummary", () => {
-				let value = `\"${summarizeText(args.pattern, 40)}\"`;
+				let value = `"${summarizeText(args.pattern, 40)}"`;
 				if (args.path) value += ` in ${args.path}`;
 				return value;
 			});
@@ -5225,7 +5461,7 @@ export default function (pi: ExtensionAPI): void {
 		renderCall(args, theme, ctx) {
 			syncToolCallStatus(ctx);
 			const summary = stableCallSummary(ctx, "_callSummary", () => {
-				let value = `\"${summarizeText(args.pattern, 40)}\"`;
+				let value = `"${summarizeText(args.pattern, 40)}"`;
 				if (args.path) value += ` in ${args.path}`;
 				return value;
 			});
@@ -5320,7 +5556,7 @@ export default function (pi: ExtensionAPI): void {
 		description: writeTool.description,
 		parameters: writeTool.parameters,
 		async execute(toolCallId, params, signal, onUpdate, _ctx) {
-			const fp = params.path ?? (params as any).file_path ?? "";
+			const fp = getStringArg(params, "path", "file_path");
 			const fullPath = fp ? resolve(cwd, fp) : "";
 			const existedBefore = !!fullPath && fileExistsForTool(cwd, fp);
 			WRITE_EXISTED_BEFORE.set(toolCallId, existedBefore);
@@ -5334,16 +5570,16 @@ export default function (pi: ExtensionAPI): void {
 			const content = params.content ?? "";
 			if (old !== null && old !== content) {
 				const diff = parseDiff(old, content);
-				(result as any).details = { _type: "diff", summary: summarizeDiff(diff.added, diff.removed), diff, language: lang(fp) };
+				Reflect.set(result, "details", { _type: "diff", summary: summarizeDiff(diff.added, diff.removed), diff, language: lang(fp) });
 			} else if (old === null) {
-				(result as any).details = { _type: "new", lines: lineCount(content), filePath: fp };
+				Reflect.set(result, "details", { _type: "new", lines: lineCount(content), filePath: fp });
 			} else if (old === content) {
-				(result as any).details = { _type: "noChange" };
+				Reflect.set(result, "details", { _type: "noChange" });
 			}
 			return result;
 		},
 		renderCall(args, theme, ctx) {
-			const fp = args?.path ?? (args as any)?.file_path ?? "";
+			const fp = getStringArg(args, "path", "file_path");
 			const revealSummary = shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "content"));
 			syncToolCallStatus(ctx);
 			// Claude Code labels both new and existing files "Write" — no "Create".
@@ -5360,26 +5596,28 @@ export default function (pi: ExtensionAPI): void {
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
 			if (typeof ctx?.toolCallId === "string") WRITE_EXISTED_BEFORE.delete(ctx.toolCallId);
 			if (ctx.isError) {
-				const e =
-					result.content
-						?.filter((c: any) => c.type === "text")
-						.map((c: any) => c.text || "")
-						.join("\n") ?? "Error";
+				const e = getTextContent(result) || "Error";
 				return makeText(ctx.lastComponent, withBranch(theme.fg("error", e), theme));
 			}
-			const d = (result as any).details;
+			const d = stringRecord(result.details);
 			if (d?._type === "diff") {
+				const diff = isParsedDiff(d.diff) ? d.diff : undefined;
+				if (!diff) return makeText(ctx.lastComponent, withBranch(theme.fg("error", "Invalid diff details"), theme));
 				const previewLines = ctx.expanded ? MAX_RENDER_LINES : diffCollapsedLimit();
-				const hunks = d.diff?.lines?.filter((l: any) => l.type === "sep").length + (d.diff?.lines?.length ? 1 : 0);
+				const _hunks = countDiffHunks(diff);
 				const diffWidth = branchDiffWidth();
-				const mode = shouldUseSplit(d.diff, diffWidth, previewLines) ? "split" : "unified";
-				const richSummary = resultSentence(theme, describeWrite(writtenLineCount(ctx.args?.content ?? ""), spl(ctx.args?.path ?? (ctx.args as any)?.file_path ?? ""), ccEmphasis()));
-				const key = `wd:${diffWidth}:${d.summary}:${d.diff?.lines?.length ?? 0}:${d.language ?? ""}:${ctx.expanded ? 1 : 0}`;
+				const _mode = shouldUseSplit(diff, diffWidth, previewLines) ? "split" : "unified";
+				const rawContent = typeof ctx.args?.content === "string" ? ctx.args.content : "";
+				const renderPath = getStringArg(ctx.args, "path", "file_path");
+				const richSummary = resultSentence(theme, describeWrite(writtenLineCount(rawContent), spl(renderPath), ccEmphasis()));
+				const summary = typeof d.summary === "string" ? d.summary : summarizeDiff(diff.added, diff.removed);
+				const language = typeof d.language === "string" ? d.language as BundledLanguage : undefined;
+				const key = `wd:${diffWidth}:${summary}:${diff.lines.length}:${language ?? ""}:${ctx.expanded ? 1 : 0}`;
 				if (ctx.state._wdk !== key) {
 					ctx.state._wdk = key;
 					ctx.state._wdt = withFinalBranchBlock(`${richSummary}\n${theme.fg("muted", "rendering diff…")}`, theme);
 					const dc = resolveDiffColors(theme);
-					renderSplit(d.diff, d.language, previewLines, dc, diffWidth)
+					renderSplit(diff, language, previewLines, dc, diffWidth)
 						.then((rendered) => {
 							if (ctx.state._wdk !== key) return;
 							ctx.state._wdt = withFinalBranchBlock(`${richSummary}\n${rendered}`, theme);
@@ -5391,25 +5629,27 @@ export default function (pi: ExtensionAPI): void {
 							ctx.invalidate();
 						});
 				}
-				return makeText(ctx.lastComponent, ctx.state._wdt ?? withBranch(richSummary, theme));
+				const rendered = typeof ctx.state._wdt === "string" ? ctx.state._wdt : withBranch(richSummary, theme);
+				return makeText(ctx.lastComponent, rendered);
 			}
 			if (d?._type === "noChange") return makeText(ctx.lastComponent, withBranch(theme.fg("muted", "✓ no changes"), theme));
 			if (d?._type === "new") {
+				const filePath = typeof d.filePath === "string" ? d.filePath : "";
 				const content = typeof ctx.args?.content === "string" ? ctx.args.content : "";
 				const lineTotal = writtenLineCount(content);
 				const contentHash = hashText(content);
-				const syntheticDiff = getCachedParsedDiff(ctx, `nf-diff:${d.filePath}:${contentHash}`, "", content);
-				const richSummary = resultSentence(theme, describeWrite(lineTotal, spl(d.filePath ?? ""), ccEmphasis()));
+				const syntheticDiff = getCachedParsedDiff(ctx, `nf-diff:${filePath}:${contentHash}`, "", content);
+				const richSummary = resultSentence(theme, describeWrite(lineTotal, spl(filePath), ccEmphasis()));
 				const previewLines = ctx.expanded ? MAX_RENDER_LINES : diffCollapsedLimit();
 				const diffWidth = branchDiffWidth();
-				const pk = `nf:${d.filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}`;
+				const pk = `nf:${filePath}:${contentHash}:${diffWidth}:${ctx.expanded ? 1 : 0}`;
 				if (ctx.state._nfk !== pk) {
 					ctx.state._nfk = pk;
 					ctx.state._nft = withFinalBranchBlock(`${richSummary}\n${theme.fg("muted", "rendering diff…")}`, theme);
 					const dc = resolveDiffColors(theme);
 					const body = claudeDiffPaletteEnabled()
-						? renderFileListing(content, lang(d.filePath), previewLines, diffWidth)
-						: renderUnified(syntheticDiff, lang(d.filePath), previewLines, dc, diffWidth);
+						? renderFileListing(content, lang(filePath), previewLines, diffWidth)
+						: renderUnified(syntheticDiff, lang(filePath), previewLines, dc, diffWidth);
 					body
 						.then((rendered) => {
 							if (ctx.state._nfk !== pk) return;
@@ -5435,19 +5675,19 @@ export default function (pi: ExtensionAPI): void {
 		description: editTool.description,
 		parameters: editTool.parameters,
 		async execute(toolCallId, params, signal, onUpdate, _ctx) {
-			const fp = params.path ?? (params as any).file_path ?? "";
+			const fp = getStringArg(params, "path", "file_path");
 			const operations = getEditOperations(params);
 			const localizedDiffs = operations.length === 1 ? await computeLocalizedEditDiffs(fp, operations, cwd) : null;
 			const result = await editTool.execute(toolCallId, params, signal, onUpdate);
 			if (operations.length === 0) return result;
 			const { diffs, summary, totalLines, totalHunks } = summarizeEditOperations(operations);
-			const baseDetails = (((result as any).details ?? {}) as Record<string, unknown>);
+			const baseDetails = stringRecord(result.details) ?? {};
 			if (operations.length === 1) {
 				const localized = localizedDiffs?.[0];
 				const editLine = localized?.line ?? (typeof baseDetails.firstChangedLine === "number" ? baseDetails.firstChangedLine : 0);
 				const diff = localized?.diff ?? diffs[0];
 				if (!diff) return result;
-				(result as any).details = {
+				Reflect.set(result, "details", {
 					...baseDetails,
 					_type: "editInfo",
 					summary,
@@ -5455,10 +5695,10 @@ export default function (pi: ExtensionAPI): void {
 					hunks: countDiffHunks(diff),
 					added: diff?.added ?? 0,
 					removed: diff?.removed ?? 0,
-				};
+				});
 				return result;
 			}
-			(result as any).details = {
+			Reflect.set(result, "details", {
 				...baseDetails,
 				_type: "multiEditInfo",
 				summary,
@@ -5467,11 +5707,11 @@ export default function (pi: ExtensionAPI): void {
 				hunks: totalHunks,
 				totalAdded: diffs.reduce((sum, diff) => sum + diff.added, 0),
 				totalRemoved: diffs.reduce((sum, diff) => sum + diff.removed, 0),
-			};
+			});
 			return result;
 		},
 		renderCall(args, theme, ctx) {
-			const fp = args?.path ?? (args as any)?.file_path ?? "";
+			const fp = getStringArg(args, "path", "file_path");
 			const operations = getEditOperations(args);
 			const revealSummary = shouldRevealCallArgs(ctx) || (!!fp && hasOwnArg(args, "edits"));
 			const summary = stableCallSummary(ctx, "_callSummary", () => shouldRevealCallArgs(ctx) && operations.length > 1 ? `${spl(fp)} ${theme.fg("muted", `(${operations.length} edits)`)}` : spl(fp), revealSummary);
@@ -5509,31 +5749,52 @@ export default function (pi: ExtensionAPI): void {
 			clearBlinkTimer(ctx);
 			setToolStatus(ctx, ctx.isError ? "error" : "success");
 			if (ctx.isError) {
-				const e =
-					result.content
-						?.filter((c: any) => c.type === "text")
-						.map((c: any) => c.text || "")
-						.join("\n") ?? "Error";
+				const e = getTextContent(result) || "Error";
 				return makeText(ctx.lastComponent, indentBranchBlock(withBranch(theme.fg("error", e), theme)));
 			}
 			// renderCall already emitted "Added N lines, removed M lines" above the diff.
 			// Repeating it here is what produced a duplicate ⎿ row.
-			if ((result as any).details?._type === "editInfo") {
+			const details = stringRecord(result.details);
+			if (details?._type === "editInfo") {
 				return makeText(ctx.lastComponent, "");
 			}
-			if ((result as any).details?._type === "multiEditInfo") {
-				const { editCount } = (result as any).details;
+			if (details?._type === "multiEditInfo") {
+				const editCount = typeof details.editCount === "number" ? details.editCount : 0;
 				return makeText(ctx.lastComponent, editCount > 1 ? withBranch(theme.fg("muted", `${editCount} edits`), theme) : "");
 			}
 			return makeText(ctx.lastComponent, indentBranchBlock(withBranch(theme.fg("success", "Applied"), theme)));
 		},
 	});
 
+	interface RuntimeToolOverride {
+		name: string;
+		label: string;
+		description: string;
+		parameters: unknown;
+		prepareArguments?: (args: unknown) => unknown;
+		execute(
+			toolCallId: string,
+			params: unknown,
+			signal: AbortSignal | undefined,
+			onUpdate: unknown,
+			ctx: unknown,
+		): Promise<unknown>;
+		renderCall(args: unknown, theme: Theme, ctx: ToolRenderContext): Component;
+		renderResult(result: ToolRendererResult, options: ToolRendererOptions, theme: Theme, ctx: ToolRenderContext): Component;
+	}
+
+	interface RuntimeToolApiBridge {
+		getAllTools(): unknown[];
+		registerTool(tool: RuntimeToolOverride): void;
+	}
+
+	// Runtime tool entries carry execute/render hooks that the public ToolInfo type omits.
+	const runtimeToolApi = pi as unknown as RuntimeToolApiBridge;
 	const wrappedOpenAiTools = new Set<string>();
 	const registerOpenAiToolOverrides = (): void => {
 		let allTools: unknown[] = [];
 		try {
-			allTools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : [];
+			allTools = runtimeToolApi.getAllTools();
 		} catch {
 			allTools = [];
 		}
@@ -5542,28 +5803,28 @@ export default function (pi: ExtensionAPI): void {
 			const record = tool as Record<string, unknown>;
 			const name = typeof record.name === "string" ? record.name : "";
 			if (!name || wrappedOpenAiTools.has(name)) continue;
-			const execute = typeof record.execute === "function" ? (record.execute as any) : null;
+			const execute = typeof record.execute === "function" ? record.execute : null;
 			if (!execute) continue;
 			const rawLabel = typeof record.label === "string" ? record.label.trim() : "";
 			const label = rawLabel && rawLabel !== name && !rawLabel.includes("_") ? rawLabel : humanizeToolName(name);
 			const description = typeof record.description === "string" ? record.description : label;
-			(pi as any).registerTool({
+			runtimeToolApi.registerTool({
 				name,
 				label,
 				description,
 				parameters: record.parameters,
-				prepareArguments: typeof record.prepareArguments === "function" ? record.prepareArguments : undefined,
-				async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-					return await Promise.resolve(execute(toolCallId, params, signal, onUpdate, ctx));
+				...(typeof record.prepareArguments === "function" ? { prepareArguments: record.prepareArguments as (args: unknown) => unknown } : {}),
+				async execute(toolCallId, params, signal, onUpdate, ctx) {
+					return await Promise.resolve(Reflect.apply(execute, tool, [toolCallId, params, signal, onUpdate, ctx]));
 				},
-				renderCall(args: any, theme: Theme, ctx: any) {
+				renderCall(args, theme, ctx) {
 					if (name === "apply_patch") return renderApplyPatchCall(args, theme, ctx, sp);
 					syncToolCallStatus(ctx);
 					ctx.state._openAiPatchFiles = [];
 					const summary = stableCallSummary(ctx, "_callSummary", () => summarizeOpenAiToolCall(name, args, theme, sp));
 					return makeText(ctx.lastComponent, toolHeader(label, summary, theme, toolStatusDot(ctx, theme)));
 				},
-				renderResult(result: any, { expanded, isPartial }: any, theme: Theme, ctx: any) {
+				renderResult(result, { expanded, isPartial }, theme, ctx) {
 					if (name === "apply_patch") return renderApplyPatchResult(result, isPartial, theme, ctx);
 					return renderOpenAiToolResult(name, result, expanded, isPartial, theme, ctx);
 				},
@@ -5576,7 +5837,7 @@ export default function (pi: ExtensionAPI): void {
 	const registerMcpToolOverrides = (): void => {
 		let allTools: unknown[] = [];
 		try {
-			allTools = typeof (pi as any).getAllTools === "function" ? (pi as any).getAllTools() : [];
+			allTools = runtimeToolApi.getAllTools();
 		} catch {
 			allTools = [];
 		}
@@ -5589,23 +5850,23 @@ export default function (pi: ExtensionAPI): void {
 			const record = tool as Record<string, unknown>;
 			const name = typeof record.name === "string" ? record.name : "";
 			if (!name || wrappedMcpTools.has(name)) continue;
-			const execute = typeof record.execute === "function" ? (record.execute as any) : null;
+			const execute = typeof record.execute === "function" ? record.execute : null;
 			if (!execute) continue;
 			const label = typeof record.label === "string" ? record.label : name === "mcp" ? "MCP" : `MCP ${name}`;
 			const description = typeof record.description === "string" ? record.description : "MCP tool";
-			(pi as any).registerTool({
+			runtimeToolApi.registerTool({
 				name,
 				label,
 				description,
 				parameters: record.parameters,
-				prepareArguments: typeof record.prepareArguments === "function" ? record.prepareArguments : undefined,
-				async execute(toolCallId: string, params: any, signal: AbortSignal | undefined, onUpdate: any, ctx: any) {
-					return await Promise.resolve(execute(toolCallId, params, signal, onUpdate, ctx));
+				...(typeof record.prepareArguments === "function" ? { prepareArguments: record.prepareArguments as (args: unknown) => unknown } : {}),
+				async execute(toolCallId, params, signal, onUpdate, ctx) {
+					return await Promise.resolve(Reflect.apply(execute, tool, [toolCallId, params, signal, onUpdate, ctx]));
 				},
-				renderCall(args: any, theme: Theme, ctx: any) {
+				renderCall(args, theme, ctx) {
 					return renderGenericToolCall(name, args, theme, ctx);
 				},
-				renderResult(result: any, { expanded, isPartial }: any, theme: Theme, ctx: any) {
+				renderResult(result, { expanded, isPartial }, theme, ctx) {
 					return renderMcpToolResult(result, expanded, isPartial, theme, ctx);
 				},
 			});

@@ -6,7 +6,9 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { Message } from "@earendil-works/pi-ai";
+import { omitUndefined, omitUndefinedAs } from "../../../_shared/runtime/omit-undefined.ts";
 import { formatToolCall } from "./formatters.ts";
+import { decodeAsyncStatus } from "./status-schema.ts";
 import type { AgentProgress, AsyncStatus, Details, DisplayItem, ErrorInfo, NestedRunSummary, SingleResult, ToolCallSummary, Usage } from "./types.ts";
 export { getAgentDir, getConfigDirName, getProjectConfigDir, PI_CODING_AGENT_PACKAGE_ROOT_ENV, resolveConfigDirName } from "./config-paths.ts";
 
@@ -81,14 +83,15 @@ export function readStatus(asyncDir: string): AsyncStatus | null {
 		});
 	}
 
-	let status: AsyncStatus;
+	let parsed: unknown;
 	try {
-		status = JSON.parse(content) as AsyncStatus;
+		parsed = JSON.parse(content) as unknown;
 	} catch (error) {
 		throw new Error(`Failed to parse async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
 		});
 	}
+	const status = decodeAsyncStatus(parsed, statusPath);
 
 	statusCache.set(statusPath, {
 		mtime: stat.mtimeMs,
@@ -109,7 +112,7 @@ const outputTailCache = new Map<string, { mtime: number; size: number; lines: st
 /**
  * Get the last N lines from an output file (with mtime/size-based caching)
  */
-function getOutputTail(outputFile: string | undefined, maxLines: number = 3): string[] {
+function _getOutputTail(outputFile: string | undefined, maxLines: number = 3): string[] {
 	if (!outputFile) return [];
 	let fd: number | null = null;
 	try {
@@ -189,7 +192,7 @@ export function findLatestSessionFile(sessionDir: string): string | null {
 /**
  * Write a prompt to a temporary file
  */
-function writePrompt(agent: string, prompt: string): { dir: string; path: string } {
+function _writePrompt(agent: string, prompt: string): { dir: string; path: string } {
 	const dir = fs.mkdtempSync(path.join(os.tmpdir(), "pi-subagent-"));
 	const p = path.join(dir, `${agent.replace(/[^\w.-]/g, "_")}.md`);
 	fs.writeFileSync(p, prompt, { mode: 0o600 });
@@ -207,7 +210,7 @@ export function getFinalOutput(messages: Message[]): string {
 	const validTextParts: string[] = [];
 	for (let i = messages.length - 1; i >= 0; i--) {
 		const msg = messages[i];
-		if (!msg || msg.role !== "assistant" || !Array.isArray(msg.content)) continue;
+		if (msg?.role !== "assistant" || !Array.isArray(msg.content)) continue;
 		const hasAssistantError = ("errorMessage" in msg && typeof msg.errorMessage === "string" && msg.errorMessage.length > 0)
 			|| ("stopReason" in msg && msg.stopReason === "error");
 		if (hasAssistantError) continue;
@@ -217,7 +220,7 @@ export function getFinalOutput(messages: Message[]): string {
 			.join("\n");
 		for (let j = msg.content.length - 1; j >= 0; j--) {
 			const part = msg.content[j];
-			if (!part || part.type !== "text" || part.text.trim().length === 0) continue;
+			if (part?.type !== "text" || part.text.trim().length === 0) continue;
 			validTextParts.push(part.text);
 			if (/```acceptance[-_]report\s*\n[\s\S]*?```/i.test(part.text)) return messageText;
 			for (const match of part.text.matchAll(/```(?:json|jsonc|json5)\s*\n([\s\S]*?)```/gi)) {
@@ -332,22 +335,22 @@ export function sumResultsCost(results: SingleResult[]): NonNullable<Details["to
 export function compactForegroundResult(result: SingleResult): SingleResult {
 	if (result.progress?.status === "running") return result;
 	const toolCalls = result.toolCalls?.length ? result.toolCalls : extractToolCallSummaries(result.messages);
-	return {
+	return omitUndefinedAs<SingleResult>({
 		...result,
 		messages: undefined,
 		progress: undefined,
 		toolCalls: toolCalls.length ? toolCalls : undefined,
-	};
+	});
 }
 
 export function compactForegroundDetails(details: Details): Details {
-	return {
+	return omitUndefinedAs<Details>({
 		...details,
 		results: details.results.map(compactForegroundResult),
 		progress: details.progress
 			? details.progress.map(compactCompletedProgress)
 			: undefined,
-	};
+	});
 }
 
 /**
@@ -431,21 +434,23 @@ export function detectSubagentError(messages: Message[]): ErrorInfo {
 
 	for (let i = messages.length - 1; i >= scanStart; i--) {
 		const msg = messages[i];
-		if (!msg || msg.role !== "toolResult" || !Array.isArray(msg.content)) continue;
+		if (msg?.role !== "toolResult" || !Array.isArray(msg.content)) continue;
 		const toolName = "toolName" in msg && typeof msg.toolName === "string" ? msg.toolName : undefined;
 		const isError = "isError" in msg && msg.isError === true;
+		const isSuccess = "isError" in msg && msg.isError === false;
 
+		if (toolName === "structured_output" && isSuccess) return { hasError: false };
 		if (!isError) continue;
 
 		const text = msg.content.find((c) => c.type === "text");
 		const details = text && "text" in text ? text.text : undefined;
 		const exitMatch = details?.match(/exit(?:ed)?\s*(?:with\s*)?(?:code|status)?\s*[:\s]?\s*(\d+)/i);
-		return {
+		return omitUndefined({
 			hasError: true,
 			exitCode: exitMatch?.[1] ? parseInt(exitMatch[1], 10) : 1,
 			errorType: toolName || "tool",
 			details: details?.slice(0, 200),
-		};
+		});
 	}
 
 	return { hasError: false };

@@ -65,6 +65,7 @@ import {
 	SAFE_BUILTIN_PLAN_TOOLS,
 } from "./tool-policy.js";
 import { compareTools, toolNameFromLegacyKey, toolPolicyLabel, unique } from "./tool-selection.js";
+import { omitUndefined } from "../../_shared/runtime/omit-undefined.ts";
 
 const STATE_ENTRY_TYPE = "plan-mode-state";
 const PROPOSED_PLAN_MESSAGE_TYPE = "proposed-plan";
@@ -244,7 +245,7 @@ export default function planMode(
 		if (loadedSettings.notice) ctx.ui.notify(loadedSettings.notice, "warning");
 		const persistFlagActivation = pi.getFlag("plan") === true && !state.enabled;
 		if (persistFlagActivation) {
-			state = { ...state, enabled: true, activeImplementation: undefined };
+			state = omitUndefined({ ...state, enabled: true, activeImplementation: undefined });
 		}
 		if (state.enabled) {
 			activatePlanModeTools();
@@ -257,12 +258,12 @@ export default function planMode(
 	pi.on("thinking_level_select", (event) => {
 		if (!state.enabled || !state.appliedThinkingLevel) return;
 		if (event.level !== state.appliedThinkingLevel) {
-			state = {
+			state = omitUndefined({
 				...state,
 				manualThinkingLevel: event.level,
 				previousThinkingLevel: undefined,
 				appliedThinkingLevel: undefined,
-			};
+			});
 			persistState();
 		}
 	});
@@ -357,12 +358,12 @@ export default function planMode(
 		if (!state.enabled) return;
 		if (state.latestPlan || state.awaitingAction) {
 			readyPresentationIntent = undefined;
-			state = {
+			state = omitUndefined({
 				...state,
 				latestPlan: undefined,
 				latestPlanSource: undefined,
 				awaitingAction: false,
-			};
+			});
 			persistState();
 			updateUi(ctx);
 		}
@@ -431,12 +432,12 @@ export default function planMode(
 		workflowGeneration += 1;
 		resetFinalizationRecovery();
 		if (!state.enabled) previousTools = withoutRequiredPlanModeTools(safeGetActiveTools());
-		state = {
+		state = omitUndefined({
 			...state,
 			enabled: true,
 			awaitingAction: false,
 			activeImplementation: undefined,
-		};
+		});
 		activatePlanModeTools();
 		applyPlanThinkingLevel();
 		persistState();
@@ -465,7 +466,7 @@ export default function planMode(
 		const wasEnabled = state.enabled;
 		readyPresentationIntent = undefined;
 		resetFinalizationRecovery();
-		state = {
+		state = omitUndefined({
 			...state,
 			enabled: false,
 			latestPlan: undefined,
@@ -473,11 +474,11 @@ export default function planMode(
 			awaitingAction: false,
 			activeImplementation: undefined,
 			manualThinkingLevel: undefined,
-		};
+		});
 		if (wasEnabled) {
 			restoreTools();
 			restoreThinkingLevel();
-			state = { ...state, manualThinkingLevel: undefined };
+			state = omitUndefined({ ...state, manualThinkingLevel: undefined });
 		}
 		persistState();
 		updateUi(ctx);
@@ -547,12 +548,12 @@ export default function planMode(
 			return;
 		}
 		resetFinalizationRecovery();
-		state = {
+		state = omitUndefined({
 			...state,
 			latestPlan: normalized.plan,
 			latestPlanSource: source,
 			awaitingAction: true,
-		};
+		});
 		readyPresentationIntent = {
 			nonce: ++nextReadyPresentationNonce,
 			plan: normalized.plan,
@@ -627,7 +628,7 @@ export default function planMode(
 		const wasEnabled = state.enabled;
 		readyPresentationIntent = undefined;
 		resetFinalizationRecovery();
-		state = {
+		state = omitUndefined({
 			...state,
 			enabled: false,
 			latestPlan: undefined,
@@ -640,11 +641,11 @@ export default function planMode(
 				startedAt: Date.now(),
 			},
 			manualThinkingLevel: undefined,
-		};
+		});
 		if (wasEnabled) {
 			restoreTools();
 			restoreThinkingLevel();
-			state = { ...state, manualThinkingLevel: undefined };
+			state = omitUndefined({ ...state, manualThinkingLevel: undefined });
 		}
 		persistState();
 		updateUi(ctx);
@@ -685,7 +686,7 @@ export default function planMode(
 			};
 			const handoff = buildPlanModeImplementationHandoff(plan);
 			const result = await ctx.newSession({
-				parentSession,
+				...(parentSession !== undefined ? { parentSession } : {}),
 				setup: async (sessionManager) => {
 					sessionManager.appendCustomEntry(STATE_ENTRY_TYPE, replacementState);
 				},
@@ -832,7 +833,7 @@ export default function planMode(
 						viewportSize: TOOL_SELECTOR_VIEWPORT_SIZE,
 						items: tools.map((tool, index) => {
 							const selectable = canSelectToolInPlanMode(tool);
-							return {
+							return omitUndefined({
 								id: `${index}:${tool.name}`,
 								label: tool.name,
 								description: `${toolPolicyLabel(tool)} · ${tool.description}`,
@@ -840,7 +841,7 @@ export default function planMode(
 								selected: selectedNames.has(tool.name),
 								disabled: !selectable,
 								disabledReason: selectable ? undefined : "Blocked by Plan-mode policy",
-							};
+							});
 						}),
 						action: "toggle",
 						hint: "close",
@@ -921,11 +922,11 @@ export default function planMode(
 		const selectedToolNames = state.selectedToolNames ?? migrateSelectedToolKeys(tools);
 		if (selectedToolNames === undefined) return new Set(defaultPlanModeToolNames(tools));
 
-		state = {
+		state = omitUndefined({
 			...state,
 			selectedToolNames: filterAvailableSelectedNames(selectedToolNames, tools),
 			selectedToolKeys: undefined,
-		};
+		});
 		return new Set(state.selectedToolNames);
 	}
 
@@ -982,11 +983,11 @@ export default function planMode(
 		}
 		const configured = configuredThinkingLevel(settings);
 		if (!configured) {
-			state = {
+			state = omitUndefined({
 				...state,
 				previousThinkingLevel: undefined,
 				appliedThinkingLevel: undefined,
-			};
+			});
 			return;
 		}
 		const current = pi.getThinkingLevel();
@@ -999,12 +1000,12 @@ export default function planMode(
 		if (!state.appliedThinkingLevel) return;
 		const current = pi.getThinkingLevel();
 		if (current === state.appliedThinkingLevel) return;
-		state = {
+		state = omitUndefined({
 			...state,
 			manualThinkingLevel: current,
 			previousThinkingLevel: undefined,
 			appliedThinkingLevel: undefined,
-		};
+		});
 	}
 
 	function restoreThinkingLevel() {
@@ -1017,7 +1018,7 @@ export default function planMode(
 		) {
 			setPlanThinkingLevel(pi, previousThinkingLevel);
 		}
-		state = { ...state, appliedThinkingLevel: undefined, previousThinkingLevel: undefined };
+		state = omitUndefined({ ...state, appliedThinkingLevel: undefined, previousThinkingLevel: undefined });
 	}
 
 	function deactivatePlanModeQuestionTool() {

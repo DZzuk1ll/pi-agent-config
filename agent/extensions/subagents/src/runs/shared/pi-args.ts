@@ -2,6 +2,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { fileURLToPath } from "node:url";
+import { omitUndefined, omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
 import { encodeNestedPathEnv, parseNestedPathEnv, type NestedPathEntry } from "./nested-path.ts";
 import { resolveMcpDirectToolSelections, type ResolvedMcpDirectToolSelection } from "./mcp-direct-tool-allowlist.ts";
 import { resolvePiPackageRoot } from "./pi-spawn.ts";
@@ -235,7 +236,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		args.push("--model", modelArg);
 	}
 
-	const toolPlan = resolvePiLaunchToolPlan({
+	const toolPlan = resolvePiLaunchToolPlan(omitUndefined({
 		tools: input.tools,
 		extensions: input.extensions,
 		subagentOnlyExtensions: input.subagentOnlyExtensions,
@@ -245,7 +246,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 		structuredOutput: Boolean(input.structuredOutput),
 		capabilityCeiling: input.capabilityCeiling,
 		inheritedCapabilityCeiling: decodeSubagentCapabilityCeiling(process.env[SUBAGENT_CAPABILITY_CEILING_ENV]),
-	});
+	}));
 	if (toolPlan.explicitToolAllowlist) {
 		args.push(toolPlan.effectiveToolAllowlist.length > 0 ? "--tools" : "--no-tools");
 		if (toolPlan.effectiveToolAllowlist.length > 0) args.push(toolPlan.effectiveToolAllowlist.join(","));
@@ -382,7 +383,7 @@ export function buildPiArgs(input: BuildPiArgsInput): BuildPiArgsResult {
 
 	env[SUBAGENT_PARENT_SESSION_ENV] = input.parentSessionId ?? process.env[SUBAGENT_PARENT_SESSION_ENV] ?? "";
 
-	return { args, env, tempDir, toolDiagnosticPath, capabilityAudit: toolPlan.capabilityAudit };
+	return omitUndefinedAs<BuildPiArgsResult>({ args, env, tempDir, toolDiagnosticPath, capabilityAudit: toolPlan.capabilityAudit });
 }
 
 export const parseParentPathEnv = parseNestedPathEnv;

@@ -1,7 +1,8 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
-import type { Message } from "@earendil-works/pi-ai";
 import { extractTextFromContent, extractToolArgsPreview } from "./utils.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const MAX_TOOL_PAYLOAD_BYTES = 32 * 1024;
 const TOOL_PAYLOAD_TRUNCATION_MARKER = "\n\n… payload truncated";
@@ -23,7 +24,7 @@ function boundedPayload(value: unknown, maxBytes = MAX_TOOL_PAYLOAD_BYTES): stri
 	if (payload.length <= maxBytes) return text;
 	const markerBytes = Buffer.byteLength(TOOL_PAYLOAD_TRUNCATION_MARKER, "utf-8");
 	let end = Math.max(0, maxBytes - markerBytes);
-	while (end > 0 && (payload[end]! & 0xc0) === 0x80) end--;
+	while (end > 0 && (requirePresent(payload[end]) & 0xc0) === 0x80) end--;
 	return `${payload.subarray(0, end).toString("utf-8")}${TOOL_PAYLOAD_TRUNCATION_MARKER}`;
 }
 
@@ -33,12 +34,18 @@ const DEFAULT_MAX_CHILD_TRANSCRIPT_BYTES = 50 * 1024 * 1024;
 type ChildTranscriptSource = "foreground" | "async";
 type ChildTranscriptRecordType = "message" | "tool_start" | "tool_end" | "stdout" | "stderr" | "truncated";
 
-type ChildTranscriptMessage = Message & {
+interface ChildTranscriptMessage {
+	role: string;
+	content?: unknown;
+	toolCallId?: string;
+	toolName?: string;
+	isError?: boolean;
+	timestamp?: number;
 	model?: string;
 	errorMessage?: string;
 	stopReason?: string;
 	usage?: unknown;
-};
+}
 
 interface ChildTranscriptEvent {
 	type?: string;

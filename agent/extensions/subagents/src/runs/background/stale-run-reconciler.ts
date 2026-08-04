@@ -1,8 +1,10 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
-import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type NestedRunSummary, type SubagentRunMode } from "../../shared/types.ts";
+import { RESULTS_DIR, type AsyncParallelGroupStatus, type AsyncStatus, type ModelAttempt, type NestedRunSummary, type SubagentRunMode, type Usage } from "../../shared/types.ts";
 import { resolveEffectiveThinking } from "../../shared/model-info.ts";
+import { decodeAsyncStatus } from "../../shared/status-schema.ts";
 import { normalizeParallelGroups } from "./parallel-groups.ts";
 import { nestedSummaryFromAsyncStatus, projectNestedEvents, resolveNestedAsyncDir, writeNestedEvent, type NestedRoute } from "../shared/nested-events.ts";
 
@@ -96,7 +98,7 @@ function readStatusFile(asyncDir: string): AsyncStatus | null {
 		});
 	}
 	try {
-		return JSON.parse(content) as AsyncStatus;
+		return decodeAsyncStatus(JSON.parse(content) as unknown, statusPath);
 	} catch (error) {
 		throw new Error(`Failed to parse async status file '${statusPath}': ${getErrorMessage(error)}`, {
 			cause: error instanceof Error ? error : undefined,
@@ -120,17 +122,64 @@ interface ResultRepairData {
 	results?: ResultChildOutcome[];
 }
 
+function decodeUsage(value: unknown, source: string): Usage | undefined {
+	if (value === undefined) return undefined;
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${source} must be an object.`);
+	const usage = value as Record<string, unknown>;
+	for (const field of ["input", "output", "cacheRead", "cacheWrite", "cost", "turns"] as const) {
+		if (typeof usage[field] !== "number") throw new TypeError(`${source}.${field} must be a number.`);
+	}
+	return { input: usage.input as number, output: usage.output as number, cacheRead: usage.cacheRead as number, cacheWrite: usage.cacheWrite as number, cost: usage.cost as number, turns: usage.turns as number };
+}
+
+function decodeModelAttempts(value: unknown, source: string): ModelAttempt[] | undefined {
+	if (value === undefined) return undefined;
+	if (!Array.isArray(value)) throw new TypeError(`${source} must be an array.`);
+	return value.map((entry, index) => {
+		if (!entry || typeof entry !== "object" || Array.isArray(entry)) throw new TypeError(`${source}[${index}] must be an object.`);
+		const attempt = entry as Record<string, unknown>;
+		if (typeof attempt.model !== "string" || typeof attempt.success !== "boolean") throw new TypeError(`${source}[${index}] is missing model or success.`);
+		if (attempt.exitCode !== undefined && attempt.exitCode !== null && typeof attempt.exitCode !== "number") throw new TypeError(`${source}[${index}].exitCode must be a number or null.`);
+		if (attempt.error !== undefined && typeof attempt.error !== "string") throw new TypeError(`${source}[${index}].error must be a string.`);
+		return omitUndefined({
+			model: attempt.model,
+			success: attempt.success,
+			exitCode: typeof attempt.exitCode === "number" || attempt.exitCode === null ? attempt.exitCode : undefined,
+			error: typeof attempt.error === "string" ? attempt.error : undefined,
+			usage: decodeUsage(attempt.usage, `${source}[${index}].usage`),
+		});
+	});
+}
+
 function readResultRepairData(resultPath: string): ResultRepairData | undefined {
 	try {
-		const data = JSON.parse(fs.readFileSync(resultPath, "utf-8")) as { success?: boolean; state?: string; exitCode?: number; results?: unknown };
+		const parsed: unknown = JSON.parse(fs.readFileSync(resultPath, "utf-8"));
+		if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) throw new TypeError("expected a JSON object");
+		const data = parsed as Record<string, unknown>;
+		if (data.success !== undefined && typeof data.success !== "boolean") throw new TypeError("success must be a boolean");
+		if (data.state !== undefined && typeof data.state !== "string") throw new TypeError("state must be a string");
+		if (data.exitCode !== undefined && typeof data.exitCode !== "number") throw new TypeError("exitCode must be a number");
 		const state = data.success ? "complete" : data.state === "stopped" ? "stopped" : data.state === "paused" || data.exitCode === 0 ? "paused" : "failed";
 		const results = Array.isArray(data.results)
 			? data.results.map((entry, index) => {
 				if (!entry || typeof entry !== "object" || Array.isArray(entry)) return {};
-				const child = entry as ResultChildOutcome;
-				if (child.model !== undefined && typeof child.model !== "string") throw new Error(`Invalid async result file '${resultPath}': results[${index}].model must be a string.`);
-				if (child.thinking !== undefined && typeof child.thinking !== "string") throw new Error(`Invalid async result file '${resultPath}': results[${index}].thinking must be a string.`);
-				return child;
+				const child = entry as Record<string, unknown>;
+				for (const field of ["agent", "error", "sessionFile", "model", "thinking"] as const) {
+					if (child[field] !== undefined && typeof child[field] !== "string") throw new Error(`Invalid async result file '${resultPath}': results[${index}].${field} must be a string.`);
+				}
+				if (child.success !== undefined && typeof child.success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
+				if (child.attemptedModels !== undefined && (!Array.isArray(child.attemptedModels) || child.attemptedModels.some((model) => typeof model !== "string"))) throw new Error(`Invalid async result file '${resultPath}': results[${index}].attemptedModels must contain strings.`);
+				const modelAttempts = decodeModelAttempts(child.modelAttempts, `results[${index}].modelAttempts`);
+				return omitUndefined({
+					agent: typeof child.agent === "string" ? child.agent : undefined,
+					success: typeof child.success === "boolean" ? child.success : undefined,
+					error: typeof child.error === "string" ? child.error : undefined,
+					sessionFile: typeof child.sessionFile === "string" ? child.sessionFile : undefined,
+					model: typeof child.model === "string" ? child.model : undefined,
+					thinking: typeof child.thinking === "string" ? child.thinking : undefined,
+					attemptedModels: Array.isArray(child.attemptedModels) ? child.attemptedModels as string[] : undefined,
+					modelAttempts,
+				});
 			})
 			: undefined;
 		return { state, ...(results ? { results } : {}) };
@@ -157,7 +206,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 		const state = childState(repair.state, child);
 		const model = child?.model ?? step.model;
 		const thinking = resolveEffectiveThinking(model, child?.thinking ?? step.thinking);
-		return {
+		return omitUndefined({
 			...step,
 			status: state === "complete" ? "complete" as const : state,
 			endedAt: step.endedAt ?? now,
@@ -170,9 +219,9 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 			thinking,
 			attemptedModels: child?.attemptedModels ?? step.attemptedModels,
 			modelAttempts: child?.modelAttempts ?? step.modelAttempts,
-		};
+		});
 	});
-	return {
+	return omitUndefined({
 		...status,
 		state: repair.state,
 		...(status.lifecycleArtifactVersion === 3 && (!status.processTerminal || status.processTerminal.state === "pending") ? {
@@ -183,7 +232,7 @@ function terminalStatusFromResult(status: AsyncStatus, resultPath: string, now: 
 		lastUpdate: now,
 		endedAt: status.endedAt ?? now,
 		steps,
-	};
+	});
 }
 
 function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, now: number): AsyncStatus {
@@ -193,7 +242,7 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 	const parallelGroups = chainStepCount !== undefined
 		? normalizeParallelGroups(startedRun.parallelGroups, agents.length, chainStepCount)
 		: [];
-	return {
+	return omitUndefined({
 		runId: startedRun.runId || path.basename(asyncDir),
 		...(startedRun.sessionId ? { sessionId: startedRun.sessionId } : {}),
 		mode: startedRun.mode ?? "single",
@@ -210,7 +259,7 @@ function buildStartedStatus(asyncDir: string, startedRun: StartedRunMetadata, no
 			startedAt,
 		})),
 		...(startedRun.sessionFile ? { sessionFile: startedRun.sessionFile } : {}),
-	};
+	});
 }
 
 function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, reason?: string): { status: AsyncStatus; result: object; message: string } {
@@ -221,7 +270,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 	const message = diagnostics ? `${baseMessage}\n\nRunner stderr tail:\n${diagnostics}` : baseMessage;
 	const steps = status.steps?.length ? status.steps : [{ agent: "subagent", status: "running" as const }];
 	const repairedSteps = steps.map((step) => step.status === "running" || step.status === "pending"
-		? {
+		? omitUndefined({
 			...step,
 			status: "failed" as const,
 			activityState: undefined,
@@ -229,9 +278,9 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 			durationMs: step.startedAt !== undefined && step.durationMs === undefined ? Math.max(0, now - step.startedAt) : step.durationMs,
 			exitCode: step.exitCode ?? 1,
 			error: step.error ?? message,
-		}
+		})
 		: step);
-	const repairedStatus: AsyncStatus = {
+	const repairedStatus: AsyncStatus = omitUndefined({
 		...status,
 		state: "failed",
 		...(status.lifecycleArtifactVersion === 3 && (!status.processTerminal || status.processTerminal.state === "pending") ? {
@@ -241,7 +290,7 @@ function buildFailedRepair(status: AsyncStatus, asyncDir: string, now: number, r
 		lastUpdate: now,
 		endedAt: now,
 		steps: repairedSteps,
-	};
+	});
 	const resultAgent = repairedSteps[status.currentStep ?? 0]?.agent ?? repairedSteps[0]?.agent ?? "subagent";
 	return {
 		status: repairedStatus,
@@ -314,7 +363,7 @@ export function reconcileNestedAsyncDescendants(route: NestedRoute, options: Rec
 		if (!status) continue;
 		if (!result.repaired && !terminal(status.state)) continue;
 		const ts = options.now?.() ?? Date.now();
-		writeNestedEvent(route, {
+		writeNestedEvent(route, omitUndefined({
 			type: terminal(status.state) ? "subagent.nested.completed" : "subagent.nested.updated",
 			ts,
 			parentRunId: run.parentRunId,
@@ -322,13 +371,13 @@ export function reconcileNestedAsyncDescendants(route: NestedRoute, options: Rec
 			child: nestedSummaryFromAsyncStatus(status, asyncDir, {
 				id: run.id,
 				parentRunId: run.parentRunId,
-				parentStepIndex: run.parentStepIndex,
+				...(run.parentStepIndex === undefined ? {} : { parentStepIndex: run.parentStepIndex }),
 				depth: run.depth,
 				path: run.path,
-				mode: run.mode,
+				...(run.mode === undefined ? {} : { mode: run.mode }),
 				ts,
 			}),
-		});
+		}));
 	}
 }
 

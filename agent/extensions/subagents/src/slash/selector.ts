@@ -1,5 +1,7 @@
 import { DynamicBorder, keyHint, rawKeyHint, type Theme } from "@earendil-works/pi-coding-agent";
 import { Container, fuzzyFilter, Input, type KeybindingsManager, Spacer, Text, type TUI } from "@earendil-works/pi-tui";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 /** A single selectable row. `value` is returned on confirm; `label` is the primary text. */
 export interface SelectorItem {
@@ -73,7 +75,7 @@ export class SelectorComponent extends Container {
 		this.addChild(this.listContainer);
 		this.addChild(new Spacer(1));
 
-		this.addChild(new Text(rawKeyHint("↑↓", "navigate") + "  " + keyHint("tui.select.confirm", "select") + "  " + keyHint("tui.select.cancel", "cancel"), 0, 0));
+		this.addChild(new Text(`${rawKeyHint("↑↓", "navigate")}  ${keyHint("tui.select.confirm", "select")}  ${keyHint("tui.select.cancel", "cancel")}`, 0, 0));
 		this.addChild(new Spacer(1));
 		this.addChild(border());
 
@@ -99,7 +101,7 @@ export class SelectorComponent extends Container {
 		const endIndex = Math.min(startIndex + MAX_VISIBLE, this.filtered.length);
 
 		for (let i = startIndex; i < endIndex; i++) {
-			const item = this.filtered[i]!;
+			const item = requirePresent(this.filtered[i]);
 			const isSelected = i === this.selectedIndex;
 			const badge = item.badge ? ` ${th.fg("muted", `[${item.badge}]`)}` : "";
 			const checkmark = item.current ? th.fg("success", " ✓") : "";

@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type {
 	WatchdogLspConfig,
 	WatchdogLspDiagnostic,
@@ -10,6 +11,8 @@ import type {
 	WatchdogLspResult,
 	WatchdogWarning,
 } from "./types.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 export interface WatchdogLspRequest {
 	cwd: string;
 	root: string;
@@ -38,15 +41,77 @@ type JsonRpcMessage = {
 	result?: unknown;
 	error?: { message?: string; code?: number };
 };
-type LspDiagnostic = {
-	range?: {
-		start?: { line?: number; character?: number };
+export type LspDiagnostic = {
+	range: {
+		start: { line: number; character: number };
+		end: { line: number; character: number };
 	};
 	severity?: number;
 	code?: string | number;
 	source?: string;
-	message?: string;
+	message: string;
 };
+
+export interface PublishDiagnosticsParams {
+	uri: string;
+	diagnostics: LspDiagnostic[];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function isLspPosition(value: unknown): value is { line: number; character: number } {
+	const record = recordValue(value);
+	return record !== undefined
+		&& typeof record.line === "number"
+		&& Number.isInteger(record.line)
+		&& record.line >= 0
+		&& typeof record.character === "number"
+		&& Number.isInteger(record.character)
+		&& record.character >= 0;
+}
+
+function isLspDiagnostic(value: unknown): value is LspDiagnostic {
+	const record = recordValue(value);
+	const range = recordValue(record?.range);
+	return record !== undefined
+		&& range !== undefined
+		&& isLspPosition(range.start)
+		&& isLspPosition(range.end)
+		&& typeof record.message === "string"
+		&& (record.severity === undefined || (typeof record.severity === "number" && [1, 2, 3, 4].includes(record.severity)))
+		&& (record.code === undefined || typeof record.code === "string" || typeof record.code === "number")
+		&& (record.source === undefined || typeof record.source === "string");
+}
+
+export function decodePublishDiagnosticsParams(value: unknown): PublishDiagnosticsParams | undefined {
+	const params = recordValue(value);
+	if (typeof params?.uri !== "string" || !Array.isArray(params.diagnostics) || !params.diagnostics.every(isLspDiagnostic)) return undefined;
+	return { uri: params.uri, diagnostics: params.diagnostics };
+}
+
+function decodeJsonRpcMessage(value: unknown): JsonRpcMessage {
+	const record = recordValue(value);
+	const error = recordValue(record?.error);
+	if (
+		!record
+		|| (record.jsonrpc !== undefined && record.jsonrpc !== "2.0")
+		|| (record.id !== undefined && record.id !== null && typeof record.id !== "number" && typeof record.id !== "string")
+		|| (record.method !== undefined && typeof record.method !== "string")
+		|| (record.error !== undefined && (!error || (error.message !== undefined && typeof error.message !== "string") || (error.code !== undefined && typeof error.code !== "number")))
+	) throw new TypeError("Invalid LSP JSON-RPC message.");
+	return {
+		...(record.jsonrpc === undefined ? {} : { jsonrpc: record.jsonrpc }),
+		...(record.id === undefined ? {} : { id: record.id as JsonRpcId | null }),
+		...(record.method === undefined ? {} : { method: record.method }),
+		...(record.params === undefined ? {} : { params: record.params }),
+		...(record.result === undefined ? {} : { result: record.result }),
+		...(error ? { error: omitUndefined({ message: error.message as string | undefined, code: error.code as number | undefined }) } : {}),
+	};
+}
 const TS_JS_EXTENSIONS = new Map<string, string>([
 	[".ts", "typescript"],
 	[".tsx", "typescriptreact"],
@@ -209,7 +274,7 @@ export function watchdogWarningFromLspDiagnostics(result: WatchdogLspResult): Wa
 	if (!actionable.length) return undefined;
 	const errors = actionable.filter((diagnostic) => diagnostic.severity === "error");
 	const severity = errors.length ? "blocker" : "concern";
-	const primary = errors[0] ?? actionable[0]!;
+	const primary = errors[0] ?? requirePresent(actionable[0]);
 	const count = errors.length || actionable.length;
 	const kind = errors.length ? "error" : "warning";
 	const evidence = actionable.slice(0, 5).map(formatDiagnostic).join("\n");
@@ -336,7 +401,7 @@ class JsonRpcLspClient {
 			const body = this.stdoutBuffer.slice(bodyStart, bodyEnd).toString("utf-8");
 			this.stdoutBuffer = this.stdoutBuffer.slice(bodyEnd);
 			try {
-				this.handleMessage(JSON.parse(body) as JsonRpcMessage);
+				this.handleMessage(decodeJsonRpcMessage(JSON.parse(body)));
 			} catch (error) {
 				const message = error instanceof Error ? error.message : String(error);
 				this.failProtocol(new Error(`Invalid LSP JSON-RPC response: ${message}`));
@@ -347,10 +412,8 @@ class JsonRpcLspClient {
 
 	private handleMessage(message: JsonRpcMessage): void {
 		if (message.method === "textDocument/publishDiagnostics") {
-			const params = message.params as { uri?: unknown; diagnostics?: unknown } | undefined;
-			if (typeof params?.uri === "string" && Array.isArray(params.diagnostics)) {
-				this.diagnostics.set(params.uri, params.diagnostics as LspDiagnostic[]);
-			}
+			const params = decodePublishDiagnosticsParams(message.params);
+			if (params) this.diagnostics.set(params.uri, params.diagnostics);
 			return;
 		}
 		if (message.id === undefined || message.id === null) return;
@@ -392,16 +455,14 @@ class JsonRpcLspClient {
 }
 
 function convertDiagnostics(target: TargetFile, diagnostics: LspDiagnostic[]): WatchdogLspDiagnostic[] {
-	return diagnostics
-		.filter((diagnostic) => typeof diagnostic.message === "string" && diagnostic.range?.start)
-		.map((diagnostic) => ({
+	return diagnostics.map((diagnostic) => ({
 			path: target.relPath,
-			line: Math.max(1, (diagnostic.range?.start?.line ?? 0) + 1),
-			column: Math.max(1, (diagnostic.range?.start?.character ?? 0) + 1),
+			line: diagnostic.range.start.line + 1,
+			column: diagnostic.range.start.character + 1,
 			severity: severityFromLsp(diagnostic.severity),
 			source: diagnostic.source || PROVIDER_NAME,
 			...(diagnostic.code !== undefined ? { code: String(diagnostic.code) } : {}),
-			message: trimDiagnosticMessage(diagnostic.message ?? ""),
+			message: trimDiagnosticMessage(diagnostic.message),
 		}));
 }
 
@@ -518,7 +579,7 @@ export async function collectWatchdogLspDiagnostics(request: WatchdogLspRequest)
 		};
 	}
 	try {
-		return await collectWithTypeScriptLanguageServer({ root, targets, skippedPaths, command, config: request.config, signal: request.signal });
+		return await collectWithTypeScriptLanguageServer(omitUndefined({ root, targets, skippedPaths, command, config: request.config, signal: request.signal }));
 	} catch (error) {
 		return {
 			status: "failed",

@@ -14,6 +14,9 @@ import {
 	SUBAGENT_RESULT_INTERCOM_DELIVERY_EVENT,
 	SUBAGENT_RESULT_INTERCOM_EVENT,
 } from "../shared/types.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export function resolveSubagentResultStatus(input: {
 	exitCode?: number;
@@ -136,7 +139,7 @@ export function attachNestedChildrenToResultChildren(
 	nestedChildren: NestedRunSummary[] | undefined,
 ): SubagentResultIntercomChild[] {
 	const compact = compactNestedResultChildren(nestedChildren);
-	if (!compact?.length) return children.map((child) => ({ ...child, children: compactNestedResultChildren(child.children) }));
+	if (!compact?.length) return children.map((child) => omitUndefined({ ...child, children: compactNestedResultChildren(child.children) }));
 	return children.map((child, index) => {
 		const childIndex = child.index ?? index;
 		const alreadyAttachedIds = new Set(child.children?.map((nested) => nested.id) ?? []);
@@ -145,7 +148,7 @@ export function attachNestedChildrenToResultChildren(
 			? compact.filter((nested) => nested.parentRunId === runId && nested.parentStepIndex === undefined && !alreadyAttachedIds.has(nested.id))
 			: [];
 		const merged = compactNestedResultChildren([...(child.children ?? []), ...attached, ...fallbackAttached]);
-		return merged?.length ? { ...child, children: merged } : { ...child, children: undefined };
+		return omitUndefined({ ...child, children: merged?.length ? merged : undefined });
 	});
 }
 
@@ -194,7 +197,7 @@ function asyncResumeGuidance(input: {
 		return `Revive: subagent({ action: "resume", id: "${input.asyncId}", message: "..." })`;
 	}
 	if (resumable.length > 0) {
-		const firstIndex = resumable[0]?.index ?? input.children.indexOf(resumable[0]!);
+		const firstIndex = resumable[0]?.index ?? input.children.indexOf(requirePresent(resumable[0]));
 		return `Revive child: subagent({ action: "resume", id: "${input.asyncId}", index: ${firstIndex}, message: "..." })`;
 	}
 	return "Resume: unavailable; no child session file was persisted.";
@@ -236,7 +239,7 @@ function formatSubagentResultIntercomMessage(input: {
 	}
 
 	for (let index = 0; index < input.children.length; index++) {
-		const child = input.children[index]!;
+		const child = requirePresent(input.children[index]);
 		lines.push("");
 		lines.push(`${index + 1}. ${child.agent} — ${child.status}`);
 		if (child.intercomTarget) lines.push(`${input.source === "async" ? "Previous intercom target" : "Run intercom target"}: ${child.intercomTarget}`);
@@ -251,7 +254,7 @@ function formatSubagentResultIntercomMessage(input: {
 }
 
 export function buildSubagentResultIntercomPayload(input: GroupedResultIntercomMessageInput): SubagentResultIntercomPayload {
-	const children = input.children.map((child) => ({
+	const children = input.children.map((child) => omitUndefined({
 		...child,
 		summary: child.summary.trim() || "(no output)",
 		children: compactNestedResultChildren(child.children),
@@ -325,12 +328,12 @@ export async function deliverSubagentIntercomMessageEvent(
 }
 
 function stripSingleResultOutputs(result: SingleResult): SingleResult {
-	return {
+	return omitUndefined({
 		...result,
 		messages: undefined,
 		finalOutput: undefined,
 		truncation: undefined,
-	};
+	});
 }
 
 export function stripDetailsOutputsForIntercomReceipt(details: Details): Details {

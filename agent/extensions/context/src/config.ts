@@ -158,16 +158,12 @@ export function context_settings_from_preset(
 export function load_context_settings_config(): ContextSettingsConfig | null {
 	const path = get_context_settings_config_path();
 	try {
-		const parsed = (
+		const parsed: unknown =
 			process.env.MY_PI_CONTEXT_CONFIG
 				? existsSync(path)
 					? JSON.parse(readFileSync(path, 'utf-8'))
 					: null
-				: read_package_settings<Partial<ContextSettingsConfig> | null>(
-						'context',
-						null,
-					)
-		) as Partial<ContextSettingsConfig> | null;
+				: read_package_settings('context');
 		if (!parsed) return null;
 		return normalize_context_settings_config(parsed);
 	} catch {
@@ -188,7 +184,7 @@ export function save_context_settings_config(
 		mkdirSync(dir, { recursive: true, mode: 0o700 });
 
 	const tmp = `${path}.tmp-${Date.now()}`;
-	writeFileSync(tmp, JSON.stringify(config, null, '\t') + '\n', {
+	writeFileSync(tmp, `${JSON.stringify(config, null, '\t')}\n`, {
 		mode: 0o600,
 	});
 	renameSync(tmp, path);
@@ -229,11 +225,14 @@ export function get_context_mcp_output_limits(
 }
 
 export function normalize_context_settings_config(
-	value: Partial<ContextSettingsConfig>,
+	value: unknown,
 ): ContextSettingsConfig {
-	const preset = is_context_settings_preset(value.preset)
-		? value.preset
-		: value.preset === 'custom'
+	const input = value && typeof value === 'object' && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: {};
+	const preset = is_context_settings_preset(input.preset)
+		? input.preset
+		: input.preset === 'custom'
 			? 'custom'
 			: 'custom';
 	const base =
@@ -245,31 +244,31 @@ export function normalize_context_settings_config(
 		version: 1,
 		preset,
 		retention_days: normalize_optional_positive_number(
-			value.retention_days,
+			input.retention_days,
 			base.retention_days,
 		),
 		max_mb: normalize_optional_positive_number(
-			value.max_mb,
+			input.max_mb,
 			base.max_mb,
 		),
 		purge_on_shutdown:
-			typeof value.purge_on_shutdown === 'boolean'
-				? value.purge_on_shutdown
+			typeof input.purge_on_shutdown === 'boolean'
+				? input.purge_on_shutdown
 				: base.purge_on_shutdown,
 		capture_max_bytes: normalize_positive_number(
-			value.capture_max_bytes,
+			input.capture_max_bytes,
 			base.capture_max_bytes,
 		),
 		capture_max_lines: normalize_positive_number(
-			value.capture_max_lines,
+			input.capture_max_lines,
 			base.capture_max_lines,
 		),
 		mcp_max_bytes: normalize_positive_number(
-			value.mcp_max_bytes,
+			input.mcp_max_bytes,
 			base.mcp_max_bytes,
 		),
 		mcp_max_lines: normalize_positive_number(
-			value.mcp_max_lines,
+			input.mcp_max_lines,
 			base.mcp_max_lines,
 		),
 	};

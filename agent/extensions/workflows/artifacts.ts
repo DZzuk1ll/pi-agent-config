@@ -3,6 +3,7 @@ import * as path from "node:path";
 import { homedir } from "node:os";
 import { ensurePrivateDir, prunePrivateRunDirs, safeStringify, writeFileAtomic, writeJsonAtomic } from "../_shared/runtime/artifacts.ts";
 import { sanitizeForDisplay, truncateUtf8 } from "../_shared/runtime/text.ts";
+import { omitUndefined } from "../_shared/runtime/omit-undefined.ts";
 import type { WorkflowAgentRecord, WorkflowAgentState, WorkflowDetails, WorkflowState } from "./controller.ts";
 
 const RETENTION_MS = 30 * 24 * 60 * 60 * 1_000;
@@ -34,11 +35,11 @@ export class WorkflowArtifacts {
 	readonly runId: string;
 	readonly directory: string;
 	private lastSnapshotAt = 0;
-	private snapshotTimer?: ReturnType<typeof setTimeout>;
+	private snapshotTimer: ReturnType<typeof setTimeout> | undefined;
 	private eventBytes = 0;
 	private eventsCapped = false;
 	private failure?: Error;
-	private readonly onError?: (error: Error) => void;
+	private readonly onError: ((error: Error) => void) | undefined;
 
 	constructor(runId: string, script: string, argsJson?: string, onError?: (error: Error) => void) {
 		this.runId = runId;
@@ -205,7 +206,7 @@ function normalizeAgent(value: unknown, fallbackIndex: number): WorkflowAgentRec
 	const tokens = boundedNumber(value.tokens, MAX_PROGRESS_TOKENS);
 	const lastProgressAt = boundedNumber(value.lastProgressAt);
 	const usage = normalizeUsage(value.usage);
-	return {
+	return omitUndefined({
 		index,
 		nodeId,
 		label,
@@ -224,7 +225,7 @@ function normalizeAgent(value: unknown, fallbackIndex: number): WorkflowAgentRec
 		...(lastProgressAt !== undefined ? { lastProgressAt } : {}),
 		...(boundedString(value.error, 16 * 1024) ? { error: boundedString(value.error, 16 * 1024) } : {}),
 		...(usage ? { usage } : {}),
-	};
+	});
 }
 
 export function normalizeWorkflowDetails(value: unknown, directoryRunId?: string): WorkflowDetails | undefined {
@@ -247,7 +248,7 @@ export function normalizeWorkflowDetails(value: unknown, directoryRunId?: string
 		? value.agents.slice(0, 32).flatMap((agent, index) => normalizeAgent(agent, index + 1) ?? [])
 		: [];
 	const result = Object.hasOwn(value, "result") ? boundedJsonValue(value.result) : { ok: false as const };
-	return {
+	return omitUndefined({
 		runId,
 		sessionId: boundedString(value.sessionId, 256) ?? "",
 		name,
@@ -261,7 +262,7 @@ export function normalizeWorkflowDetails(value: unknown, directoryRunId?: string
 		agents,
 		...(result.ok ? { result: result.value } : {}),
 		...(boundedString(value.error, 16 * 1024) ? { error: boundedString(value.error, 16 * 1024) } : {}),
-	};
+	});
 }
 
 export function aggregateUsage(details: WorkflowDetails): Record<string, number> {

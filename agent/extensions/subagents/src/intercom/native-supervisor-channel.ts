@@ -3,7 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "../shared/tool-result.ts";
 import type { ExtensionAPI, ExtensionContext, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
 import {
 	SUBAGENT_CHILD_AGENT_ENV,
 	SUBAGENT_CHILD_INDEX_ENV,
@@ -15,6 +16,8 @@ import {
 import { INTERCOM_DETACH_REQUEST_EVENT, POLL_INTERVAL_MS, TEMP_ROOT_DIR, type IntercomEventBus, type SubagentState } from "../shared/types.ts";
 import { writeAtomicJson } from "../shared/atomic-json.ts";
 import { registerSubagentTool } from "../extension/tool-registration.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const SUPERVISOR_CHANNEL_ROOT = path.join(TEMP_ROOT_DIR, "supervisor-channels");
 const REQUESTS_DIR = "requests";
@@ -26,36 +29,43 @@ const CHANNEL_POLL_MS = Math.min(POLL_INTERVAL_MS, 500);
 const STALE_EMPTY_CHANNEL_AGE_MS = 60 * 1000;
 const STALE_EMPTY_CHANNEL_CLEANUP_INTERVAL_MS = 60 * 1000;
 
-type SupervisorReason = "need_decision" | "interview_request" | "progress_update";
+const SupervisorReasonSchema = Type.Union([
+	Type.Literal("need_decision"),
+	Type.Literal("interview_request"),
+	Type.Literal("progress_update"),
+]);
+type SupervisorReason = Static<typeof SupervisorReasonSchema>;
 
-interface SupervisorRequest {
-	type: "subagent.supervisor.request";
-	id: string;
-	createdAt: number;
-	expiresAt?: number;
-	reason: SupervisorReason;
-	message: string;
-	expectsReply: boolean;
-	orchestratorTarget?: string;
-	orchestratorSessionId?: string;
-	runId: string;
-	agent: string;
-	childIndex: number;
-	childTarget?: string;
-	interview?: unknown;
-}
+const SupervisorRequestSchema = Type.Object({
+	type: Type.Literal("subagent.supervisor.request"),
+	id: Type.String({ minLength: 1 }),
+	createdAt: Type.Number(),
+	expiresAt: Type.Optional(Type.Number()),
+	reason: SupervisorReasonSchema,
+	message: Type.String({ minLength: 1 }),
+	expectsReply: Type.Boolean(),
+	orchestratorTarget: Type.Optional(Type.String()),
+	orchestratorSessionId: Type.Optional(Type.String()),
+	runId: Type.String(),
+	agent: Type.String(),
+	childIndex: Type.Number(),
+	childTarget: Type.Optional(Type.String()),
+	interview: Type.Optional(Type.Unknown()),
+}, { additionalProperties: false });
+type SupervisorRequest = Static<typeof SupervisorRequestSchema>;
 
 interface PendingSupervisorRequest extends SupervisorRequest {
 	channelDir: string;
 	requestFile: string;
 }
 
-interface SupervisorReply {
-	type: "subagent.supervisor.reply";
-	requestId: string;
-	createdAt: number;
-	message: string;
-}
+const SupervisorReplySchema = Type.Object({
+	type: Type.Literal("subagent.supervisor.reply"),
+	requestId: Type.String(),
+	createdAt: Type.Number(),
+	message: Type.String(),
+}, { additionalProperties: false });
+type SupervisorReply = Static<typeof SupervisorReplySchema>;
 
 interface ContactSupervisorParams {
 	reason: SupervisorReason;
@@ -71,9 +81,9 @@ interface IntercomParams {
 }
 
 const ContactSupervisorParamsSchema = Type.Object({
-	reason: Type.String({ enum: ["need_decision", "interview_request", "progress_update"] }),
+	reason: SupervisorReasonSchema,
 	message: Type.Optional(Type.String()),
-	interview: Type.Optional(Type.Unsafe({ type: "object", additionalProperties: true })),
+	interview: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
 }, { additionalProperties: false });
 
 const IntercomParamsSchema = Type.Object({
@@ -123,15 +133,17 @@ function readChildMetadata(): {
 	const agent = readTextEnv(SUBAGENT_CHILD_AGENT_ENV);
 	const rawIndex = readTextEnv(SUBAGENT_CHILD_INDEX_ENV);
 	const orchestratorSessionId = readTextEnv(SUBAGENT_ORCHESTRATOR_SESSION_ID_ENV);
+	const orchestratorTarget = readTextEnv(SUBAGENT_ORCHESTRATOR_TARGET_ENV);
+	const childTarget = readTextEnv("PI_SUBAGENT_INTERCOM_SESSION_NAME");
 	if (!channelDir || !runId || !agent || !orchestratorSessionId || rawIndex === undefined || !/^\d+$/.test(rawIndex)) return undefined;
 	return {
 		channelDir,
 		runId,
 		agent,
 		childIndex: Number(rawIndex),
-		orchestratorTarget: readTextEnv(SUBAGENT_ORCHESTRATOR_TARGET_ENV),
+		...(orchestratorTarget === undefined ? {} : { orchestratorTarget }),
 		orchestratorSessionId,
-		childTarget: readTextEnv("PI_SUBAGENT_INTERCOM_SESSION_NAME"),
+		...(childTarget === undefined ? {} : { childTarget }),
 	};
 }
 
@@ -212,9 +224,9 @@ async function waitForReply(channelDir: string, requestId: string, deadline: num
 	while (Date.now() <= deadline) {
 		if (signal?.aborted) throw new Error("Supervisor request cancelled.");
 		if (fs.existsSync(file)) {
-			const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorReply>;
-			if (parsed.type === "subagent.supervisor.reply" && parsed.requestId === requestId && typeof parsed.message === "string") {
-				return parsed as SupervisorReply;
+			const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+			if (Value.Check(SupervisorReplySchema, parsed) && parsed.requestId === requestId) {
+				return parsed;
 			}
 		}
 		await delay(250, signal);
@@ -234,7 +246,12 @@ async function sendSupervisorRequest(params: ContactSupervisorParams, signal?: A
 	const createdAt = Date.now();
 	const replyDeadline = createdAt + askTimeoutMs();
 	const expiresAt = expectsReply ? replyDeadline : undefined;
-	const message = formatChildMessage({ ...metadata, reason: params.reason, message: params.message, interview: params.interview });
+	const message = formatChildMessage({
+		...metadata,
+		reason: params.reason,
+		...(params.message === undefined ? {} : { message: params.message }),
+		...(params.interview === undefined ? {} : { interview: params.interview }),
+	});
 	const request: SupervisorRequest = {
 		type: "subagent.supervisor.request",
 		id: requestId,
@@ -306,13 +323,9 @@ export function registerNativeSupervisorClient(pi: ExtensionAPI): void {
 
 function parseRequestFile(file: string, channelDir: string): PendingSupervisorRequest | undefined {
 	try {
-		const parsed = JSON.parse(fs.readFileSync(file, "utf-8")) as Partial<SupervisorRequest>;
-		if (parsed.type !== "subagent.supervisor.request") return undefined;
-		if (typeof parsed.id !== "string" || !parsed.id) return undefined;
-		if (parsed.reason !== "need_decision" && parsed.reason !== "interview_request" && parsed.reason !== "progress_update") return undefined;
-		if (typeof parsed.message !== "string" || !parsed.message) return undefined;
-		if (typeof parsed.runId !== "string" || typeof parsed.agent !== "string" || typeof parsed.childIndex !== "number") return undefined;
-		return { ...parsed as SupervisorRequest, channelDir, requestFile: file };
+		const parsed: unknown = JSON.parse(fs.readFileSync(file, "utf-8"));
+		if (!Value.Check(SupervisorRequestSchema, parsed)) return undefined;
+		return { ...parsed, channelDir, requestFile: file };
 	} catch {
 		return undefined;
 	}
@@ -439,7 +452,7 @@ function rememberedForegroundChild(request: SupervisorRequest, state: SubagentSt
 
 function markForegroundSupervisorAttention(request: SupervisorRequest, state: SubagentState): void {
 	const remembered = rememberedForegroundChild(request, state);
-	if (!remembered || remembered.child.status !== "detached") return;
+	if (remembered?.child.status !== "detached") return;
 	const updatedAt = Date.now();
 	remembered.run.updatedAt = updatedAt;
 	remembered.child.activityState = "needs_attention";
@@ -457,7 +470,7 @@ function clearForegroundSupervisorAttention(request: SupervisorRequest, pending:
 		&& candidate.childIndex === request.childIndex
 	)) return;
 	const remembered = rememberedForegroundChild(request, state);
-	if (!remembered || remembered.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
+	if (remembered?.child.status !== "detached" || remembered.child.currentTool !== "contact_supervisor") return;
 	const updatedAt = Date.now();
 	remembered.run.updatedAt = updatedAt;
 	remembered.child.activityState = undefined;
@@ -557,10 +570,10 @@ function resolvePendingRequest(pending: Map<string, PendingSupervisorRequest>, p
 			|| request.agent.toLowerCase() === normalizedTo
 			|| request.childTarget?.toLowerCase() === normalizedTo,
 		);
-		if (matches.length === 1) return matches[0]!;
+		if (matches.length === 1) return requirePresent(matches[0]);
 		if (matches.length > 1) throw new Error(`Multiple pending supervisor requests match '${params.to}'. Use replyTo.`);
 	}
-	if (requests.length === 1) return requests[0]!;
+	if (requests.length === 1) return requirePresent(requests[0]);
 	if (requests.length === 0) throw new Error("No pending supervisor requests need a reply.");
 	throw new Error("Multiple pending supervisor requests need replies. Use replyTo.");
 }

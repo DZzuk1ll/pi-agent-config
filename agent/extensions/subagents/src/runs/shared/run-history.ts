@@ -27,6 +27,29 @@ function hashTask(task: string): string {
 	return createHash("sha256").update(task).digest("hex");
 }
 
+function decodeRunEntry(value: unknown): RunEntry | undefined {
+	if (!value || typeof value !== "object" || Array.isArray(value)) return undefined;
+	const record = value as Record<string, unknown>;
+	if (
+		typeof record.agent !== "string"
+		|| typeof record.task !== "string"
+		|| (record.taskHash !== undefined && typeof record.taskHash !== "string")
+		|| typeof record.ts !== "number"
+		|| (record.status !== "ok" && record.status !== "error")
+		|| typeof record.duration !== "number"
+		|| (record.exit !== undefined && typeof record.exit !== "number")
+	) return undefined;
+	return {
+		agent: record.agent,
+		task: record.task,
+		...(record.taskHash === undefined ? {} : { taskHash: record.taskHash }),
+		ts: record.ts,
+		status: record.status,
+		duration: record.duration,
+		...(record.exit === undefined ? {} : { exit: record.exit }),
+	};
+}
+
 function hardenHistoryStorage(historyPath: string): void {
 	const historyDir = path.dirname(historyPath);
 	fs.mkdirSync(historyDir, { recursive: true, mode: PRIVATE_DIR_MODE });
@@ -139,7 +162,7 @@ export function loadRunsForAgent(agent: string): RunEntry[] {
 	}
 
 	return lines
-		.map((line) => { try { return JSON.parse(line) as RunEntry; } catch { return undefined; } })
+		.map((line) => { try { return decodeRunEntry(JSON.parse(line)); } catch { return undefined; } })
 		.filter((entry): entry is RunEntry => entry !== undefined && entry.agent === agent)
 		.reverse();
 }

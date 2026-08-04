@@ -103,6 +103,39 @@ function appendThinkingOffEntry(entries: BranchSessionEntry[]): void {
 	});
 }
 
+function decodeBranchSessionEntry(value: unknown, source: string): BranchSessionEntry {
+	if (!value || typeof value !== "object" || Array.isArray(value)) throw new TypeError(`${source} must be an object`);
+	const entry = value as Record<string, unknown>;
+	if (typeof entry.type !== "string") throw new TypeError(`${source}.type must be a string`);
+	for (const field of ["id", "timestamp", "thinkingLevel"] as const) {
+		if (entry[field] !== undefined && typeof entry[field] !== "string") throw new TypeError(`${source}.${field} must be a string`);
+	}
+	if (entry.parentId !== undefined && entry.parentId !== null && typeof entry.parentId !== "string") throw new TypeError(`${source}.parentId must be a string or null`);
+	let message: BranchSessionEntry["message"];
+	if (entry.message !== undefined) {
+		if (!entry.message || typeof entry.message !== "object" || Array.isArray(entry.message)) throw new TypeError(`${source}.message must be an object`);
+		const rawMessage = entry.message as Record<string, unknown>;
+		for (const field of ["role", "provider", "api", "model"] as const) {
+			if (rawMessage[field] !== undefined && typeof rawMessage[field] !== "string") throw new TypeError(`${source}.message.${field} must be a string`);
+		}
+		message = {
+			...(typeof rawMessage.role === "string" ? { role: rawMessage.role } : {}),
+			...(rawMessage.content === undefined ? {} : { content: rawMessage.content }),
+			...(typeof rawMessage.provider === "string" ? { provider: rawMessage.provider } : {}),
+			...(typeof rawMessage.api === "string" ? { api: rawMessage.api } : {}),
+			...(typeof rawMessage.model === "string" ? { model: rawMessage.model } : {}),
+		};
+	}
+	return {
+		type: entry.type,
+		...(typeof entry.id === "string" ? { id: entry.id } : {}),
+		...(entry.parentId === null || typeof entry.parentId === "string" ? { parentId: entry.parentId } : {}),
+		...(typeof entry.timestamp === "string" ? { timestamp: entry.timestamp } : {}),
+		...(message ? { message } : {}),
+		...(typeof entry.thinkingLevel === "string" ? { thinkingLevel: entry.thinkingLevel } : {}),
+	};
+}
+
 function sanitizeUnsafeThinkingBlocks(entries: BranchSessionEntry[]): boolean {
 	let sanitized = false;
 	for (const entry of entries) {
@@ -119,7 +152,7 @@ function readSessionEntries(sessionFile: string): BranchSessionEntry[] {
 	const lines = fs.readFileSync(sessionFile, "utf-8").split("\n").filter((line) => line.trim().length > 0);
 	return lines.map((line, index) => {
 		try {
-			return JSON.parse(line) as BranchSessionEntry;
+			return decodeBranchSessionEntry(JSON.parse(line), `line ${index + 1}`);
 		} catch (error) {
 			const cause = error instanceof Error ? error : new Error(String(error));
 			throw new Error(`Unable to inspect forked session ${sessionFile}: invalid JSONL on line ${index + 1}: ${cause.message}`, { cause });

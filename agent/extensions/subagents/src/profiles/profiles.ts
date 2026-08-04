@@ -2,9 +2,14 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { BUILTIN_AGENT_NAMES } from "../agents/agents.ts";
+import { type Static, Type } from "typebox";
+import { Value } from "typebox/value";
+import type { BUILTIN_AGENT_NAMES } from "../agents/agents.ts";
 import { findModelInfo, getSupportedThinkingLevels, splitKnownThinkingSuffix, toModelInfo } from "../shared/model-info.ts";
 import { getAgentDir } from "../shared/utils.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export const DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS = 7;
 
@@ -16,60 +21,48 @@ export type QualityTier = "weak" | "medium" | "strong";
 export type LatencyTier = "fast" | "medium" | "slow";
 export type RecommendedRoleTier = "cheap" | "medium" | "strong";
 
-interface ProfileAgentOverride {
-	model?: string;
-}
-
-export interface SubagentProfileFile {
-	subagents: {
-		agentOverrides: Record<string, ProfileAgentOverride>;
-	};
-}
+const SubagentProfileFileSchema = Type.Object({
+	subagents: Type.Object({
+		agentOverrides: Type.Record(Type.String(), Type.Object({ model: Type.Optional(Type.String()) }, { additionalProperties: false })),
+	}, { additionalProperties: false }),
+}, { additionalProperties: false });
+export type SubagentProfileFile = Static<typeof SubagentProfileFileSchema>;
 
 export type ClassificationSource = "official-metadata" | "heuristic-name";
 
-export interface ProviderModelCatalogModel {
-	id: string;
-	fullId: string;
-	observed: {
-		availableInRegistry: boolean;
-		name?: string;
-		reasoning?: boolean;
-		thinkingLevels: string[];
-		contextWindow?: number;
-		maxTokens?: number;
-		cost?: {
-			input?: number;
-			output?: number;
-			cacheRead?: number;
-			cacheWrite?: number;
-		};
-		probe: {
-			status: ProbeStatus;
-			checkedAt: string;
-			message?: string;
-		};
-	};
-	derived: {
-		profileRank: number;
-		costTier: CostTier;
-		qualityTier: QualityTier;
-		latencyTier: LatencyTier;
-		recommendedRoleTier: RecommendedRoleTier;
-		recommendedAgents: BuiltinAgentName[];
-		classificationSources: ClassificationSource[];
-	};
-	warnings: string[];
-	notes: string[];
-}
+const ProbeStatusSchema = Type.Union([Type.Literal("ok"), Type.Literal("unavailable"), Type.Literal("auth"), Type.Literal("timeout"), Type.Literal("error"), Type.Literal("skipped")]);
+const CostTierSchema = Type.Union([Type.Literal("cheap"), Type.Literal("medium"), Type.Literal("expensive")]);
+const QualityTierSchema = Type.Union([Type.Literal("weak"), Type.Literal("medium"), Type.Literal("strong")]);
+const LatencyTierSchema = Type.Union([Type.Literal("fast"), Type.Literal("medium"), Type.Literal("slow")]);
+const RecommendedRoleTierSchema = Type.Union([Type.Literal("cheap"), Type.Literal("medium"), Type.Literal("strong")]);
+const ClassificationSourceSchema = Type.Union([Type.Literal("official-metadata"), Type.Literal("heuristic-name")]);
+const BuiltinAgentNameSchema = Type.Union([
+	Type.Literal("advisor"), Type.Literal("context-builder"), Type.Literal("delegate"),
+	Type.Literal("oracle"), Type.Literal("planner"), Type.Literal("researcher"),
+	Type.Literal("reviewer"), Type.Literal("scout"), Type.Literal("worker"),
+]);
+const ProviderModelCatalogModelSchema = Type.Object({
+	id: Type.String(),
+	fullId: Type.String(),
+	observed: Type.Object({
+		availableInRegistry: Type.Boolean(), name: Type.Optional(Type.String()), reasoning: Type.Optional(Type.Boolean()),
+		thinkingLevels: Type.Array(Type.String()), contextWindow: Type.Optional(Type.Number()), maxTokens: Type.Optional(Type.Number()),
+		cost: Type.Optional(Type.Object({ input: Type.Optional(Type.Number()), output: Type.Optional(Type.Number()), cacheRead: Type.Optional(Type.Number()), cacheWrite: Type.Optional(Type.Number()) }, { additionalProperties: false })),
+		probe: Type.Object({ status: ProbeStatusSchema, checkedAt: Type.String(), message: Type.Optional(Type.String()) }, { additionalProperties: false }),
+	}, { additionalProperties: false }),
+	derived: Type.Object({
+		profileRank: Type.Number(), costTier: CostTierSchema, qualityTier: QualityTierSchema, latencyTier: LatencyTierSchema,
+		recommendedRoleTier: RecommendedRoleTierSchema, recommendedAgents: Type.Array(BuiltinAgentNameSchema), classificationSources: Type.Array(ClassificationSourceSchema),
+	}, { additionalProperties: false }),
+	warnings: Type.Array(Type.String()),
+	notes: Type.Array(Type.String()),
+}, { additionalProperties: false });
+export type ProviderModelCatalogModel = Static<typeof ProviderModelCatalogModelSchema>;
 
-export interface ProviderModelCatalogFile {
-	provider: string;
-	refreshedAt: string;
-	maxAgeDays: number;
-	sources: string[];
-	models: ProviderModelCatalogModel[];
-}
+const ProviderModelCatalogFileSchema = Type.Object({
+	provider: Type.String(), refreshedAt: Type.String(), maxAgeDays: Type.Number(), sources: Type.Array(Type.String()), models: Type.Array(ProviderModelCatalogModelSchema),
+}, { additionalProperties: false });
+export type ProviderModelCatalogFile = Static<typeof ProviderModelCatalogFileSchema>;
 
 export interface ProfileCheckResult {
 	profileName: string;
@@ -118,24 +111,9 @@ function normalizeProviderName(provider: string): string {
 }
 
 function validateSubagentProfile(filePath: string, parsed: Record<string, unknown>): SubagentProfileFile {
-	const subagents = parsed.subagents;
-	if (!subagents || typeof subagents !== "object" || Array.isArray(subagents)) {
-		throw new Error(`Profile '${filePath}' must contain a 'subagents' object.`);
-	}
-	const agentOverrides = (subagents as Record<string, unknown>).agentOverrides;
-	if (!agentOverrides || typeof agentOverrides !== "object" || Array.isArray(agentOverrides)) {
-		throw new Error(`Profile '${filePath}' must contain 'subagents.agentOverrides' as an object.`);
-	}
-	for (const [name, value] of Object.entries(agentOverrides)) {
-		if (!value || typeof value !== "object" || Array.isArray(value)) {
-			throw new Error(`Profile '${filePath}' has invalid override '${name}'; expected an object.`);
-		}
-		const model = (value as Record<string, unknown>).model;
-		if (model !== undefined && typeof model !== "string") {
-			throw new Error(`Profile '${filePath}' has invalid model for '${name}'; expected a string.`);
-		}
-	}
-	return parsed as unknown as SubagentProfileFile;
+	if (Value.Check(SubagentProfileFileSchema, parsed)) return parsed;
+	const [first] = Value.Errors(SubagentProfileFileSchema, parsed);
+	throw new Error(`Invalid profile '${filePath}'${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}.`);
 }
 
 function getUserSettingsPath(): string {
@@ -216,11 +194,11 @@ function normalize(value: number | undefined, stats: NumericStats | undefined): 
 }
 
 function buildClassificationContext(models: ModelClassificationInput[]): ClassificationContext {
-	return {
+	return omitUndefined({
 		cost: collectStats(models.map((model) => combinedCost(model.cost))),
 		contextWindow: collectStats(models.map((model) => model.contextWindow)),
 		maxTokens: collectStats(models.map((model) => model.maxTokens)),
-	};
+	});
 }
 
 function rankToCostTier(rank: number): CostTier {
@@ -317,7 +295,7 @@ function resolveProbeStatus(text: string, timedOut: boolean): ProbeStatus {
 
 async function probeModel(
 	pi: Pick<ExtensionAPI, "exec"> | { exec?: ExtensionAPI["exec"] },
-	ctx: Pick<ExtensionContext, "cwd">,
+	_ctx: Pick<ExtensionContext, "cwd">,
 	fullId: string,
 ): Promise<{ status: ProbeStatus; message?: string }> {
 	if (typeof pi.exec !== "function") {
@@ -352,9 +330,9 @@ function pickTierModels(models: ProviderModelCatalogModel[], kind: ProfileKind):
 		: models;
 	const positions = profilePositions(kind);
 	return {
-		cheap: selectionPool[roundIndex(selectionPool.length, positions.cheap)]!.fullId,
-		medium: selectionPool[roundIndex(selectionPool.length, positions.medium)]!.fullId,
-		strong: selectionPool[roundIndex(selectionPool.length, positions.strong)]!.fullId,
+		cheap: requirePresent(selectionPool[roundIndex(selectionPool.length, positions.cheap)]).fullId,
+		medium: requirePresent(selectionPool[roundIndex(selectionPool.length, positions.medium)]).fullId,
+		strong: requirePresent(selectionPool[roundIndex(selectionPool.length, positions.strong)]).fullId,
 	};
 }
 
@@ -382,7 +360,7 @@ function filterDominatedModels(models: ProviderModelCatalogModel[]): ProviderMod
 	return models.filter((candidate, index) => !models.some((other, otherIndex) => otherIndex !== index && dominatesModel(other, candidate)));
 }
 
-function buildProfileFile(kind: ProfileKind, models: { cheap: string; medium: string; strong: string }): SubagentProfileFile {
+function buildProfileFile(_kind: ProfileKind, models: { cheap: string; medium: string; strong: string }): SubagentProfileFile {
 	return {
 		subagents: {
 			agentOverrides: {
@@ -476,7 +454,10 @@ export function applySubagentProfile(name: string): { filePath: string; settings
 export function readProviderModelCatalog(provider: string): ProviderModelCatalogFile | null {
 	const filePath = getProviderModelsPath(provider);
 	if (!fs.existsSync(filePath)) return null;
-	return readJsonObjectFile(filePath) as unknown as ProviderModelCatalogFile;
+	const parsed = readJsonObjectFile(filePath);
+	if (Value.Check(ProviderModelCatalogFileSchema, parsed)) return parsed;
+	const [first] = Value.Errors(ProviderModelCatalogFileSchema, parsed);
+	throw new Error(`Invalid provider model catalog '${filePath}'${first ? ` at ${first.instancePath || "/"}: ${first.message}` : ""}.`);
 }
 
 export function isProviderModelCatalogStale(catalog: ProviderModelCatalogFile, maxAgeDays = DEFAULT_PROVIDER_MODELS_MAX_AGE_DAYS): boolean {
@@ -527,7 +508,7 @@ export async function refreshProviderModelCatalog(
 		...(typeof modelRecord.reasoning === "boolean" ? { reasoning: modelRecord.reasoning } : {}),
 		...(typeof modelRecord.contextWindow === "number" ? { contextWindow: modelRecord.contextWindow } : {}),
 		...(typeof modelRecord.maxTokens === "number" ? { maxTokens: modelRecord.maxTokens } : {}),
-		...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as ProviderModelCatalogModel["observed"]["cost"] } : {}),
+		...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as NonNullable<ProviderModelCatalogModel["observed"]["cost"]> } : {}),
 	})));
 	const models: ProviderModelCatalogModel[] = [];
 	for (const { rawModel, modelRecord, fullId, probe } of observedModels) {
@@ -537,7 +518,7 @@ export async function refreshProviderModelCatalog(
 			...(typeof modelRecord.reasoning === "boolean" ? { reasoning: modelRecord.reasoning } : {}),
 			...(typeof modelRecord.contextWindow === "number" ? { contextWindow: modelRecord.contextWindow } : {}),
 			...(typeof modelRecord.maxTokens === "number" ? { maxTokens: modelRecord.maxTokens } : {}),
-			...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as ProviderModelCatalogModel["observed"]["cost"] } : {}),
+			...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as NonNullable<ProviderModelCatalogModel["observed"]["cost"]> } : {}),
 		}, classificationContext);
 		const warnings = classification.classificationSources.includes("heuristic-name") && !classification.classificationSources.includes("official-metadata")
 			? [warningLineForHeuristicFallback()]
@@ -552,7 +533,7 @@ export async function refreshProviderModelCatalog(
 				thinkingLevels: getSupportedThinkingLevels(toModelInfo(rawModel)).map((level) => level),
 				...(typeof modelRecord.contextWindow === "number" ? { contextWindow: modelRecord.contextWindow } : {}),
 				...(typeof modelRecord.maxTokens === "number" ? { maxTokens: modelRecord.maxTokens } : {}),
-				...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as ProviderModelCatalogModel["observed"]["cost"] } : {}),
+				...(modelRecord.cost && typeof modelRecord.cost === "object" ? { cost: modelRecord.cost as NonNullable<ProviderModelCatalogModel["observed"]["cost"]> } : {}),
 				probe: {
 					status: probe.status,
 					checkedAt: new Date().toISOString(),
@@ -583,11 +564,11 @@ export async function generateProfilesForProvider(
 	options: { maxAgeDays?: number; forceRefresh?: boolean; probe?: boolean } = {},
 ): Promise<{ quotaPath: string; qualityPath: string; catalogPath: string; quotaModels: { cheap: string; medium: string; strong: string }; qualityModels: { cheap: string; medium: string; strong: string }; heuristicFallbackCount: number; selectedHeuristicFallbackCount: number }> {
 	const normalizedProvider = normalizeProviderName(provider);
-	const { filePath: catalogPath, catalog, heuristicFallbackCount } = await refreshProviderModelCatalog(pi, ctx, normalizedProvider, {
+	const { filePath: catalogPath, catalog, heuristicFallbackCount } = await refreshProviderModelCatalog(pi, ctx, normalizedProvider, omitUndefined({
 		maxAgeDays: options.maxAgeDays,
 		force: options.forceRefresh,
 		probe: options.probe,
-	});
+	}));
 	const usableModels = catalog.models.filter(catalogModelIsUsable);
 	const profileModels = filterDominatedModels(usableModels);
 	if (profileModels.length === 0) {
@@ -614,7 +595,7 @@ export async function checkSubagentProfile(
 	const availableModels = ctx.modelRegistry.getAvailable().map(toModelInfo);
 	const entries = Object.entries(profile.subagents.agentOverrides)
 		.filter(([, value]) => typeof value?.model === "string" && value.model.trim())
-		.map(([agent, value]) => ({ agent, model: value.model!.trim() }));
+		.map(([agent, value]) => ({ agent, model: requirePresent(value.model).trim() }));
 	const probeCache = new Map<string, { status: ProbeStatus; message?: string }>();
 	const results: ProfileCheckResult["results"] = [];
 	for (const entry of entries) {

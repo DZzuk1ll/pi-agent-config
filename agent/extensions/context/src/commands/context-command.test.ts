@@ -10,6 +10,8 @@ import {
 	show_context_stats,
 } from '../ui/settings.js';
 import { register_context_commands } from './context-command.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 vi.mock('../ui/menu.js', () => ({
 	purge_context: vi.fn(),
@@ -66,13 +68,13 @@ describe('register_context_commands', () => {
 		const { pi, commands } = fake_pi();
 		register_context_commands(pi);
 		const ctx = { hasUI: true, ui: { notify: vi.fn() } };
-		const command = commands.get('context')!;
+		const command = requirePresent(commands.get('context'));
 
 		await command.handler('', ctx);
 		await command.handler('stats', ctx);
 		await command.handler('settings light', ctx);
 		await command.handler('list 3', ctx);
-		await commands.get('context-stats')!.handler('', ctx);
+		await requirePresent(commands.get('context-stats')).handler('', ctx);
 
 		expect(show_context_menu).toHaveBeenCalledWith(ctx);
 		expect(show_context_stats).toHaveBeenCalledTimes(2);
@@ -86,7 +88,7 @@ describe('register_context_commands', () => {
 		const { pi, commands } = fake_pi();
 		register_context_commands(pi);
 		const ctx = { hasUI: false, ui: { notify: vi.fn() } };
-		const command = commands.get('context')!;
+		const command = requirePresent(commands.get('context'));
 
 		await command.handler('list nope', ctx);
 		await command.handler('purge expired', ctx);

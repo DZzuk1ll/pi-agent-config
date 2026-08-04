@@ -324,12 +324,12 @@ function toComparison(
     displayPath: toDisplayPath(change),
     hasOriginal: change.oldPath != null,
     hasModified: change.newPath != null,
-    additions: stats?.additions,
-    deletions: stats?.deletions,
-    isTooLarge: options?.isTooLarge,
-    statsTruncated: stats?.statsTruncated,
-    originalRevision: revisions?.originalRevision,
-    modifiedRevision: revisions?.modifiedRevision,
+    ...(stats?.additions === undefined ? {} : { additions: stats.additions }),
+    ...(stats?.deletions === undefined ? {} : { deletions: stats.deletions }),
+    ...(options?.isTooLarge === undefined ? {} : { isTooLarge: options.isTooLarge }),
+    ...(stats?.statsTruncated === undefined ? {} : { statsTruncated: stats.statsTruncated }),
+    ...(revisions?.originalRevision === undefined ? {} : { originalRevision: revisions.originalRevision }),
+    ...(revisions?.modifiedRevision === undefined ? {} : { modifiedRevision: revisions.modifiedRevision }),
   };
 }
 
@@ -358,7 +358,7 @@ function createReviewFile(seed: ReviewFileSeed): ReviewFile {
     allFilesReferenceCount: seed.allFilesReferenceCount,
     allFilesOutgoingReferences: seed.allFilesOutgoingReferences,
     allFilesIncomingReferences: seed.allFilesIncomingReferences,
-    submodule: seed.submodule,
+    ...(seed.submodule === undefined ? {} : { submodule: seed.submodule }),
   };
 }
 
@@ -458,13 +458,13 @@ async function getNestedRepoRoot(pi: ExtensionAPI, parentRepoRoot: string, submo
 }
 
 function getSubmoduleInfo(repoRoot: string | null, raw: RawDiffChange): ReviewSubmoduleInfo {
-  return {
+	return {
     repoRoot: repoRoot ?? "",
     path: raw.newPath ?? raw.oldPath ?? "(unknown)",
     oldSha: normalizeDiffSha(raw.oldSha),
     newSha: normalizeDiffSha(raw.newSha),
     available: repoRoot != null,
-    unavailableReason: repoRoot == null ? "submodule is not initialized locally" : undefined,
+		...(repoRoot == null ? { unavailableReason: "submodule is not initialized locally" } : {}),
   };
 }
 

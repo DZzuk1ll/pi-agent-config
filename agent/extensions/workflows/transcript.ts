@@ -1,5 +1,6 @@
 import { randomUUID } from "node:crypto";
 import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
+import { omitUndefined } from "../_shared/runtime/omit-undefined.ts";
 import type { DelegationEvents } from "./delegation.ts";
 
 const VERSION = 1 as const;
@@ -51,7 +52,7 @@ function parseEvent(value: unknown): WorkflowTranscriptEvent | undefined {
 	if (value.kind === "assistant") {
 		const content = text(value.text);
 		if (!content) return undefined;
-		return { kind: "assistant", text: content, ...(text(value.model, 256) ? { model: text(value.model, 256) } : {}), ...(timestamp !== undefined ? { timestamp } : {}) };
+		return omitUndefined({ kind: "assistant", text: content, model: text(value.model, 256), timestamp });
 	}
 	if (value.kind === "user") {
 		const content = text(value.text);
@@ -68,7 +69,7 @@ function parseEvent(value: unknown): WorkflowTranscriptEvent | undefined {
 	if (!name || !status) return undefined;
 	const startedAt = number(value.startedAt);
 	const endedAt = number(value.endedAt);
-	return {
+	return omitUndefined({
 		kind: "tool",
 		name,
 		...(text(value.args, 4 * 1024) ? { args: text(value.args, 4 * 1024) } : {}),
@@ -78,7 +79,7 @@ function parseEvent(value: unknown): WorkflowTranscriptEvent | undefined {
 		...(startedAt !== undefined ? { startedAt } : {}),
 		...(endedAt !== undefined ? { endedAt } : {}),
 		...(timestamp !== undefined ? { timestamp } : {}),
-	};
+	});
 }
 
 export class WorkflowTranscriptClient {
@@ -123,7 +124,7 @@ export class WorkflowTranscriptClient {
 					finish({ status: "unavailable", events: [], cursor, truncated: false, error: "Transcript API returned an invalid pagination cursor." });
 					return;
 				}
-				finish({
+				finish(omitUndefined({
 					status,
 					events,
 					cursor: responseCursor,
@@ -132,7 +133,7 @@ export class WorkflowTranscriptClient {
 					truncated: raw.truncated === true,
 					...(text(raw.warning, 2_000) ? { warning: text(raw.warning, 2_000) } : {}),
 					...(text(raw.error, 2_000) ? { error: text(raw.error, 2_000) } : {}),
-				});
+				}));
 			});
 			if (typeof cleanup === "function") unsubscribe = cleanup;
 			const timer = setTimeout(() => finish({

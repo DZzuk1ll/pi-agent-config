@@ -7,6 +7,8 @@ import type {
 	ContextScopeOptions,
 	ScopedFilter,
 } from '../types.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export interface ContextStoreRetrievalTarget {
 	db: DatabaseSync;
@@ -29,7 +31,7 @@ function chunk_reference_to_ordinal(
 		`^${escape_regexp(source_id)}:chunk:(\\d+)$`,
 	).exec(trimmed);
 	if (legacy_match) {
-		const value = Number.parseInt(legacy_match[1]!, 10);
+		const value = Number.parseInt(requirePresent(legacy_match[1]), 10);
 		if (!Number.isSafeInteger(value)) return null;
 		return value <= 0 ? 1 : value;
 	}

@@ -1,5 +1,6 @@
 import type { AgentToolResult } from "../shared/tool-result.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import { THINKING_LEVELS, type ThinkingLevel } from "../shared/model-info.ts";
 import type { Details } from "../shared/types.ts";
 import { buildWatchdogStatus } from "./register-main.ts";
@@ -57,7 +58,7 @@ function resolveConfiguredValue(ctx: ExtensionContext, params: WatchdogToolParam
 	const rawModel = params.model?.trim();
 	if (!rawModel) {
 		if (thinking === undefined) throw new Error("watchdog.configure requires model, thinking, or both.");
-		return { thinking, description: `thinking ${thinking === null ? "inherit" : thinking === false ? "off" : thinking}` };
+		return omitUndefined({ thinking, description: `thinking ${thinking === null ? "inherit" : thinking === false ? "off" : thinking}` });
 	}
 	if (rawModel === "inherit") return { model: null, thinking: thinking ?? null, description: "inherit" };
 	if (rawModel === "recommended") {
@@ -69,11 +70,11 @@ function resolveConfiguredValue(ctx: ExtensionContext, params: WatchdogToolParam
 		};
 	}
 	const resolved = resolveWatchdogModelInput(ctx, rawModel);
-	return {
+	return omitUndefined({
 		model: resolved.model,
 		thinking: resolved.thinking ?? thinking,
 		description: `${resolved.model}${resolved.thinking ?? thinking ? `:${resolved.thinking ?? thinking}` : ""}`,
-	};
+	});
 }
 
 function buildRecommendationText(ctx: ExtensionContext): string {
@@ -124,7 +125,7 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 		if (scope === "session") {
 			if (!runtime) return result("Subagent watchdog runtime is unavailable.", true);
 			if (target.kind !== "main") return result("Session-scoped watchdog.configure currently supports target='main' only.", true);
-			runtime.setSessionModel({ model: value.model, thinking: value.thinking }, ctx.cwd);
+			runtime.setSessionModel(omitUndefined({ model: value.model, thinking: value.thinking }), ctx.cwd);
 			return result([
 				`Subagent watchdog session model configured: ${value.description}.`,
 				"No settings files were changed.",
@@ -133,13 +134,13 @@ export function handleWatchdogToolAction(action: string, params: WatchdogToolPar
 			].join("\n"));
 		}
 
-		const settingsPath = writeWatchdogModelSettings({
+		const settingsPath = writeWatchdogModelSettings(omitUndefined({
 			scope,
 			cwd: ctx.cwd,
 			target,
 			model: value.model,
 			thinking: value.thinking,
-		});
+		}));
 		runtime?.refreshConfig(ctx.cwd);
 		const targetLabel = target.kind === "child" ? `child ${target.agent}` : target.kind;
 		return result([

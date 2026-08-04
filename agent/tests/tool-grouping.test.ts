@@ -5,6 +5,8 @@ import test from "node:test";
 import { createJiti } from "../node_modules/jiti/lib/jiti.mjs";
 
 import type { ToolComponentLike } from "../extensions/_shared/runtime/tool-grouping.ts";
+import { requirePresent } from "../extensions/_shared/runtime/require-present.ts";
+
 
 const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
 const piPackage = join(globalNodeModules, "@earendil-works/pi-coding-agent");
@@ -156,7 +158,7 @@ test("consecutive Todo calls collapse to one action summary", () => {
 
 test("failed Todo calls remain visible outside successful Todo groups", () => {
 	const failed = tool("todo", "t3", { action: "update" }, "Error: cycle detected");
-	failed.result!.details = { error: "cycle detected" };
+	requirePresent(failed.result).details = { error: "cycle detected" };
 	const children = [
 		tool("todo", "t1", { action: "create", subject: "One" }, "Created #1"),
 		tool("todo", "t2", { action: "create", subject: "Two" }, "Created #2"),

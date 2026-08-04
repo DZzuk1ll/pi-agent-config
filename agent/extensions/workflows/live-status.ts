@@ -6,6 +6,7 @@ import {
 	releaseInteractiveWidgetFocus,
 } from "../_shared/runtime/interactive-widget-focus.ts";
 import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
+import { omitUndefined } from "../_shared/runtime/omit-undefined.ts";
 import type { WorkflowAgentRecord, WorkflowDetails } from "./controller.ts";
 
 export const WORKFLOW_LIVE_WIDGET_KEY = "workflow-live-status";
@@ -84,7 +85,7 @@ export function collectWorkflowLiveStatusEntries(active: ReadonlyMap<string, Wor
 	const entries: WorkflowLiveStatusEntry[] = [];
 	const workflows = [...active.values()].sort((left, right) => right.startedAt - left.startedAt || left.runId.localeCompare(right.runId));
 	for (const details of workflows) {
-		entries.push({
+		entries.push(omitUndefined({
 			key: `workflow:${details.runId}`,
 			kind: "workflow",
 			runId: details.runId,
@@ -96,7 +97,7 @@ export function collectWorkflowLiveStatusEntries(active: ReadonlyMap<string, Wor
 			tokens: details.agents.reduce((total, agent) => total + (agent.tokens ?? 0), 0),
 			done: workflowDone(details),
 			total: details.agents.length,
-		});
+		}));
 		const agents = [...details.agents].sort((left, right) => left.index - right.index);
 		for (const [index, agent] of agents.entries()) {
 			entries.push(agentEntry(details, agent, index === agents.length - 1));
@@ -106,7 +107,7 @@ export function collectWorkflowLiveStatusEntries(active: ReadonlyMap<string, Wor
 }
 
 function agentEntry(details: WorkflowDetails, agent: WorkflowAgentRecord, isLastAgent: boolean): WorkflowLiveStatusEntry {
-	return {
+	return omitUndefined({
 		key: `agent:${details.runId}:${agent.nodeId}`,
 		kind: "agent",
 		runId: details.runId,
@@ -121,7 +122,7 @@ function agentEntry(details: WorkflowDetails, agent: WorkflowAgentRecord, isLast
 		currentTool: agent.currentTool,
 		tokens: agent.tokens ?? 0,
 		isLastAgent,
-	};
+	});
 }
 
 function stateMarker(state: string, theme: Theme): string {
@@ -156,9 +157,9 @@ export class WorkflowLiveStatus {
 	private selectedKey = "";
 	private entries: WorkflowLiveStatusEntry[] = [];
 	private lastRenderKey = "";
-	private notice?: string;
+	private notice: string | undefined;
 	private noticeAt = 0;
-	private cancelConfirmation?: { runId: string; expiresAt: number };
+	private cancelConfirmation: { runId: string; expiresAt: number } | undefined;
 
 	constructor(
 		private readonly source: WorkflowLiveStatusSource,

@@ -24,7 +24,7 @@ export function run_search_evals(
 		if (!source) throw new Error(`Missing source ${scenario.source}`);
 		const search = store.search(scenario.query, {
 			source_id: source.source_id,
-			limit: scenario.limit,
+			...(scenario.limit === undefined ? {} : { limit: scenario.limit }),
 		});
 		const passed = search.some((result) =>
 			result.content.includes(scenario.expect),

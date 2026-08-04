@@ -16,11 +16,14 @@ import confirm_destructive, {
 	assess_bash_command,
 	assess_tool_call,
 } from './index.js';
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
+type AnyCallback = (...args: unknown[]) => unknown;
 
 function create_test_pi() {
-	const events = new Map<string, Function>();
+	const events = new Map<string, AnyCallback>();
 	const pi = {
-		on(name: string, handler: Function) {
+		on(name: string, handler: AnyCallback) {
 			events.set(name, handler);
 		},
 	} as unknown as ExtensionAPI;
@@ -437,7 +440,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('tool_call')!;
+		const handler = requirePresent(events.get('tool_call'));
 		const { ctx, select, notify } = create_context({ cwd });
 		select.mockResolvedValue('Block');
 
@@ -472,7 +475,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('tool_call')!;
+		const handler = requirePresent(events.get('tool_call'));
 		const { ctx, select, notify } = create_context({ cwd });
 		select.mockResolvedValue('Allow once');
 
@@ -498,7 +501,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('tool_call')!;
+		const handler = requirePresent(events.get('tool_call'));
 		const { ctx, select } = create_context({ cwd });
 		select.mockResolvedValue('Allow similar for this session');
 
@@ -531,7 +534,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('tool_call')!;
+		const handler = requirePresent(events.get('tool_call'));
 		const { ctx, select } = create_context({ hasUI: false, cwd });
 
 		const result = await handler(
@@ -556,7 +559,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('tool_call')!;
+		const handler = requirePresent(events.get('tool_call'));
 		const { ctx, select } = create_context();
 
 		const result = await handler(
@@ -578,8 +581,8 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const tool_call = events.get('tool_call')!;
-		const tool_result = events.get('tool_result')!;
+		const tool_call = requirePresent(events.get('tool_call'));
+		const tool_result = requirePresent(events.get('tool_result'));
 		const { ctx, select } = create_context({ cwd });
 
 		await tool_call(
@@ -620,8 +623,8 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const tool_call = events.get('tool_call')!;
-		const tool_result = events.get('tool_result')!;
+		const tool_call = requirePresent(events.get('tool_call'));
+		const tool_result = requirePresent(events.get('tool_result'));
 		const { ctx, select } = create_context({ cwd });
 
 		dirs.push(path);
@@ -665,8 +668,8 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const tool_call = events.get('tool_call')!;
-		const tool_result = events.get('tool_result')!;
+		const tool_call = requirePresent(events.get('tool_call'));
+		const tool_result = requirePresent(events.get('tool_result'));
 		const { ctx, select } = create_context({ cwd });
 
 		dirs.push(path);
@@ -709,8 +712,8 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const tool_call = events.get('tool_call')!;
-		const tool_result = events.get('tool_result')!;
+		const tool_call = requirePresent(events.get('tool_call'));
+		const tool_result = requirePresent(events.get('tool_result'));
 		const { ctx, select } = create_context({ cwd });
 
 		dirs.push(path);
@@ -753,7 +756,7 @@ describe('confirm-destructive extension', () => {
 		const { pi, events } = create_test_pi();
 		await confirm_destructive(pi);
 
-		const handler = events.get('user_bash')!;
+		const handler = requirePresent(events.get('user_bash'));
 		const { ctx, select } = create_context({ cwd });
 		select.mockResolvedValue('Block');
 

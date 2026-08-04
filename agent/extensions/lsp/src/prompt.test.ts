@@ -32,9 +32,7 @@ describe('lsp prompt guidance', () => {
 
 	it('only injects LSP workflow guidance when relevant tools are available', () => {
 		expect(
-			should_inject_lsp_prompt({
-				systemPromptOptions: undefined,
-			}),
+			should_inject_lsp_prompt({}),
 		).toBe(true);
 		expect(
 			should_inject_lsp_prompt({

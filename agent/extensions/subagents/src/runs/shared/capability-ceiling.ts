@@ -1,4 +1,6 @@
 import { Buffer } from "node:buffer";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export const SUBAGENT_CAPABILITY_CEILING_VERSION = 1 as const;
 export const SUBAGENT_CAPABILITY_CEILING_REGISTRY_KEY = "pi-subagents.capability-ceiling.v1";
@@ -108,7 +110,7 @@ export function registerSubagentCapabilityCeiling(options: RegisterSubagentCapab
 	const setRegistration = () => {
 		normalized = normalizeCeiling(normalized);
 		normalized.sources = [source];
-		session!.set(token, { source, ceiling: normalized });
+		requirePresent(session).set(token, { source, ceiling: normalized });
 	};
 	setRegistration();
 	let disposed = false;
@@ -117,13 +119,13 @@ export function registerSubagentCapabilityCeiling(options: RegisterSubagentCapab
 			if (disposed) throw new Error("Cannot update a disposed capability ceiling handle.");
 			normalized = normalizeCeiling(ceiling);
 			normalized.sources = [source];
-			session!.set(token, { source, ceiling: normalized });
+			requirePresent(session).set(token, { source, ceiling: normalized });
 		},
 		dispose() {
 			if (disposed) return;
 			disposed = true;
-			session!.delete(token);
-			if (session!.size === 0) store.delete(sessionId);
+			requirePresent(session).delete(token);
+			if (requirePresent(session).size === 0) store.delete(sessionId);
 		},
 	};
 }
@@ -134,7 +136,7 @@ export function intersectSubagentCapabilityCeilings(...ceilings: Array<ResolvedS
 	const definedLists = active.filter((ceiling) => ceiling.allowedTools !== undefined).map((ceiling) => new Set(ceiling.allowedTools));
 	let allowedTools: string[] | undefined;
 	if (definedLists.length > 0) {
-		allowedTools = [...definedLists[0]!].filter((tool) => definedLists.every((list) => list.has(tool))).sort();
+		allowedTools = [...requirePresent(definedLists[0])].filter((tool) => definedLists.every((list) => list.has(tool))).sort();
 	}
 	return {
 		version: SUBAGENT_CAPABILITY_CEILING_VERSION,

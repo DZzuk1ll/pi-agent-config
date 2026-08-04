@@ -15,6 +15,9 @@ import { serializeAgent } from "../agents/agent-serializer.ts";
 import { editableAgentConfig, preservedAgentFrontmatterFields } from "../agents/agent-management.ts";
 import { findModelInfo, getSupportedThinkingLevels, toModelInfo } from "../shared/model-info.ts";
 import { SelectorComponent, type SelectorItem, type SelectorResult } from "./selector.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const ADMIN_MESSAGE_TYPE = "subagents-admin";
 const INHERIT_MODEL_CHOICE = "Default / inherit session model";
@@ -46,7 +49,7 @@ function agentChoices(agents: AgentConfig[]): Map<string, AgentConfig> {
 	const counts = new Map<string, number>();
 	for (const label of labels) counts.set(label, (counts.get(label) ?? 0) + 1);
 	return new Map(agents.map((agent, index) => {
-		const label = labels[index]!;
+		const label = requirePresent(labels[index]);
 		return [counts.get(label) === 1 ? label : `${label} · ${agent.filePath}`, agent] as const;
 	}));
 }
@@ -83,7 +86,7 @@ function liveAvailableModels(ctx: ExtensionContext) {
 }
 
 function buildBuiltinBase(agent: AgentConfig): BuiltinAgentOverrideBase {
-	return {
+	return omitUndefined({
 		model: agent.model,
 		fallbackModels: agent.fallbackModels ? [...agent.fallbackModels] : undefined,
 		thinking: agent.thinking,
@@ -100,7 +103,7 @@ function buildBuiltinBase(agent: AgentConfig): BuiltinAgentOverrideBase {
 		subagentOnlyExtensions: agent.subagentOnlyExtensions ? [...agent.subagentOnlyExtensions] : undefined,
 		completionGuard: agent.completionGuard,
 		toolBudget: agent.toolBudget,
-	};
+	});
 }
 
 type EditableOverrideField = "model" | "thinking" | "systemPrompt";
@@ -151,16 +154,16 @@ function readOnlyAgentMessage(agent: AgentConfig, field: EditableOverrideField):
 async function selectAgent(ctx: ExtensionContext, args: string): Promise<AgentSelection> {
 	const agents = allVisibleAgents(ctx.cwd);
 	const requestedName = args.trim().split(/\s+/)[0] ?? "";
-	if (agents.length === 0) return { kind: "not-found", agents, requestedName: requestedName || undefined };
+	if (agents.length === 0) return omitUndefined({ kind: "not-found", agents, requestedName: requestedName || undefined });
 
 	if (requestedName) {
 		const matches = agents.filter((agent) => agentMatches(agent, requestedName));
-		if (matches.length === 1) return { kind: "selected", agent: matches[0]! };
+		if (matches.length === 1) return { kind: "selected", agent: requirePresent(matches[0]) };
 		if (matches.length > 1 && !ctx.hasUI) return { kind: "ambiguous", requestedName, matches };
 		if (matches.length > 1) {
 			const byLabel = agentChoices(matches);
 			const choice = await selectFromList(ctx, `Multiple subagents named '${requestedName}'`, undefined, agentSelectItems(byLabel));
-			return choice ? { kind: "selected", agent: byLabel.get(choice)! } : { kind: "cancelled" };
+			return choice ? { kind: "selected", agent: requirePresent(byLabel.get(choice)) } : { kind: "cancelled" };
 		}
 		return { kind: "not-found", agents, requestedName };
 	}
@@ -168,7 +171,7 @@ async function selectAgent(ctx: ExtensionContext, args: string): Promise<AgentSe
 	if (!ctx.hasUI) return { kind: "not-found", agents };
 	const byLabel = agentChoices(agents);
 	const choice = await selectFromList(ctx, "Select subagent", undefined, agentSelectItems(byLabel));
-	return choice ? { kind: "selected", agent: byLabel.get(choice)! } : { kind: "cancelled" };
+	return choice ? { kind: "selected", agent: requirePresent(byLabel.get(choice)) } : { kind: "cancelled" };
 }
 
 function metadataFor(agent: AgentConfig): string {
@@ -204,7 +207,7 @@ function metadataFor(agent: AgentConfig): string {
 async function selectFromList(ctx: ExtensionContext, title: string, subtitle: string | undefined, items: SelectorItem[]): Promise<string | undefined> {
 	if (typeof ctx.ui.custom === "function") {
 		const result = await ctx.ui.custom<SelectorResult>(
-			(tui, theme, kb, done) => new SelectorComponent(tui, theme, kb, { title, subtitle, items, done }),
+			(tui, theme, kb, done) => new SelectorComponent(tui, theme, kb, omitUndefined({ title, subtitle, items, done })),
 			{ overlay: false },
 		);
 		return result?.confirmed ? result.value : undefined;
@@ -290,7 +293,9 @@ async function saveAgentModel(ctx: ExtensionContext, agent: AgentConfig, selecte
 
 	const readOnlyMessage = readOnlyAgentMessage(agent, "model");
 	if (readOnlyMessage) return readOnlyMessage;
-	const updated: AgentConfig = { ...editableAgentConfig(agent), model: selectedModel };
+	const updated: AgentConfig = editableAgentConfig(agent);
+	if (selectedModel !== undefined) updated.model = selectedModel;
+	else delete updated.model;
 	fs.writeFileSync(updated.filePath, serializeAgent(updated, {
 		preserveFrontmatterFields: preservedAgentFrontmatterFields(agent, { model: selectedModel }),
 	}), "utf-8");
@@ -311,7 +316,9 @@ async function saveAgentThinking(ctx: ExtensionContext, agent: AgentConfig, sele
 
 	const readOnlyMessage = readOnlyAgentMessage(agent, "thinking");
 	if (readOnlyMessage) return readOnlyMessage;
-	const updated: AgentConfig = { ...editableAgentConfig(agent), thinking: selectedThinking };
+	const updated: AgentConfig = editableAgentConfig(agent);
+	if (selectedThinking !== undefined) updated.thinking = selectedThinking;
+	else delete updated.thinking;
 	fs.writeFileSync(updated.filePath, serializeAgent(updated, {
 		preserveFrontmatterFields: preservedAgentFrontmatterFields(agent, { thinking: selectedThinking }),
 	}), "utf-8");

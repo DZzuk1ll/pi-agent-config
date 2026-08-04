@@ -10,15 +10,19 @@ function validConfigDirName(value: unknown): string | undefined {
 	return typeof value === "string" && value.trim() ? value : undefined;
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
 function readConfigDirNameFromPackageRoot(packageRoot: string | undefined): string | undefined {
 	if (!packageRoot) return undefined;
 	try {
-		const pkg = JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8")) as {
-			name?: unknown;
-			piConfig?: { configDir?: unknown };
-		};
+		const pkg = recordValue(JSON.parse(fs.readFileSync(path.join(packageRoot, "package.json"), "utf-8")));
+		if (!pkg) return undefined;
 		if (pkg.name !== PI_CODING_AGENT_PACKAGE_NAME) return undefined;
-		return validConfigDirName(pkg.piConfig?.configDir);
+		return validConfigDirName(recordValue(pkg.piConfig)?.configDir);
 	} catch {
 		return undefined;
 	}

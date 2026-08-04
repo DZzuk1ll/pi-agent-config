@@ -107,7 +107,7 @@ const CYCLE_FIELDS: CycleField[] = [
         : c.freshness,
     apply: (c, v) => {
       if (isDefaultTag(v)) delete c.freshness;
-      else c.freshness = v as PiCodexSearchConfig["freshness"];
+      else c.freshness = v as NonNullable<PiCodexSearchConfig["freshness"]>;
     },
   },
   {
@@ -124,7 +124,7 @@ const CYCLE_FIELDS: CycleField[] = [
         : c.searchContextSize,
     apply: (c, v) => {
       if (isDefaultTag(v)) delete c.searchContextSize;
-      else c.searchContextSize = v as PiCodexSearchConfig["searchContextSize"];
+      else c.searchContextSize = v as NonNullable<PiCodexSearchConfig["searchContextSize"]>;
       normalizeStandaloneSearchContext(c);
     },
   },
@@ -435,7 +435,7 @@ function buildModelSelect(
 ): Component {
   const items: SelectItem[] = [
     { value: "", label: defaultTag("auto"), description: "Auto-select from /codex/models" },
-    ...models.map((m): SelectItem => ({ value: m.id, label: m.id, description: m.name })),
+    ...models.map((m): SelectItem => ({ value: m.id, label: m.id, ...(m.name !== undefined ? { description: m.name } : {}) })),
   ];
   const select = new SelectList(items, Math.min(items.length, 10), theme);
   const currentIndex = items.findIndex((i) => i.value === (current ?? ""));

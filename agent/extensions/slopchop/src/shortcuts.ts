@@ -137,23 +137,23 @@ function validateShortcut(entry: ShortcutConfigEntry, index: number, warnings: s
     return null;
   }
   if (typeof entry.key !== "string" || !isPrintableSingleCharacter(entry.key)) {
-    warnings.push(`Ignoring shortcut \"${entry.id}\": key must be a single printable character other than '/'.`);
+    warnings.push(`Ignoring shortcut "${entry.id}": key must be a single printable character other than '/'.`);
     return null;
   }
   if (typeof entry.label !== "string" || entry.label.trim().length === 0) {
-    warnings.push(`Ignoring shortcut \"${entry.id}\": label must be a non-empty string.`);
+    warnings.push(`Ignoring shortcut "${entry.id}": label must be a non-empty string.`);
     return null;
   }
   if (entry.intent !== "fix" && entry.intent !== "discuss") {
-    warnings.push(`Ignoring shortcut \"${entry.id}\": intent must be 'fix' or 'discuss'.`);
+    warnings.push(`Ignoring shortcut "${entry.id}": intent must be 'fix' or 'discuss'.`);
     return null;
   }
   if (entry.side !== "added" && entry.side !== "deleted" && entry.side !== "both") {
-    warnings.push(`Ignoring shortcut \"${entry.id}\": side must be 'added', 'deleted', or 'both'.`);
+    warnings.push(`Ignoring shortcut "${entry.id}": side must be 'added', 'deleted', or 'both'.`);
     return null;
   }
   if (typeof entry.text !== "string" || entry.text.trim().length === 0) {
-    warnings.push(`Ignoring shortcut \"${entry.id}\": text must be a non-empty string.`);
+    warnings.push(`Ignoring shortcut "${entry.id}": text must be a non-empty string.`);
     return null;
   }
 
@@ -200,13 +200,13 @@ export function parseShortcutConfig(config: unknown): { shortcuts: CommentShortc
     if (shortcut == null) continue;
 
     if (activeById.has(shortcut.id)) {
-      warnings.push(`Ignoring shortcut \"${shortcut.id}\": duplicate id.`);
+      warnings.push(`Ignoring shortcut "${shortcut.id}": duplicate id.`);
       continue;
     }
 
     const conflicting = shortcuts.find((existing) => existing.key === shortcut.key && overlaps(existing.side, shortcut.side));
     if (conflicting != null) {
-      warnings.push(`Ignoring shortcut \"${shortcut.id}\": key '${shortcut.key}' conflicts with shortcut \"${conflicting.id}\".`);
+      warnings.push(`Ignoring shortcut "${shortcut.id}": key '${shortcut.key}' conflicts with shortcut "${conflicting.id}".`);
       continue;
     }
 

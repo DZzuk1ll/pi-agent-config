@@ -32,6 +32,7 @@ import {
   type ResolvedConfig,
 } from "./src/config.ts";
 import { resolveCodexAccountId } from "./src/pi-auth.ts";
+import { omitUndefined } from "../_shared/runtime/omit-undefined.ts";
 
 const OPENAI_CODEX_PROVIDER = "openai-codex";
 
@@ -323,11 +324,11 @@ function buildTool(config: ResolvedConfig) {
         assertSupportedStandaloneCombination(searchContextSize, freshness);
       }
 
-      const transport = createTransport({
+      const transport = createTransport(omitUndefined({
         token,
         accountId,
         baseUrl: config.baseUrl,
-      });
+      }));
 
       if (config.searchApi === "standalone") {
         if (queries.length > 0 || imageQueries.length > 0) {
@@ -340,7 +341,7 @@ function buildTool(config: ResolvedConfig) {
         const sessionDir = ctx.sessionManager.getSessionDir();
         await refStore.load(sessionDir);
 
-        const baseStandaloneOptions = {
+        const baseStandaloneOptions = omitUndefined({
           model,
           transport,
           sessionId: ctx.sessionManager.getSessionId(),
@@ -348,7 +349,7 @@ function buildTool(config: ResolvedConfig) {
           searchContextSize,
           maxOutputTokens: 8000,
           signal,
-        };
+        });
         const standaloneCalls: StandaloneCallPlan[] = [
           ...queries.map((q) => ({
             query: q,
@@ -531,7 +532,7 @@ function buildTool(config: ResolvedConfig) {
                 }
               : undefined;
           try {
-            return await runResponsesSearch({
+            return await runResponsesSearch(omitUndefined({
               query,
               model,
               transport,
@@ -542,7 +543,7 @@ function buildTool(config: ResolvedConfig) {
               threadId: ctx.sessionManager.getSessionId(),
               signal,
               onTextDelta,
-            });
+            }));
           } finally {
             completed += 1;
             if (total > 1) emitPartial(formatProgress(completed, total));
@@ -715,13 +716,13 @@ async function resolveSearchModel(
   if (config.model) return config.model;
   if (ctx.model?.provider === OPENAI_CODEX_PROVIDER) return ctx.model.id;
 
-  const models = await fetchCodexModels({
+  const models = await fetchCodexModels(omitUndefined({
     token,
     accountId,
     baseUrl: config.baseUrl,
     clientVersion: config.clientVersion,
     signal,
-  });
+  }));
   const model = selectDefaultModel(models);
   if (!model) {
     throw new CodexError("unknown", "Codex model list is empty.");
@@ -974,7 +975,7 @@ function buildCallLabels(args: Record<string, unknown>): string[] {
       ? args.weather.filter(isWeatherArg).map((c) => ({ location: c.location }))
       : [],
     sportsCommands: Array.isArray(args.sports)
-      ? args.sports.filter(isSportsArg).map((c) => ({ fn: c.fn, league: c.league, team: c.team }))
+      ? args.sports.filter(isSportsArg).map((c) => omitUndefined({ fn: c.fn, league: c.league, team: c.team }))
       : [],
     timeCommands: Array.isArray(args.time)
       ? args.time.filter(isTimeArg).map((c) => ({ utc_offset: c.utc_offset }))

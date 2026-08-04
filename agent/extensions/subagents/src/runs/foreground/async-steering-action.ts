@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
 import type { AgentToolResult } from "../../shared/tool-result.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type { AsyncStatus, Details, SubagentState, ToolBudgetConfig, TurnBudgetConfig } from "../../shared/types.ts";
@@ -33,7 +34,7 @@ export async function steerAsyncRun(input: {
 		};
 	}
 	const asyncDir = input.location.asyncDir;
-	const status = reconcileAsyncRun(asyncDir, { kill: input.kill }).status;
+	const status = reconcileAsyncRun(asyncDir, omitUndefined({ kill: input.kill })).status;
 	if (input.state.currentSessionId && status?.sessionId !== input.state.currentSessionId) {
 		return {
 			content: [{ type: "text", text: `Async run '${input.runId}' was not found in the active session.` }],
@@ -111,7 +112,7 @@ export async function steerAsyncRun(input: {
 		const scheduled = { requestId, state: "scheduled" as const, sourceRunId: status.runId, targets };
 		return { content: [{ type: "text", text: `Steering scheduled for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: scheduled } };
 	}
-	const waited = await waitForSteeringAction({ asyncDir, sourceRunId: status.runId, requestId, timeoutMs: input.ackTimeoutMs ?? 3_000, signal: input.signal });
+	const waited = await waitForSteeringAction(omitUndefined({ asyncDir, sourceRunId: status.runId, requestId, timeoutMs: input.ackTimeoutMs ?? 3_000, signal: input.signal }));
 	const result = waited ?? { requestId, state: "pending" as const, sourceRunId: status.runId, targets };
 	if (input.signal?.aborted) {
 		return { content: [{ type: "text", text: `Steering pending for async run ${status.runId} (request ${requestId}); caller aborted before recovery.` }], details: { mode: "management", results: [], steering: result } };
@@ -147,7 +148,7 @@ export async function steerAsyncRun(input: {
 				return { content: [{ type: "text", text: `Steering delivered for async run ${status.runId} (request ${requestId}).` }], details: { mode: "management", results: [], steering: preCommitResult } };
 			}
 			try {
-				deliverInterruptRequest({ asyncDir, pid: latest?.pid ?? status.pid, kill: input.kill, source: "steering-recovery" });
+				deliverInterruptRequest(omitUndefined({ asyncDir, pid: latest?.pid ?? status.pid, kill: input.kill, source: "steering-recovery" }));
 			} catch (error) {
 				fs.rmSync(markerPath, { force: true });
 				fs.rmSync(claimPath, { force: true });
@@ -182,8 +183,8 @@ export async function steerAsyncRun(input: {
 			try {
 				recoveryTarget = resolveAsyncResumeTarget(
 					{ id: status.runId },
-					{ kill: input.kill },
-					{ sessionId: input.state.currentSessionId ?? undefined },
+					omitUndefined({ kill: input.kill }),
+					omitUndefined({ sessionId: input.state.currentSessionId ?? undefined }),
 				);
 			} catch (error) {
 				throw new Error(`Source run remains paused and cannot be revived safely: ${error instanceof Error ? error.message : String(error)}`);

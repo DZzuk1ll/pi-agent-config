@@ -12,7 +12,7 @@ import { deliverSubagentIntercomMessageEvent } from "../intercom/result-intercom
 import { resolveSubagentIntercomTarget } from "../intercom/intercom-bridge.ts";
 import { SubagentParams } from "./schemas.ts";
 import { loadConfig } from "./config.ts";
-import { type Details, type SubagentState } from "../shared/types.ts";
+import type { Details, SubagentState } from "../shared/types.ts";
 import { registerSubagentTool } from "./tool-registration.ts";
 
 function getSubagentSessionRoot(parentSessionFile: string | null): string {

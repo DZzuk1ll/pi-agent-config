@@ -205,7 +205,7 @@ export function resolveSingleOutput(
 
 	const save = persistSingleOutput(outputPath, fallbackOutput);
 	if (save.savedPath) return { fullOutput: fallbackOutput, savedPath: save.savedPath };
-	return { fullOutput: fallbackOutput, saveError: save.error };
+	return { fullOutput: fallbackOutput, ...(save.error === undefined ? {} : { saveError: save.error }) };
 }
 
 export function finalizeSingleOutput(params: {

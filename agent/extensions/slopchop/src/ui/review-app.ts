@@ -1,8 +1,8 @@
 import { spawn } from "node:child_process";
 import { join } from "node:path";
-import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Editor, type EditorTheme, Key, matchesKey, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
-import { adjustStructuredDiffContext, buildStructuredDiff, type StructuredDiff, type StructuredDiffVisibleItem } from "../diff.js";
+import type { ExtensionContext, Theme as PiTheme } from "@earendil-works/pi-coding-agent";
+import { Editor, type EditorTheme, Key, matchesKey, type TUI, truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import { adjustStructuredDiffContext, buildStructuredDiff, type StructuredDiff, } from "../diff.js";
 import {
   clampSelectedLineTarget,
   createInitialReviewState,
@@ -37,6 +37,8 @@ import { filterFilesBySearch } from "../search.js";
 import { highlightJsonLine, highlightMarkdownLine } from "../theme-highlight.js";
 import type { CommentIntent, DiffReviewComment, ReviewFile, ReviewFileContents, ReviewLineTarget, ReviewResult, ReviewScope, ReviewState, ReviewSubmoduleInfo } from "../types.js";
 import { formatIntentLabel, formatScopeLabel, getReviewFileDisplayPath, getSubmoduleInfo, hasExactSubmoduleRange, isSubmoduleReviewFile, joinReviewPath } from "../types.js";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 interface LoadedEntryReady {
   status: "ready";
@@ -142,16 +144,16 @@ export function getEditorLineForTarget(diff: StructuredDiff, target: ReviewLineT
   const rowIndex = diff.rows.findIndex((row) => row.oldLineNumber === target.line);
   if (rowIndex < 0) return target.line;
 
-  const selectedRow = diff.rows[rowIndex]!;
+  const selectedRow = requirePresent(diff.rows[rowIndex]);
   if (selectedRow.newLineNumber != null) return selectedRow.newLineNumber;
 
   for (let index = rowIndex + 1; index < diff.rows.length; index += 1) {
-    const line = diff.rows[index]!.newLineNumber;
+    const line = requirePresent(diff.rows[index]).newLineNumber;
     if (line != null) return line;
   }
 
   for (let index = rowIndex - 1; index >= 0; index -= 1) {
-    const line = diff.rows[index]!.newLineNumber;
+    const line = requirePresent(diff.rows[index]).newLineNumber;
     if (line != null) return line;
   }
 
@@ -194,18 +196,18 @@ export function getStackedPaneLayout(bodyHeight: number, commentsHidden: boolean
   while (remaining > 0) {
     let selectedIndex = 0;
     for (let index = 1; index < weights.length; index += 1) {
-      if (heights[index]! / weights[index]! < heights[selectedIndex]! / weights[selectedIndex]!) {
+      if (requirePresent(heights[index]) / requirePresent(weights[index]) < requirePresent(heights[selectedIndex]) / requirePresent(weights[selectedIndex])) {
         selectedIndex = index;
       }
     }
-    heights[selectedIndex]! += 1;
+		heights[selectedIndex] = requirePresent(heights[selectedIndex]) + 1;
     remaining -= 1;
   }
 
   return {
-    navigatorHeight: heights[0]!,
-    diffHeight: heights[1]!,
-    commentsHeight: commentsHidden ? 0 : heights[2]!,
+    navigatorHeight: requirePresent(heights[0]),
+    diffHeight: requirePresent(heights[1]),
+    commentsHeight: commentsHidden ? 0 : requirePresent(heights[2]),
   };
 }
 
@@ -221,7 +223,7 @@ export function parseMouseWheelInput(data: string): MouseWheelEvent | null {
   const match = data.match(/^\x1b\[<(\d+);(\d+);(\d+)[Mm]$/);
   if (match == null) return null;
 
-  const button = Number.parseInt(match[1]!, 10);
+  const button = Number.parseInt(requirePresent(match[1]), 10);
   if ((button & 64) === 0) return null;
 
   const wheelButton = button & 3;
@@ -229,8 +231,8 @@ export function parseMouseWheelInput(data: string): MouseWheelEvent | null {
 
   return {
     direction: wheelButton === 0 ? "up" : "down",
-    col: Number.parseInt(match[2]!, 10),
-    row: Number.parseInt(match[3]!, 10),
+    col: Number.parseInt(requirePresent(match[2]), 10),
+    row: Number.parseInt(requirePresent(match[3]), 10),
   };
 }
 
@@ -255,7 +257,7 @@ export function getRelatedFileMarker(file: ReviewFile, activeFile: ReviewFile | 
   return null;
 }
 
-export type ReviewAppTheme = Parameters<ExtensionContext["ui"]["custom"]>[0] extends (tui: any, theme: infer T, kb: any, done: any) => any ? T : never;
+export type ReviewAppTheme = PiTheme;
 type Theme = ReviewAppTheme;
 
 function repeat(char: string, count: number): string {
@@ -587,7 +589,7 @@ function sliceAnsiByColumn(line: string, startCol: number, length: number): stri
     ansiPattern.lastIndex = index;
     const ansiMatch = ansiPattern.exec(line);
     if (ansiMatch != null) {
-      const sequence = ansiMatch[0]!;
+      const sequence = requirePresent(ansiMatch[0]);
       index += sequence.length;
       if (!started && column < startCol) {
         activeSequences += sequence;
@@ -597,7 +599,7 @@ function sliceAnsiByColumn(line: string, startCol: number, length: number): stri
       continue;
     }
 
-    const char = line[index]!;
+    const char = requirePresent(line[index]);
     const charWidth = visibleWidth(char);
     const charStart = column;
     const charEnd = column + charWidth;
@@ -639,9 +641,9 @@ export function renderCenteredOverlay(baseLines: string[], overlayLines: string[
   for (let i = 0; i < overlayHeight; i += 1) {
     const row = top + i;
     const baseLine = result[row] ?? " ".repeat(totalWidth);
-    const overlayLine = visibleWidth(overlayLines[i]!) > overlayWidth
-      ? sliceAnsiByColumn(overlayLines[i]!, 0, overlayWidth)
-      : overlayLines[i]!;
+    const overlayLine = visibleWidth(requirePresent(overlayLines[i])) > overlayWidth
+      ? sliceAnsiByColumn(requirePresent(overlayLines[i]), 0, overlayWidth)
+      : requirePresent(overlayLines[i]);
     result[row] = compositeLineAt(baseLine, overlayLine, left, totalWidth);
   }
 
@@ -700,7 +702,7 @@ export function buildDisplayRows(diff: StructuredDiff): DisplayRow[] {
       commentSide: commentSide ?? null,
       codeText,
       kind,
-      pairedText,
+			...(pairedText === undefined ? {} : { pairedText }),
     });
   };
 
@@ -851,7 +853,7 @@ class ReviewApp {
   private readonly renderedDiffLineCache = new Map<string, string[]>();
 
   constructor(
-    private readonly tui: any,
+	private readonly tui: TUI,
     private readonly theme: Theme,
     private readonly done: (value: { result: ReviewResult; files: ReviewFile[] }) => void,
     private readonly options: ReviewAppOptions,
@@ -992,9 +994,10 @@ class ReviewApp {
   }
 
   private saveCurrentFrame(): ReviewFrame {
+		const pathPrefix = this.currentPathPrefix();
     return {
       repoRoot: this.repoRoot,
-      pathPrefix: this.currentPathPrefix(),
+			...(pathPrefix === undefined ? {} : { pathPrefix }),
       files: this.files,
       state: this.state,
       cache: this.cache,
@@ -1038,7 +1041,7 @@ class ReviewApp {
   }
 
   private rootFrame(frames: ReviewFrame[]): ReviewFrame {
-    return this.frameStack[0] ?? frames.find((frame) => frame.pathPrefix == null) ?? frames[0]!;
+    return this.frameStack[0] ?? frames.find((frame) => frame.pathPrefix == null) ?? requirePresent(frames[0]);
   }
 
   private buildAggregatedSubmitData(): { files: ReviewFile[]; draft: ReviewState["draft"] } {
@@ -1059,7 +1062,6 @@ class ReviewApp {
       aggregatedFiles.push({
         id: noteFileId,
         path: frame.pathPrefix ?? formatFrameLabel(frame.repoRoot),
-        pathPrefix: undefined,
         worktreeStatus: null,
         hasWorkingTreeFile: false,
         inGitDiff: frame.state.activeScope === "git-diff",
@@ -1472,12 +1474,13 @@ class ReviewApp {
       this.editFileComment();
       return;
     }
+		const endLine = item.comment.startLine != null && item.comment.endLine != null && item.comment.endLine !== item.comment.startLine
+			? item.comment.startLine
+			: undefined;
     this.state = setSelectedLineTarget(this.state, item.comment.fileId, item.comment.scope, {
       side: item.comment.side,
       line: item.comment.endLine ?? item.comment.startLine ?? 1,
-      endLine: item.comment.startLine != null && item.comment.endLine != null && item.comment.endLine !== item.comment.startLine
-        ? item.comment.startLine
-        : undefined,
+			...(endLine === undefined ? {} : { endLine }),
     });
     this.editLineComment();
   }
@@ -1605,11 +1608,11 @@ class ReviewApp {
 
     let index = 0;
     for (let i = 0; i < targets.length; i += 1) {
-      const target = targets[i]!;
+      const target = requirePresent(targets[i]);
       if (target.line < current.line || (target.line === current.line && target.side === current.side)) index = i;
     }
     const nextIndex = Math.max(0, Math.min(targets.length - 1, index + delta));
-    this.state = setSelectedLineTarget(this.state, file.id, this.state.activeScope, targets[nextIndex]!);
+    this.state = setSelectedLineTarget(this.state, file.id, this.state.activeScope, requirePresent(targets[nextIndex]));
     this.requestRender();
   }
 
@@ -1738,7 +1741,7 @@ class ReviewApp {
     const index = files.findIndex((file) => file.id === this.state.activeFileId);
     const currentIndex = index >= 0 ? index : 0;
     const nextIndex = Math.max(0, Math.min(files.length - 1, currentIndex + delta));
-    this.state = setActiveFileId(this.state, this.files, files[nextIndex]!.id);
+    this.state = setActiveFileId(this.state, this.files, requirePresent(files[nextIndex]).id);
     void this.ensureActiveEntry();
     this.requestRender();
   }
@@ -1769,7 +1772,7 @@ class ReviewApp {
     if (this.state.focus === "navigator") {
       const files = this.getNavigatorFiles();
       if (files.length === 0) return;
-      const file = direction === "start" ? files[0]! : files[files.length - 1]!;
+      const file = direction === "start" ? requirePresent(files[0]) : requirePresent(files[files.length - 1]);
       this.state = setActiveFileId(this.state, this.files, file.id);
       void this.ensureActiveEntry();
       this.requestRender();
@@ -1781,7 +1784,7 @@ class ReviewApp {
       if (file == null) return;
       const visibleTargets = this.getVisibleLineTargets(file.id, this.state.activeScope);
       if (visibleTargets.length === 0) return;
-      const target = direction === "start" ? visibleTargets[0]! : visibleTargets[visibleTargets.length - 1]!;
+      const target = direction === "start" ? requirePresent(visibleTargets[0]) : requirePresent(visibleTargets[visibleTargets.length - 1]);
       this.state = setSelectedLineTarget(this.state, file.id, this.state.activeScope, target);
       this.requestRender();
       return;
@@ -2047,7 +2050,7 @@ class ReviewApp {
 
     if (this.state.focus === "comments") {
       if ((matchesKey(data, Key.right) || matchesKey(data, Key.enter)) && this.drillIntoSelectedSubmodule()) return;
-      const items = getCommentPanelItems(this.state, this.state.activeFileId, this.state.activeScope);
+      const _items = getCommentPanelItems(this.state, this.state.activeFileId, this.state.activeScope);
       if (matchesKey(data, Key.down) || data === "j") {
         this.moveCommentSelection(1);
         return;
@@ -2252,7 +2255,7 @@ class ReviewApp {
       return renderBox("Diff", width, height, this.theme, lines, this.state.focus === "diff");
     }
 
-    const diff = this.getDisplayDiff(file.id, this.state.activeScope)!;
+    const diff = requirePresent(this.getDisplayDiff(file.id, this.state.activeScope));
     const visibleTargets = this.getVisibleLineTargets(file.id, this.state.activeScope);
     const language = detectPiLanguage(file.path);
     this.state = clampSelectedLineTarget(this.state, file.id, this.state.activeScope, visibleTargets);

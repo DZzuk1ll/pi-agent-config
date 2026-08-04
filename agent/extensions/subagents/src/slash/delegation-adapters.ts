@@ -15,9 +15,12 @@ import {
 	type SubagentDelegationV2Value,
 	type SubagentDelegationV2Update,
 } from "../api/delegation.ts";
-import type { AcceptanceInput, AgentContract, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
+import type { AcceptanceInput, AgentContract, Details, EffectsProjection, ExecutionProjection, JsonSchemaObject, ReviewProjection, ToolBudgetConfig, TurnBudgetConfig, Usage } from "../shared/types.ts";
 import { isAgentContractV1 } from "../runs/shared/agent-contract.ts";
 import { cloneJsonWithinByteLimit } from "./delegation-json.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export interface PromptTemplateDelegationTask {
 	agent: string;
@@ -85,7 +88,7 @@ export interface PromptTemplateDelegationUpdate {
 export interface PromptTemplateBridgeResult {
 	isError?: boolean;
 	content?: unknown;
-	details?: {
+	details?: Details | {
 		mode?: "single" | "parallel" | "chain" | "management";
 		runId?: string;
 		launchContractDigest?: string;
@@ -205,8 +208,8 @@ export function parsePromptTemplateRequest(data: unknown): PromptTemplateDelegat
 	const fallbackTask = tasks[0];
 	return {
 		requestId: value.requestId,
-		agent: hasSingle ? value.agent! : fallbackTask!.agent,
-		task: hasSingle ? value.task! : fallbackTask!.task,
+		agent: hasSingle ? requirePresent(value.agent) : requirePresent(fallbackTask).agent,
+		task: hasSingle ? requirePresent(value.task) : requirePresent(fallbackTask).task,
 		...(tasks.length > 0 ? { tasks } : {}),
 		context: value.context,
 		model: value.model,
@@ -277,12 +280,19 @@ function toolCallNameFromSummary(summary: { text?: string; expandedText?: string
 }
 
 function buildDelegationMessages(
-	result: { messages?: unknown[]; finalOutput?: string; toolCalls?: Array<{ text?: string; expandedText?: string }> },
+	result: {
+		messages?: unknown[];
+		finalOutput?: string;
+		toolCalls?: Array<{ text?: string; expandedText?: string }>;
+	},
 	fallbackText?: string,
 ): unknown[] {
 	if (Array.isArray(result.messages) && result.messages.length > 0) return result.messages;
 	const toolCallParts = (result.toolCalls ?? []).flatMap((summary) => {
-		const name = toolCallNameFromSummary(summary);
+		const name = toolCallNameFromSummary({
+			...(summary.text === undefined ? {} : { text: summary.text }),
+			...(summary.expandedText === undefined ? {} : { expandedText: summary.expandedText }),
+		});
 		return name ? [{ type: "toolCall", name, arguments: { summary: summary.expandedText ?? summary.text ?? "" } }] : [];
 	});
 	const text = typeof result.finalOutput === "string" && result.finalOutput.trim().length > 0
@@ -304,7 +314,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 			typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)"
 				? lastOutput
 				: undefined;
-		return {
+		return omitUndefined({
 			index: entry.index,
 			agent: entry.agent ?? "delegate",
 			status: entry.status,
@@ -317,7 +327,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 			toolCount: entry.toolCount,
 			durationMs: entry.durationMs,
 			tokens: entry.tokens,
-		};
+		});
 	});
 	if (!progress && (!taskProgress || taskProgress.length === 0)) return undefined;
 	const lastOutput = progress?.recentOutput?.[progress.recentOutput.length - 1];
@@ -325,7 +335,7 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 		typeof lastOutput === "string" && lastOutput.trim() && lastOutput !== "(running...)"
 			? lastOutput
 			: undefined;
-	return {
+	return omitUndefined({
 		requestId,
 		...(update.details?.runId ? { runId: update.details.runId } : {}),
 		currentTool: progress?.currentTool,
@@ -338,12 +348,12 @@ export function toDelegationUpdate(requestId: string, update: PromptTemplateBrid
 		durationMs: progress?.durationMs,
 		tokens: progress?.tokens,
 		taskProgress,
-	};
+	});
 }
 
 export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest): DelegatedSubagentExecutionParams {
 	if (request.tasks && request.tasks.length > 0) {
-		return {
+		return omitUndefined({
 			tasks: request.tasks,
 			context: request.context,
 			cwd: request.cwd,
@@ -351,7 +361,7 @@ export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest
 			async: false,
 			foregroundOnly: true,
 			clarify: false,
-		};
+		});
 	}
 	return {
 		agent: request.agent,
@@ -366,7 +376,7 @@ export function toLegacyExecutionParams(request: PromptTemplateDelegationRequest
 }
 
 export function toSubagentDelegationExecutionParams(request: SubagentDelegationRequest): DelegatedSubagentExecutionParams {
-	return {
+	return omitUndefined({
 		agent: request.agent,
 		task: request.task,
 		context: request.context,
@@ -386,11 +396,11 @@ export function toSubagentDelegationExecutionParams(request: SubagentDelegationR
 		async: false,
 		foregroundOnly: true,
 		clarify: false,
-	};
+	});
 }
 
 export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegationV2Request): DelegatedSubagentExecutionParams {
-	return {
+	return omitUndefined({
 		agent: request.agent,
 		task: request.task,
 		context: request.context,
@@ -411,13 +421,13 @@ export function toSubagentDelegationV2ExecutionParams(request: SubagentDelegatio
 		async: false,
 		foregroundOnly: true,
 		clarify: false,
-	};
+	});
 }
 
 export function toSubagentDelegationUpdate(requestId: string, result: PromptTemplateBridgeResult): SubagentDelegationUpdate | undefined {
 	const legacy = toDelegationUpdate(requestId, result);
 	if (!legacy) return undefined;
-	return {
+	return omitUndefined({
 		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 		requestId,
 		...(legacy.runId ? { runId: legacy.runId } : {}),
@@ -430,7 +440,7 @@ export function toSubagentDelegationUpdate(requestId: string, result: PromptTemp
 		...(typeof legacy.toolCount === "number" ? { toolCount: legacy.toolCount } : {}),
 		...(typeof legacy.durationMs === "number" ? { durationMs: legacy.durationMs } : {}),
 		...(typeof legacy.tokens === "number" ? { tokens: legacy.tokens } : {}),
-	};
+	});
 }
 
 export function toSubagentDelegationV2Update(
@@ -485,7 +495,7 @@ export function toSubagentDelegationResponse(
 		.filter((warning): warning is string => typeof warning === "string" && warning.length > 0);
 	const status = resolveSubagentDelegationStatus(result, aborted);
 	const fallbackError = status === "failed" ? firstTextContent(result.content) : undefined;
-	return {
+	return omitUndefined({
 		version: SUBAGENT_DELEGATION_PROTOCOL_VERSION,
 		requestId,
 		status,
@@ -507,7 +517,7 @@ export function toSubagentDelegationResponse(
 		...(typeof progress?.durationMs === "number" ? { durationMs: progress.durationMs } : {}),
 		...(typeof progress?.tokens === "number" ? { tokens: progress.tokens } : {}),
 		...(warnings.length > 0 ? { warnings } : {}),
-	};
+	});
 }
 
 const MAX_V2_RESULT_BYTES = 1024 * 1024;
@@ -595,19 +605,19 @@ export function toPromptTemplateResponse(
 			};
 		}
 		const exitCode = typeof step.exitCode === "number" ? step.exitCode : undefined;
-		return {
+		return omitUndefined({
 			agent: step.agent ?? task.agent,
 			messages: buildDelegationMessages(step),
 			isError: (exitCode !== undefined && exitCode !== 0) || !!step.error,
 			errorText: step.error || undefined,
-		};
+		});
 	});
-	return {
+	return omitUndefined({
 		...request,
 		messages,
 		...(parallelResults ? { parallelResults } : {}),
 		...(contentText ? { contentText } : {}),
 		isError: result.isError === true,
 		errorText: result.isError ? contentText : undefined,
-	};
+	});
 }

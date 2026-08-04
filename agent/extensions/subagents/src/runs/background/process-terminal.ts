@@ -1,9 +1,9 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import { writeAtomicJson, writePrivateAtomicJson } from "../../shared/atomic-json.ts";
+import { decodeAsyncStatus } from "../../shared/status-schema.ts";
 import {
 	SUBAGENT_LIFECYCLE_ARTIFACT_VERSION,
-	type AsyncStatus,
 	type CanonicalSessionTerminalV1,
 	type ProcessInstanceExitV1,
 	type ProcessTerminalReason,
@@ -197,7 +197,7 @@ function stepProcessTerminalProof(
 function overlayStatus(asyncDir: string, proof: ProcessTerminalV1, candidate?: ProcessTerminalCandidate): void {
 	const statusPath = path.join(asyncDir, "status.json");
 	try {
-		const status = JSON.parse(fs.readFileSync(statusPath, "utf-8")) as AsyncStatus;
+		const status = decodeAsyncStatus(JSON.parse(fs.readFileSync(statusPath, "utf-8")), statusPath);
 		status.processTerminal = proof;
 		if (status.steps) {
 			for (const [index, step] of status.steps.entries()) {
@@ -233,7 +233,8 @@ export function finalizeProcessTerminal(
 		else {
 			const allWriters = Object.values(candidate.writers).flat();
 			const status = (() => {
-				try { return JSON.parse(fs.readFileSync(path.join(asyncDir, "status.json"), "utf-8")) as AsyncStatus; } catch { return undefined; }
+				const statusPath = path.join(asyncDir, "status.json");
+				try { return decodeAsyncStatus(JSON.parse(fs.readFileSync(statusPath, "utf-8")), statusPath); } catch { return undefined; }
 			})();
 			const session = candidate.sessionFile ? inspectSessionLease(candidate.sessionFile) : undefined;
 			const writerEntries = Object.entries(candidate.writers);

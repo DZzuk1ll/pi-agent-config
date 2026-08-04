@@ -7,6 +7,7 @@ import * as fs from "node:fs";
 import * as os from "node:os";
 import * as path from "node:path";
 import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 
 export type SkillSource =
 	| "project"
@@ -388,7 +389,7 @@ function parseSkillDescription(content: string): string | undefined {
 
 	const frontmatter = normalized.slice(3, endIndex).trim();
 	const match = frontmatter.match(/^description:\s*(.+)$/m);
-	return match?.[1]?.trim().replace(/^['\"]|['\"]$/g, "");
+	return match?.[1]?.trim().replace(/^['"]|['"]$/g, "");
 }
 
 function maybeReadSkillDescription(filePath: string): string | undefined {
@@ -414,23 +415,23 @@ function collectFilesystemSkills(cwd: string, agentDir: string, skillPaths: Skil
 		if (existingIndex !== undefined) {
 			const existing = entries[existingIndex];
 			if (existing && (SOURCE_PRIORITY[source] ?? 0) > (SOURCE_PRIORITY[existing.source] ?? 0)) {
-				entries[existingIndex] = {
+				entries[existingIndex] = omitUndefined({
 					...existing,
 					name,
 					source,
 					description: maybeReadSkillDescription(resolvedFile),
-				};
+				});
 			}
 			return;
 		}
 		seen.set(resolvedFile, entries.length);
-		entries.push({
+		entries.push(omitUndefined({
 			name,
 			filePath: resolvedFile,
 			source,
 			description: maybeReadSkillDescription(resolvedFile),
 			order: order++,
-		});
+		}));
 	};
 
 	const shouldSkipDirectory = (name: string) => name.startsWith(".") || name === "node_modules";
@@ -588,13 +589,13 @@ function readSkill(
 		const raw = fs.readFileSync(skillPath, "utf-8");
 		const content = stripSkillFrontmatter(raw);
 		const description = parseSkillDescription(raw);
-		const skill: ResolvedSkill = {
+		const skill: ResolvedSkill = omitUndefined({
 			name: skillName,
 			path: skillPath,
 			content,
 			description,
 			source,
-		};
+		});
 
 		skillCache.set(skillPath, { mtime: stat.mtimeMs, skill });
 		if (skillCache.size > MAX_CACHE_SIZE) {
@@ -711,8 +712,8 @@ export function normalizeSkillInput(
 	const trimmed = input.trim();
 	if (trimmed.startsWith("[")) {
 		try {
-			const parsed = JSON.parse(trimmed);
-			if (Array.isArray(parsed)) {
+			const parsed: unknown = JSON.parse(trimmed);
+			if (Array.isArray(parsed) && parsed.every((value): value is string => typeof value === "string")) {
 				return normalizeSkillInput(parsed);
 			}
 		} catch {
@@ -730,7 +731,7 @@ export function discoverAvailableSkills(cwd: string): Array<{
 	const skills = getCachedSkills(cwd);
 	return skills
 		.filter((s) => s.name !== SUBAGENT_ORCHESTRATION_SKILL)
-		.map((s) => ({
+		.map((s) => omitUndefined({
 			name: s.name,
 			source: s.source,
 			description: s.description,

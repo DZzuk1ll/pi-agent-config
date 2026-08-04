@@ -32,7 +32,7 @@ export interface SlashSubagentUpdate {
 }
 
 interface EventBus {
-	on(event: string, handler: (data: unknown) => void): (() => void) | void;
+	on(event: string, handler: (data: unknown) => void): (() => void) | undefined;
 	emit(event: string, data: unknown): void;
 }
 
@@ -125,22 +125,22 @@ export function registerSlashSubagentBridge(options: SlashBridgeOptions): {
 					const first = progress?.[0];
 					const payload: SlashSubagentUpdate = {
 						requestId,
-						progress,
-						currentTool: first?.currentTool,
-						toolCount: first?.toolCount,
+						...(progress === undefined ? {} : { progress }),
+						...(first?.currentTool === undefined ? {} : { currentTool: first.currentTool }),
+						...(first?.toolCount === undefined ? {} : { toolCount: first.toolCount }),
 					};
 					options.events.emit(SLASH_SUBAGENT_UPDATE_EVENT, payload);
 				},
 				ctx,
 			);
 
+			const isError = (result as { isError?: boolean }).isError === true;
+			const errorText = isError ? result.content.find((c) => c.type === "text")?.text : undefined;
 			const response: SlashSubagentResponse = {
 				requestId,
 				result,
-				isError: (result as { isError?: boolean }).isError === true,
-				errorText: (result as { isError?: boolean }).isError
-					? result.content.find((c) => c.type === "text")?.text
-					: undefined,
+				isError,
+				...(errorText === undefined ? {} : { errorText }),
 			};
 			options.events.emit(SLASH_SUBAGENT_RESPONSE_EVENT, response);
 		} catch (error) {

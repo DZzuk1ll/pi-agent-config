@@ -149,9 +149,8 @@ async function readConfigFile(filePath: string): Promise<PiCodexSearchConfig | u
   if (!isPlainObject(parsed)) {
     throw new Error(`Invalid config in ${filePath}: expected a JSON object`);
   }
-  const config = parsed as PiCodexSearchConfig;
-  validateConfig(config, filePath);
-  return config;
+  validateConfig(parsed, filePath);
+  return parsed;
 }
 
 function readEnvConfig(): PiCodexSearchConfig | undefined {
@@ -184,13 +183,16 @@ function readEnvConfig(): PiCodexSearchConfig | undefined {
   return env;
 }
 
-function validateConfig(config: PiCodexSearchConfig, sourceLabel: string): void {
+function validateConfig(
+  config: PiCodexSearchConfig | Record<string, unknown>,
+  sourceLabel: string,
+): asserts config is PiCodexSearchConfig {
   if (config.enabled !== undefined && typeof config.enabled !== "boolean") {
     throw new Error(
       `Invalid enabled in ${sourceLabel}: ${JSON.stringify(config.enabled)}. Must be a boolean.`,
     );
   }
-  if (config.toolName !== undefined && !TOOL_NAME_PATTERN.test(config.toolName)) {
+  if (config.toolName !== undefined && (typeof config.toolName !== "string" || !TOOL_NAME_PATTERN.test(config.toolName))) {
     throw new Error(
       `Invalid toolName in ${sourceLabel}: ${JSON.stringify(config.toolName)}. ` +
         `Must match ${TOOL_NAME_PATTERN.source}.`,
@@ -205,13 +207,13 @@ function validateConfig(config: PiCodexSearchConfig, sourceLabel: string): void 
   if (config.clientVersion !== undefined && !isNonEmptyString(config.clientVersion)) {
     throw new Error(`Invalid clientVersion in ${sourceLabel}: must be a non-empty string.`);
   }
-  if (config.searchContextSize !== undefined && !CONTEXT_SIZES.includes(config.searchContextSize)) {
+  if (config.searchContextSize !== undefined && (typeof config.searchContextSize !== "string" || !CONTEXT_SIZES.includes(config.searchContextSize as SearchContextSize))) {
     throw new Error(
       `Invalid searchContextSize in ${sourceLabel}: ${JSON.stringify(config.searchContextSize)}. ` +
         `Expected one of ${CONTEXT_SIZES.join(", ")}.`,
     );
   }
-  if (config.freshness !== undefined && !FRESHNESS_VALUES.includes(config.freshness)) {
+  if (config.freshness !== undefined && (typeof config.freshness !== "string" || !FRESHNESS_VALUES.includes(config.freshness as Freshness))) {
     throw new Error(
       `Invalid freshness in ${sourceLabel}: ${JSON.stringify(config.freshness)}. ` +
         `Expected one of ${FRESHNESS_VALUES.join(", ")}.`,
@@ -222,15 +224,16 @@ function validateConfig(config: PiCodexSearchConfig, sourceLabel: string): void 
       `Invalid standaloneEnabled in ${sourceLabel}: ${JSON.stringify(config.standaloneEnabled)}. Must be a boolean.`,
     );
   }
-  if (config.searchApi !== undefined && !SEARCH_API_VALUES.includes(config.searchApi)) {
+  if (config.searchApi !== undefined && (typeof config.searchApi !== "string" || !SEARCH_API_VALUES.includes(config.searchApi as SearchApi))) {
     throw new Error(
       `Invalid searchApi in ${sourceLabel}: ${JSON.stringify(config.searchApi)}. ` +
         `Expected one of ${SEARCH_API_VALUES.join(", ")}.`,
     );
   }
   if (config.batchSize !== undefined) {
-    if (
-      !Number.isInteger(config.batchSize) ||
+	if (
+	  typeof config.batchSize !== "number" ||
+	  !Number.isInteger(config.batchSize) ||
       config.batchSize < MIN_BATCH_SIZE ||
       config.batchSize > MAX_BATCH_SIZE
     ) {

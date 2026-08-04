@@ -1,3 +1,5 @@
+
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
 export type ContextMode = "fresh" | "fork";
 export type ContextSummary = ContextMode | "mixed";
 
@@ -12,7 +14,7 @@ export function isContextSummary(value: unknown): value is ContextSummary {
 export function summarizeContextModes(modes: Array<ContextMode | undefined>): ContextSummary | undefined {
 	const resolved = modes.filter(isContextMode);
 	if (resolved.length === 0) return undefined;
-	const first = resolved[0]!;
+	const first = requirePresent(resolved[0]);
 	return resolved.every((mode) => mode === first) ? first : "mixed";
 }
 

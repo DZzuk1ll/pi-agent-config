@@ -1,6 +1,8 @@
 import { filterFilesBySearch } from "./search.js";
 import type { ChangeStatus, CommentIntent, CommentSide, DiffReviewComment, ReviewFile, ReviewFocus, ReviewLineTarget, ReviewScope, ReviewState } from "./types.js";
 import { scopeFileKey } from "./types.js";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 function hasFilesForScope(files: ReviewFile[], scope: ReviewScope): boolean {
   return getScopedFiles(files, scope).length > 0;
@@ -72,7 +74,7 @@ export function ensureActiveFile(state: ReviewState, files: ReviewFile[]): Revie
   if (filtered.some((file) => file.id === state.activeFileId)) {
     return state;
   }
-  return { ...state, activeFileId: filtered[0]!.id };
+  return { ...state, activeFileId: requirePresent(filtered[0]).id };
 }
 
 export function createInitialReviewState(files: ReviewFile[]): ReviewState {
@@ -109,7 +111,7 @@ export function moveActiveFile(state: ReviewState, files: ReviewFile[], delta: n
   const index = filtered.findIndex((file) => file.id === state.activeFileId);
   const currentIndex = index >= 0 ? index : 0;
   const nextIndex = Math.max(0, Math.min(filtered.length - 1, currentIndex + delta));
-  return { ...state, activeFileId: filtered[nextIndex]!.id, selectedCommentIndex: 0 };
+  return { ...state, activeFileId: requirePresent(filtered[nextIndex]).id, selectedCommentIndex: 0 };
 }
 
 export function setActiveFileId(state: ReviewState, files: ReviewFile[], fileId: string | null): ReviewState {
@@ -123,13 +125,13 @@ export function setActiveFileId(state: ReviewState, files: ReviewFile[], fileId:
 export function cycleFocus(state: ReviewState): ReviewState {
   const order: ReviewFocus[] = ["navigator", "diff", "comments"];
   const index = order.indexOf(state.focus);
-  return { ...state, focus: order[(index + 1) % order.length]! };
+  return { ...state, focus: requirePresent(order[(index + 1) % order.length]) };
 }
 
 export function cycleFocusBackward(state: ReviewState): ReviewState {
   const order: ReviewFocus[] = ["navigator", "diff", "comments"];
   const index = order.indexOf(state.focus);
-  return { ...state, focus: order[(index - 1 + order.length) % order.length]! };
+  return { ...state, focus: requirePresent(order[(index - 1 + order.length) % order.length]) };
 }
 
 export function setFocus(state: ReviewState, focus: ReviewFocus): ReviewState {
@@ -192,24 +194,24 @@ export function getSelectedLineTarget(state: ReviewState, fileId: string | null,
 export function clampSelectedLineTarget(state: ReviewState, fileId: string, scope: ReviewScope, visibleTargets: ReviewLineTarget[]): ReviewState {
   if (visibleTargets.length === 0) return state;
   const current = getSelectedLineTarget(state, fileId, scope);
-  if (current == null) return setSelectedLineTarget(state, fileId, scope, visibleTargets[0]!);
+  if (current == null) return setSelectedLineTarget(state, fileId, scope, requirePresent(visibleTargets[0]));
   if (visibleTargets.some((target) => sameLineTarget(target, current))) return state;
 
-  const next = visibleTargets.find((target) => target.line >= current.line) ?? visibleTargets[visibleTargets.length - 1]!;
+  const next = visibleTargets.find((target) => target.line >= current.line) ?? requirePresent(visibleTargets[visibleTargets.length - 1]);
   return setSelectedLineTarget(state, fileId, scope, next);
 }
 
 export function moveSelectedLineTarget(state: ReviewState, fileId: string, scope: ReviewScope, visibleTargets: ReviewLineTarget[], delta: number): ReviewState {
   if (visibleTargets.length === 0) return state;
-  const current = getSelectedLineTarget(state, fileId, scope) ?? visibleTargets[0]!;
+  const current = getSelectedLineTarget(state, fileId, scope) ?? requirePresent(visibleTargets[0]);
   const index = getTargetIndex(visibleTargets, current);
   const nextIndex = Math.max(0, Math.min(visibleTargets.length - 1, index + delta));
-  return setSelectedLineTarget(state, fileId, scope, visibleTargets[nextIndex]!);
+  return setSelectedLineTarget(state, fileId, scope, requirePresent(visibleTargets[nextIndex]));
 }
 
 export function extendSelectedLineTarget(state: ReviewState, fileId: string, scope: ReviewScope, visibleTargets: ReviewLineTarget[], delta: number): ReviewState {
   if (visibleTargets.length === 0) return state;
-  const current = getSelectedLineTarget(state, fileId, scope) ?? visibleTargets[0]!;
+  const current = getSelectedLineTarget(state, fileId, scope) ?? requirePresent(visibleTargets[0]);
   const direction = Math.sign(delta);
   if (direction === 0) return state;
 
@@ -218,7 +220,7 @@ export function extendSelectedLineTarget(state: ReviewState, fileId: string, sco
   let nextIndex = currentIndex + direction;
 
   while (nextIndex >= 0 && nextIndex < visibleTargets.length) {
-    const nextTarget = visibleTargets[nextIndex]!;
+    const nextTarget = requirePresent(visibleTargets[nextIndex]);
     if (nextTarget.side === current.side) {
       return setSelectedLineTarget(state, fileId, scope, { ...nextTarget, endLine: anchorLine });
     }

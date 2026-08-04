@@ -3,6 +3,8 @@ import type { Message } from "@earendil-works/pi-ai";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
 import { type Details, type SingleResult, type Usage, SLASH_RESULT_TYPE } from "../shared/types.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export interface SlashMessageDetails {
 	requestId: string;
@@ -241,14 +243,14 @@ export function failSlashResult(requestId: string, params: SubagentParamsLike, m
 		...result,
 		exitCode: 1,
 		error: message,
-		progress: result.progress ? { ...result.progress, status: "failed" as const } : result.progress,
+		...(result.progress ? { progress: { ...result.progress, status: "failed" as const } } : {}),
 	}));
 	const result: AgentToolResult<Details> = {
 		content: [{ type: "text", text: message }],
 		details: {
 			...initial.details,
 			results: failedResults,
-			progress: failedResults.map((entry) => entry.progress!).filter(Boolean),
+			progress: failedResults.map((entry) => requirePresent(entry.progress)).filter(Boolean),
 		},
 	};
 	const snapshot = { result, version: nextVersion() };

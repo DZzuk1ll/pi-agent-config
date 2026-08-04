@@ -8,6 +8,8 @@ import {
 	type ModelInfo,
 	type ThinkingLevel,
 } from "../shared/model-info.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export const STRONG_WATCHDOG_THINKING: ThinkingLevel = "high";
 
@@ -125,7 +127,7 @@ function strongFamilyOrder(ctx: ExtensionContext): StrongWatchdogFamily[] {
 
 function findFamilyMatch(family: StrongWatchdogFamily, availableModels: ModelInfo[]): string | undefined {
 	const matches = availableModels.filter((entry) => familyForModel(entry) === family);
-	if (matches.length === 1) return matches[0]!.fullId;
+	if (matches.length === 1) return requirePresent(matches[0]).fullId;
 	return undefined;
 }
 

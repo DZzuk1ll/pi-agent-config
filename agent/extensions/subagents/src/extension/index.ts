@@ -28,6 +28,7 @@ import { clearLegacyResultAnimationTimer, renderSubagentResult } from "../tui/re
 import { openSubagentFleet } from "../tui/fleet.ts";
 import { SubagentFleetStatus, resolveFleetViewPlacement } from "../tui/fleet-status.ts";
 import { SubagentParams } from "./schemas.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import { validateChainInput } from "./chain-validation.ts";
 import { createSubagentExecutor, type SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import { createAsyncJobTracker } from "../runs/background/async-job-tracker.ts";
@@ -41,7 +42,6 @@ import { createNativeSupervisorChannel } from "../intercom/native-supervisor-cha
 import { registerSubagentRpcBridge } from "./rpc.ts";
 import { registerSubagentTranscriptApi } from "./transcript-api.ts";
 import { clearSlashSnapshots, getSlashRenderableSnapshot, resolveSlashMessageDetails, restoreSlashFinalSnapshots, type SlashMessageDetails } from "../slash/slash-live-state.ts";
-import { inspectSubagentStatus } from "../runs/background/run-status.ts";
 import { resolveWaitToolConfig } from "../runs/background/subagent-wait.ts";
 import { registerWaitTool } from "../runs/background/wait-tool.ts";
 import { drainOutstandingWork } from "../runs/background/auto-drain.ts";
@@ -239,7 +239,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 	const transcriptApi = registerSubagentTranscriptApi(pi.events, state);
 	const supervisorChannel = createNativeSupervisorChannel(pi, state);
 	const mainWatchdog = registerMainWatchdog(pi);
-	const completionNotifier = registerSubagentNotify(pi, state, { batchConfig: config.completionBatch });
+	const completionNotifier = registerSubagentNotify(pi, state, omitUndefined({ batchConfig: config.completionBatch }));
 	const fleetStatus = fleetViewEnabled
 		? new SubagentFleetStatus(state, async (itemKey) => {
 			const ctx = state.lastUiContext;
@@ -443,7 +443,7 @@ export default function registerSubagentExtension(pi: ExtensionAPI): void {
 
 		execute(id, params, signal, onUpdate, ctx) {
 			const view = params.view === "fleet" || params.view === "transcript" ? params.view : undefined;
-			return executeSubagentCollapsed(id, { ...params, view }, signal ?? new AbortController().signal, onUpdate, ctx);
+			return executeSubagentCollapsed(id, omitUndefined({ ...params, view }), signal ?? new AbortController().signal, onUpdate, ctx);
 		},
 
 		renderCall(args, theme) {

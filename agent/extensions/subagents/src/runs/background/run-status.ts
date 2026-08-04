@@ -14,6 +14,9 @@ import { resolveSubagentRunId } from "./run-id-resolver.ts";
 import { flatToLogicalStepIndex, normalizeParallelGroups } from "./parallel-groups.ts";
 import { reconcileAsyncRun, reconcileNestedAsyncDescendants } from "./stale-run-reconciler.ts";
 import { attachRootChildrenToSteps, findNestedRouteForRootId, projectNestedRegistryForRoot, type NestedRunResolutionScope } from "../shared/nested-events.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 interface RunStatusParams {
 	action?: "status";
@@ -33,6 +36,61 @@ interface RunStatusDeps {
 	state?: SubagentState;
 	nested?: NestedRunResolutionScope;
 	sessionRoots?: string[];
+}
+
+interface AsyncResultStatusData {
+	id?: string;
+	runId?: string;
+	agent?: string;
+	success?: boolean;
+	summary?: string;
+	output?: string;
+	exitCode?: number | null;
+	state?: string;
+	sessionFile?: string;
+	parallelHandoff?: { path?: string };
+	results?: AsyncResultStatusData[];
+}
+
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function decodeAsyncResultStatus(value: unknown, source: string): AsyncResultStatusData {
+	const record = recordValue(value);
+	if (!record) throw new TypeError(`Invalid async result file '${source}': expected an object.`);
+	const strings = ["id", "runId", "agent", "summary", "output", "state", "sessionFile"] as const;
+	for (const field of strings) {
+		if (record[field] !== undefined && typeof record[field] !== "string") throw new TypeError(`Invalid async result file '${source}': ${field} must be a string.`);
+	}
+	if (record.success !== undefined && typeof record.success !== "boolean") throw new TypeError(`Invalid async result file '${source}': success must be a boolean.`);
+	if (record.exitCode !== undefined && record.exitCode !== null && typeof record.exitCode !== "number") throw new TypeError(`Invalid async result file '${source}': exitCode must be a number or null.`);
+	let parallelHandoff: AsyncResultStatusData["parallelHandoff"];
+	if (record.parallelHandoff !== undefined) {
+		const handoff = recordValue(record.parallelHandoff);
+		if (!handoff || (handoff.path !== undefined && typeof handoff.path !== "string")) throw new TypeError(`Invalid async result file '${source}': parallelHandoff is invalid.`);
+		parallelHandoff = typeof handoff.path === "string" ? { path: handoff.path } : {};
+	}
+	let results: AsyncResultStatusData[] | undefined;
+	if (record.results !== undefined) {
+		if (!Array.isArray(record.results)) throw new TypeError(`Invalid async result file '${source}': results must be an array.`);
+		results = record.results.map((child, index) => decodeAsyncResultStatus(child, `${source} results[${index}]`));
+	}
+	return omitUndefined({
+		id: typeof record.id === "string" ? record.id : undefined,
+		runId: typeof record.runId === "string" ? record.runId : undefined,
+		agent: typeof record.agent === "string" ? record.agent : undefined,
+		success: typeof record.success === "boolean" ? record.success : undefined,
+		summary: typeof record.summary === "string" ? record.summary : undefined,
+		output: typeof record.output === "string" ? record.output : undefined,
+		exitCode: typeof record.exitCode === "number" || record.exitCode === null ? record.exitCode : undefined,
+		state: typeof record.state === "string" ? record.state : undefined,
+		sessionFile: typeof record.sessionFile === "string" ? record.sessionFile : undefined,
+		parallelHandoff,
+		results,
+	});
 }
 
 function hasExistingSessionFile(value: unknown): value is string {
@@ -144,7 +202,7 @@ function formatRememberedForegroundTranscript(run: ForegroundResumeRun, options:
 	if (index === undefined && run.children.length === 1) index = 0;
 	if (index === undefined) return `Transcript view requires index for foreground run '${run.runId}' with ${run.children.length} children.`;
 	if (index < 0 || index >= run.children.length) throw new Error(`Transcript index ${index} is out of range for ${run.children.length} foreground children.`);
-	const child = run.children[index]!;
+	const child = requirePresent(run.children[index]);
 	const lineLimit = Math.max(1, Math.min(options.lines ?? 80, 1000));
 	const outputLines = rememberedForegroundChildOutput(child).split(/\r?\n/).filter((line) => line.trim()).slice(-lineLimit);
 	const lines = [
@@ -207,7 +265,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 		};
 	}
 	if (params.view === "fleet") {
-		return inspectSubagentFleet(params, { asyncDirRoot, resultsDir, kill: deps.kill, now: deps.now, state: deps.state, childSafe: Boolean(deps.nested) });
+		return inspectSubagentFleet(params, omitUndefined({ asyncDirRoot, resultsDir, kill: deps.kill, now: deps.now, state: deps.state, childSafe: Boolean(deps.nested) }));
 	}
 	if (!params.id && !params.runId && !params.dir) {
 		if (deps.nested) {
@@ -218,9 +276,9 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			};
 		}
 		try {
-			const runs = listAsyncRuns(asyncDirRoot, { states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now });
+			const runs = listAsyncRuns(asyncDirRoot, omitUndefined({ states: ["queued", "running"], sessionId: currentSessionId, resultsDir, kill: deps.kill, now: deps.now }));
 			if (params.view === "transcript") {
-				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: runs[0]!.id }, deps);
+				if (runs.length === 1) return inspectSubagentStatus({ ...params, id: requirePresent(runs[0]).id }, deps);
 				return {
 					content: [{ type: "text", text: runs.length === 0 ? "No active async run transcript is available." : `Transcript view requires an id when ${runs.length} active async runs exist. Use subagent({ action: "status", view: "fleet" }) to choose one.` }],
 					isError: true,
@@ -245,13 +303,13 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	try {
 		const requestedId = params.id ?? params.runId;
 		if (!params.dir && requestedId) {
-			const resolved = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
+			const resolved = resolveSubagentRunId(requestedId, omitUndefined({ asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested }));
 			if (resolved?.kind === "foreground") {
 				const run = deps.state?.foregroundRuns?.get(resolved.id);
 				if (run) {
 					try {
 						return {
-							content: [{ type: "text", text: params.view === "transcript" ? formatRememberedForegroundTranscript(run, { index: params.index, lines: params.lines }) : formatRememberedForegroundStatus(run) }],
+							content: [{ type: "text", text: params.view === "transcript" ? formatRememberedForegroundTranscript(run, omitUndefined({ index: params.index, lines: params.lines })) : formatRememberedForegroundStatus(run) }],
 							details: { mode: "single", results: [] },
 						};
 					} catch (error) {
@@ -261,12 +319,12 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 				}
 			}
 			if (resolved?.kind === "nested") {
-				reconcileNestedAsyncDescendants(resolved.match.route, { resultsDir, kill: deps.kill, now: deps.now });
-				const refreshed = resolveSubagentRunId(requestedId, { asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested });
+				reconcileNestedAsyncDescendants(resolved.match.route, omitUndefined({ resultsDir, kill: deps.kill, now: deps.now }));
+				const refreshed = resolveSubagentRunId(requestedId, omitUndefined({ asyncDirRoot, resultsDir, state: deps.state, nested: deps.nested }));
 				const nested = refreshed?.kind === "nested" ? refreshed : resolved;
 				if (params.view === "transcript") {
 					try {
-						return { content: [{ type: "text", text: formatNestedRunTranscript(nested.match.run, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+						return { content: [{ type: "text", text: formatNestedRunTranscript(nested.match.run, omitUndefined({ index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots })) }], details: { mode: "single", results: [] } };
 					} catch (error) {
 						const message = error instanceof Error ? error.message : String(error);
 						return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
@@ -300,7 +358,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	if (asyncDir) {
 		let reconciliation: ReturnType<typeof reconcileAsyncRun>;
 		try {
-			reconciliation = reconcileAsyncRun(asyncDir, { resultsDir, kill: deps.kill, now: deps.now });
+			reconciliation = reconcileAsyncRun(asyncDir, omitUndefined({ resultsDir, kill: deps.kill, now: deps.now }));
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);
 			return {
@@ -323,7 +381,7 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 					};
 				}
 				try {
-					return { content: [{ type: "text", text: formatAsyncRunTranscript(status, asyncDir, { index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots }) }], details: { mode: "single", results: [] } };
+					return { content: [{ type: "text", text: formatAsyncRunTranscript(status, asyncDir, omitUndefined({ index: params.index, lines: params.lines, sessionRoots: deps.sessionRoots })) }], details: { mode: "single", results: [] } };
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };
@@ -333,27 +391,28 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 			let nestedWarning: string | undefined;
 			try {
 				const nestedRoute = findNestedRouteForRootId(status.runId);
-				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, { resultsDir, kill: deps.kill, now: deps.now });
+				if (nestedRoute) reconcileNestedAsyncDescendants(nestedRoute, omitUndefined({ resultsDir, kill: deps.kill, now: deps.now }));
 				nestedChildren = projectNestedRegistryForRoot(status.runId)?.children ?? [];
 				attachRootChildrenToSteps(status.runId, status.steps, nestedChildren);
 			} catch (error) {
 				nestedWarning = `Nested status unavailable: ${error instanceof Error ? error.message : String(error)}`;
 			}
-			const outputPath = formatAsyncRunOutputPath({ asyncDir, outputFile: status.outputFile });
-			const progressLabel = formatAsyncRunProgressLabel({
+			const outputPath = formatAsyncRunOutputPath(omitUndefined({ asyncDir, outputFile: status.outputFile }));
+			const progressLabel = formatAsyncRunProgressLabel(omitUndefined({
 				mode: status.mode,
 				state: status.state,
 				currentStep: status.currentStep,
 				chainStepCount: status.chainStepCount,
 				parallelGroups: status.parallelGroups,
 				steps: (status.steps ?? []).map((step, index) => ({ index, agent: step.agent, status: step.status })),
-			});
+			}));
 			const started = new Date(status.startedAt).toISOString();
 			const updated = status.lastUpdate ? new Date(status.lastUpdate).toISOString() : "n/a";
 			const statusActivityText = status.state === "running" ? formatActivityLabel(status.lastActivityAt, status.activityState) : undefined;
 			const steeringText = formatSteeringSummary(status);
-			const processTerminal = readProcessTerminal(asyncDir, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId })
-				?? sanitizeProcessTerminal(status.processTerminal, { runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId }, path.join(asyncDir, "status.json"));
+			const terminalIdentity = omitUndefined({ runId: status.runId, runnerProcessInstanceId: status.processTerminal?.runnerProcessInstanceId });
+			const processTerminal = readProcessTerminal(asyncDir, terminalIdentity)
+				?? sanitizeProcessTerminal(status.processTerminal, terminalIdentity, path.join(asyncDir, "status.json"));
 			const terminalReason = processTerminal?.state === "unknown" ? processTerminal.reason : undefined;
 
 			const lines = [
@@ -416,10 +475,10 @@ export function inspectSubagentStatus(params: RunStatusParams, deps: RunStatusDe
 	if (resultPath) {
 		try {
 			const raw = fs.readFileSync(resultPath, "utf-8");
-			const data = JSON.parse(raw) as { id?: string; runId?: string; agent?: string; success?: boolean; summary?: string; output?: string; exitCode?: number; state?: string; sessionFile?: string; parallelHandoff?: { path?: string }; results?: Array<{ agent?: string; output?: string; summary?: string; sessionFile?: string; state?: string; success?: boolean; exitCode?: number | null }> };
+			const data = decodeAsyncResultStatus(JSON.parse(raw), resultPath);
 			if (params.view === "transcript") {
 				try {
-					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, { index: params.index, lines: params.lines }) }], details: { mode: "single", results: [] } };
+					return { content: [{ type: "text", text: formatAsyncResultTranscript(data, resultPath, omitUndefined({ index: params.index, lines: params.lines })) }], details: { mode: "single", results: [] } };
 				} catch (error) {
 					const message = error instanceof Error ? error.message : String(error);
 					return { content: [{ type: "text", text: message }], isError: true, details: { mode: "single", results: [] } };

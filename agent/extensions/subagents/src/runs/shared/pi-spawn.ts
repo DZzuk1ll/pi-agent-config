@@ -5,6 +5,19 @@ import { fileURLToPath } from "node:url";
 export const PI_CODING_AGENT_PACKAGE = "@earendil-works/pi-coding-agent";
 export const PI_SUBAGENT_PI_BINARY_ENV = "PI_SUBAGENT_PI_BINARY";
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === "object" && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function stringRecord(value: unknown): Record<string, string> | undefined {
+	const record = recordValue(value);
+	return record && Object.values(record).every((entry) => typeof entry === "string")
+		? record as Record<string, string>
+		: undefined;
+}
+
 export function findPiPackageRootFromEntry(
 	entryPoint: string,
 ): string | undefined {
@@ -12,10 +25,8 @@ export function findPiPackageRootFromEntry(
 	while (dir !== path.dirname(dir)) {
 		const packageJsonPath = path.join(dir, "package.json");
 		if (fs.existsSync(packageJsonPath)) {
-			const pkg = JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")) as {
-				name?: unknown;
-			};
-			if (pkg.name === PI_CODING_AGENT_PACKAGE) return dir;
+			const pkg = recordValue(JSON.parse(fs.readFileSync(packageJsonPath, "utf-8")));
+			if (pkg?.name === PI_CODING_AGENT_PACKAGE) return dir;
 		}
 		dir = path.dirname(dir);
 	}
@@ -110,10 +121,11 @@ export function resolvePiCliScript(
 				return path.join(packageRoot, "package.json");
 			});
 		const packageJsonPath = resolvePackageJson();
-		const packageJson = JSON.parse(readFileSync(packageJsonPath, "utf-8")) as {
-			bin?: string | Record<string, string>;
-		};
-		const binField = packageJson.bin;
+		const packageJson = recordValue(JSON.parse(readFileSync(packageJsonPath, "utf-8")));
+		if (!packageJson) return undefined;
+		const binField = typeof packageJson.bin === "string"
+			? packageJson.bin
+			: stringRecord(packageJson.bin);
 		const binPath =
 			typeof binField === "string"
 				? binField

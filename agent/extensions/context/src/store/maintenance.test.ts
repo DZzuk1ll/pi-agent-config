@@ -1,10 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { create_context_store } from '../../test/support.js';
-import { ContextStore } from '../store.js';
+import type { ContextStore } from '../store.js';
 import {
 	context_store_purge_with_details,
 	context_store_stats,
 } from './maintenance.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 function create_store(): ContextStore {
 	return create_context_store(
@@ -31,11 +33,11 @@ describe('context store maintenance helpers', () => {
 		).toBe(0);
 
 		const details = context_store_purge_with_details(store, {
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 		});
 		expect(details).toMatchObject({
 			deleted: 1,
-			source_id: stored!.source_id,
+			source_id: requirePresent(stored).source_id,
 		});
 		expect(context_store_stats(store).sources).toBe(0);
 	});

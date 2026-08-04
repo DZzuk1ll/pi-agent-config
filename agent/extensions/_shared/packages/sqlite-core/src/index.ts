@@ -99,5 +99,7 @@ export function with_sqlite_transaction<T>(
 			throw error;
 		}
 	};
-	return options.retry === false ? run() : with_sqlite_busy_retry(run, { operation: options.operation });
+	return options.retry === false
+		? run()
+		: with_sqlite_busy_retry(run, options.operation === undefined ? {} : { operation: options.operation });
 }

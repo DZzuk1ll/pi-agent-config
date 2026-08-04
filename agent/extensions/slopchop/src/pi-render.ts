@@ -1,4 +1,6 @@
 import { getLanguageFromPath, highlightCode } from "@earendil-works/pi-coding-agent";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 export function detectPiLanguage(filePath: string): string | undefined {
   return getLanguageFromPath(filePath);
@@ -56,12 +58,12 @@ function diffWordTokens(oldContent: string, newContent: string): WordDiffPart[] 
   const table = Array.from({ length: oldTokens.length + 1 }, () => new Uint16Array(newTokens.length + 1));
 
   for (let oldIndex = oldTokens.length - 1; oldIndex >= 0; oldIndex -= 1) {
-    const current = table[oldIndex]!;
-    const next = table[oldIndex + 1]!;
+    const current = requirePresent(table[oldIndex]);
+    const next = requirePresent(table[oldIndex + 1]);
     for (let newIndex = newTokens.length - 1; newIndex >= 0; newIndex -= 1) {
-      current[newIndex] = oldTokens[oldIndex]!.key === newTokens[newIndex]!.key
-        ? next[newIndex + 1]! + 1
-        : Math.max(next[newIndex]!, current[newIndex + 1]!);
+      current[newIndex] = requirePresent(oldTokens[oldIndex]).key === requirePresent(newTokens[newIndex]).key
+        ? requirePresent(next[newIndex + 1]) + 1
+        : Math.max(requirePresent(next[newIndex]), requirePresent(current[newIndex + 1]));
     }
   }
 
@@ -70,30 +72,30 @@ function diffWordTokens(oldContent: string, newContent: string): WordDiffPart[] 
   let newIndex = 0;
 
   while (oldIndex < oldTokens.length && newIndex < newTokens.length) {
-    if (oldTokens[oldIndex]!.key === newTokens[newIndex]!.key) {
-      pushWordDiffPart(parts, { value: newTokens[newIndex]!.value });
+    if (requirePresent(oldTokens[oldIndex]).key === requirePresent(newTokens[newIndex]).key) {
+      pushWordDiffPart(parts, { value: requirePresent(newTokens[newIndex]).value });
       oldIndex += 1;
       newIndex += 1;
       continue;
     }
 
-    if (table[oldIndex + 1]![newIndex]! >= table[oldIndex]![newIndex + 1]!) {
-      pushWordDiffPart(parts, { value: oldTokens[oldIndex]!.value, removed: true });
+    if (requirePresent(requirePresent(table[oldIndex + 1])[newIndex]) >= requirePresent(requirePresent(table[oldIndex])[newIndex + 1])) {
+      pushWordDiffPart(parts, { value: requirePresent(oldTokens[oldIndex]).value, removed: true });
       oldIndex += 1;
       continue;
     }
 
-    pushWordDiffPart(parts, { value: newTokens[newIndex]!.value, added: true });
+    pushWordDiffPart(parts, { value: requirePresent(newTokens[newIndex]).value, added: true });
     newIndex += 1;
   }
 
   while (oldIndex < oldTokens.length) {
-    pushWordDiffPart(parts, { value: oldTokens[oldIndex]!.value, removed: true });
+    pushWordDiffPart(parts, { value: requirePresent(oldTokens[oldIndex]).value, removed: true });
     oldIndex += 1;
   }
 
   while (newIndex < newTokens.length) {
-    pushWordDiffPart(parts, { value: newTokens[newIndex]!.value, added: true });
+    pushWordDiffPart(parts, { value: requirePresent(newTokens[newIndex]).value, added: true });
     newIndex += 1;
   }
 

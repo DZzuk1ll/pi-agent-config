@@ -6,7 +6,7 @@ import {
 	ToolExecutionComponent,
 	UserMessageComponent,
 } from "@earendil-works/pi-coding-agent";
-import { Container, Text } from "@earendil-works/pi-tui";
+import { Container, Text, type Component } from "@earendil-works/pi-tui";
 import {
 	formatDoneLineSpacing,
 	isToolComponent,
@@ -19,9 +19,57 @@ import {
 	OSC133_ZONE_RE,
 } from "../_shared/runtime/compact-transcript-format.ts";
 import { registerPrototypePatch } from "../_shared/runtime/prototype-patch.ts";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
+
 
 const WORKING_MESSAGE_PATCH = Symbol.for("compact-transcript:working-message");
 const ANSI_SGR_RE = /\x1b\[[0-9;]*m/g;
+
+interface MessageBlock {
+	type?: unknown;
+	text?: unknown;
+	thinking?: unknown;
+}
+
+interface AssistantMessageBridge {
+	lastMessage?: { content?: unknown };
+	hideThinkingBlock?: boolean;
+	hiddenThinkingLabel?: string;
+}
+
+interface ToolResultBridge {
+	content?: unknown;
+}
+
+interface ToolRenderOptionsBridge {
+	isPartial?: boolean;
+	expanded?: boolean;
+}
+
+interface ThemeBridge {
+	fg(color: string, text: string): string;
+}
+
+type ToolResultRenderer = (
+	result: ToolResultBridge,
+	options: ToolRenderOptionsBridge,
+	theme: ThemeBridge,
+	context: unknown,
+) => Component;
+
+type WorkingMessageSetter = (message?: string) => void;
+type WorkingMessageUi = ExtensionUIContext & {
+	[WORKING_MESSAGE_PATCH]?: WorkingMessageSetter;
+};
+
+function requireStringLines(value: unknown, source: string): string[] {
+	if (Array.isArray(value) && value.every((line) => typeof line === "string")) return value;
+	throw new TypeError(`${source} returned a non-string-lines value`);
+}
+
+function messageBlock(value: unknown): MessageBlock {
+	return value && typeof value === "object" ? value as MessageBlock : {};
+}
 
 function readUiSettings(): Record<string, unknown> {
 	const projectPath = `${process.cwd()}/.pi/settings.json`;
@@ -30,7 +78,7 @@ function readUiSettings(): Record<string, unknown> {
 	for (const path of [userPath, projectPath]) {
 		try {
 			if (!existsSync(path)) continue;
-			const parsed = JSON.parse(readFileSync(path, "utf8"));
+			const parsed: unknown = JSON.parse(readFileSync(path, "utf8"));
 			if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
 				settings = { ...settings, ...parsed };
 			}
@@ -54,24 +102,27 @@ function previewLines(text: string): string[] {
 }
 
 function patchCollapsedToolPreviews(): () => void {
-	const prototype = ToolExecutionComponent.prototype as any;
+	const prototype = ToolExecutionComponent.prototype;
 	return registerPrototypePatch(prototype, "getResultRenderer", {
 		name: "compact-transcript:tool-preview",
 		order: 200,
-		wrap: (getResultRenderer) => function compactResultRenderer() {
+		wrap: (getResultRenderer) => function compactResultRenderer(this: { toolName?: unknown }) {
 		const renderer = getResultRenderer.call(this);
 		const toolName = typeof this.toolName === "string" ? this.toolName : "";
 		if (typeof renderer !== "function" || !["read", "grep", "find", "ls"].includes(toolName)) {
 			return renderer;
 		}
 
-		return (result: any, options: any, theme: any, context: any) => {
-			const rendered = renderer(result, options, theme, context);
+		const typedRenderer = renderer as ToolResultRenderer;
+		return (result: ToolResultBridge, options: ToolRenderOptionsBridge, theme: ThemeBridge, context: unknown) => {
+			const rendered = typedRenderer(result, options, theme, context);
 			if (options?.isPartial || options?.expanded) return rendered;
 
 			const settings = readUiSettings();
 			const mode = toolName === "read" ? settings.readOutputMode : settings.searchOutputMode;
-			const text = result?.content?.find((block: any) => block?.type === "text")?.text;
+			const text = Array.isArray(result.content)
+				? result.content.map(messageBlock).find((block) => block.type === "text")?.text
+				: undefined;
 			if (mode !== "preview" || typeof text !== "string") return rendered;
 
 			const lines = previewLines(text);
@@ -91,14 +142,14 @@ function patchCollapsedToolPreviews(): () => void {
 }
 
 function patchToolGrouping(): () => void {
-	const prototype = Container.prototype as any;
+	const prototype = Container.prototype;
 	return registerPrototypePatch(prototype, "render", {
 		name: "compact-transcript:tool-grouping",
 		order: 200,
-		wrap: (render) => function compactGroupedRender(width: number): string[] {
+		wrap: (render) => function compactGroupedRender(this: Container, width: number): string[] {
 		const children = Array.isArray(this.children) ? this.children : [];
 		if (isToolComponent(this) || !children.some(isToolComponent)) {
-			return render.call(this, width);
+			return requireStringLines(render.call(this, width), "Container.render");
 		}
 		const settings = readUiSettings();
 		return renderPlannedChildren(
@@ -112,15 +163,17 @@ function patchToolGrouping(): () => void {
 	});
 }
 
-function isEmptyToolRoundAssistant(child: any): boolean {
+function isEmptyToolRoundAssistant(child: unknown): boolean {
 	if (!(child instanceof AssistantMessageComponent)) return false;
-	const content = (child as any).lastMessage?.content;
+	const assistant = child as unknown as AssistantMessageBridge;
+	const content = assistant.lastMessage?.content;
 	if (!Array.isArray(content)) return false;
-	const hasToolCall = content.some((block: any) => block?.type === "toolCall");
-	const hasVisibleAssistantContent = content.some((block: any) =>
+	const blocks = content.map(messageBlock);
+	const hasToolCall = blocks.some((block) => block.type === "toolCall");
+	const hasVisibleAssistantContent = blocks.some((block) =>
 		(block?.type === "text" && typeof block.text === "string" && block.text.trim())
 		|| (
-			(child as any).hideThinkingBlock !== true
+			assistant.hideThinkingBlock !== true
 			&& block?.type === "thinking"
 			&& typeof block.thinking === "string"
 			&& block.thinking.trim()
@@ -130,26 +183,24 @@ function isEmptyToolRoundAssistant(child: any): boolean {
 }
 
 function patchUserPrefix(): () => void {
-	const prototype = UserMessageComponent.prototype as any;
+	const prototype = UserMessageComponent.prototype;
 	return registerPrototypePatch(prototype, "render", {
 		name: "compact-transcript:user-render",
 		order: 200,
-		wrap: (render) => function compactUserRender(width: number): string[] {
-		const lines = render.call(this, width);
-		if (!Array.isArray(lines)) return lines;
+		wrap: (render) => function compactUserRender(this: object, width: number): string[] {
+		const lines = requireStringLines(render.call(this, width), "UserMessageComponent.render");
 		return formatCompactUserMessageLines(lines);
 		},
 	});
 }
 
 function patchDoneLine(): () => void {
-	const prototype = AssistantMessageComponent.prototype as any;
+	const prototype = AssistantMessageComponent.prototype;
 	return registerPrototypePatch(prototype, "render", {
 		name: "compact-transcript:assistant-render",
 		order: 200,
-		wrap: (render) => function compactAssistantRender(width: number): string[] {
-		const lines = render.call(this, width);
-		if (!Array.isArray(lines)) return lines;
+		wrap: (render) => function compactAssistantRender(this: AssistantMessageBridge & object, width: number): string[] {
+		const lines = requireStringLines(render.call(this, width), "AssistantMessageComponent.render");
 		const normalized = formatDoneLineSpacing(
 			lines.map((line) =>
 				line
@@ -160,12 +211,13 @@ function patchDoneLine(): () => void {
 		if (this.hideThinkingBlock !== true || !Array.isArray(this.lastMessage?.content)) {
 			return normalized;
 		}
-		const hasThinking = this.lastMessage.content.some((block: any) =>
-			block?.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()
+		const blocks = (this.lastMessage.content as unknown[]).map(messageBlock);
+		const hasThinking = blocks.some((block) =>
+			block.type === "thinking" && typeof block.thinking === "string" && block.thinking.trim()
 		);
 		if (!hasThinking) return normalized;
-		const hasText = this.lastMessage.content.some((block: any) =>
-			block?.type === "text" && typeof block.text === "string" && block.text.trim()
+		const hasText = blocks.some((block) =>
+			block.type === "text" && typeof block.text === "string" && block.text.trim()
 		);
 		if (!hasText) return [];
 
@@ -173,14 +225,14 @@ function patchDoneLine(): () => void {
 		const visible = label
 			? normalized.filter((line) => line.replace(ANSI_SGR_RE, "").trim() !== label)
 			: normalized;
-		while (visible.length > 0 && !visible[0]!.replace(ANSI_SGR_RE, "").trim()) visible.shift();
+		while (visible.length > 0 && !requirePresent(visible[0]).replace(ANSI_SGR_RE, "").trim()) visible.shift();
 		return visible;
 		},
 	});
 }
 
 function patchWorkingMessage(ui: ExtensionUIContext): () => void {
-	const target = ui as any;
+	const target = ui as WorkingMessageUi;
 	if (target[WORKING_MESSAGE_PATCH] || typeof target.setWorkingMessage !== "function") return () => {};
 
 	const original = target.setWorkingMessage;

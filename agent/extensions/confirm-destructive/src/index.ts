@@ -90,7 +90,7 @@ export default async function confirm_destructive(pi: ExtensionAPI) {
 		async (
 			event: ToolCallEvent,
 			ctx,
-		): Promise<ToolCallEventResult | void> => {
+		): Promise<ToolCallEventResult | undefined> => {
 			if (event.toolName === 'write') {
 				const path = event.input.path;
 				if (typeof path === 'string' && path.trim()) {
@@ -171,7 +171,7 @@ export default async function confirm_destructive(pi: ExtensionAPI) {
 		async (
 			event: UserBashEvent,
 			ctx,
-		): Promise<UserBashEventResult | void> => {
+		): Promise<UserBashEventResult | undefined> => {
 			const action = assess_bash_command(
 				event.command,
 				event.cwd,

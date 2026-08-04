@@ -4,6 +4,7 @@ import {
 	planFromCompletionDetails,
 } from "./completion-tool.js";
 import { PLAN_MODE_THINKING_LEVELS, type PlanModeFixedThinkingLevel } from "./settings.js";
+import { omitUndefinedAs } from "../../_shared/runtime/omit-undefined.ts";
 
 export type PlanCompletionSource = typeof PLAN_MODE_COMPLETE_TOOL_NAME | "legacy_proposed_plan";
 
@@ -60,7 +61,7 @@ export function restorePlanModeState(entries: unknown[], stateEntryType: string)
 	const activeImplementation = enabled
 		? undefined
 		: normalizeActiveImplementation(entry.data.activeImplementation);
-	return {
+	return omitUndefinedAs<PlanModeState>({
 		enabled,
 		latestPlan,
 		latestPlanSource: enabled
@@ -76,7 +77,7 @@ export function restorePlanModeState(entries: unknown[], stateEntryType: string)
 			: undefined,
 		appliedThinkingLevel: enabled ? fixedThinkingLevel(entry.data.appliedThinkingLevel) : undefined,
 		manualThinkingLevel: enabled ? fixedThinkingLevel(entry.data.manualThinkingLevel) : undefined,
-	};
+	});
 }
 
 function normalizeActiveImplementation(value: unknown): ActiveImplementationPlan | undefined {

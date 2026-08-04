@@ -7,6 +7,9 @@ import { validateToolBudgetConfig } from "../shared/tool-budget.ts";
 import { intersectSubagentCapabilityCeilings, parseSubagentCapabilityCeiling, type ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
 import { resolveTurnBudgetConfig } from "../shared/turn-budget.ts";
 import { reconcileAsyncRun } from "./stale-run-reconciler.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export interface AsyncResumeParams {
 	id?: string;
@@ -101,12 +104,12 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 			const capabilityCeiling = child.capabilityCeiling === undefined ? undefined : parseSubagentCapabilityCeiling(child.capabilityCeiling, `async result file '${resultPath}' results[${index}].capabilityCeiling`);
 			const success = child.success;
 			if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': results[${index}].success must be a boolean.`);
-			return { agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) };
+			return omitUndefined({ agent, sessionFile, intercomTarget, model, thinking, launchContractDigest, ...(capabilityCeiling ? { capabilityCeiling } : {}), ...(typeof success === "boolean" ? { success } : {}) });
 		});
 	}
 	const success = data.success;
 	if (success !== undefined && typeof success !== "boolean") throw new Error(`Invalid async result file '${resultPath}': success must be a boolean.`);
-	return {
+	return omitUndefined({
 		id: validateOptionalString(data, "id", resultPath),
 		runId: validateOptionalString(data, "runId", resultPath),
 		agent: validateOptionalString(data, "agent", resultPath),
@@ -121,7 +124,7 @@ function validateResultFile(value: unknown, resultPath: string): AsyncResultFile
 		...(data.capabilityCeiling === undefined ? {} : { capabilityCeiling: parseSubagentCapabilityCeiling(data.capabilityCeiling, `async result file '${resultPath}' capabilityCeiling`) }),
 		...(typeof success === "boolean" ? { success } : {}),
 		...(results ? { results } : {}),
-	};
+	});
 }
 
 function readResultFile(resultPath: string): AsyncResultFile {
@@ -230,7 +233,7 @@ export function resolveAsyncRunLocation(params: AsyncResumeParams, asyncDirRoot:
 	if (matching.length > 1) {
 		throw new Error(`Ambiguous async run id prefix '${requestedId}' matched: ${matching.map((match) => match.id).join(", ")}. Provide a longer id.`);
 	}
-	return matching[0]!.location;
+	return requirePresent(matching[0]).location;
 }
 
 function resultState(result: AsyncResultFile): AsyncStatus["state"] {
@@ -324,19 +327,25 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.memory !== undefined) {
 		if (!parsed.memory || typeof parsed.memory !== "object" || Array.isArray(parsed.memory)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory must be an object.`);
 		const memory = parsed.memory as Record<string, unknown>;
+		const unknownMemoryField = Object.keys(memory).find((field) => field !== "scope" && field !== "path");
+		if (unknownMemoryField) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory.${unknownMemoryField} is not supported.`);
 		if ((memory.scope !== "project" && memory.scope !== "user") || typeof memory.path !== "string" || !memory.path.trim()) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': memory is invalid.`);
 	}
 	if (parsed.absoluteDeadlineAt !== undefined && (!Number.isFinite(parsed.absoluteDeadlineAt) || (parsed.absoluteDeadlineAt as number) <= 0)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': absoluteDeadlineAt must be a positive timestamp.`);
 	if (parsed.initialTurnBudget !== undefined) {
 		const result = resolveTurnBudgetConfig(parsed.initialTurnBudget, "recoveryDescriptor.initialTurnBudget");
 		if (result.error) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error}`);
+		if (result.turnBudget) parsed.initialTurnBudget = result.turnBudget;
 	}
 	if (parsed.initialToolBudget !== undefined) {
 		const result = validateToolBudgetConfig(parsed.initialToolBudget, "recoveryDescriptor.initialToolBudget");
 		if (result.error) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': ${result.error}`);
+		if (result.budget) parsed.initialToolBudget = result.budget;
 	}
 	if (parsed.maxOutput !== undefined) {
 		if (!parsed.maxOutput || typeof parsed.maxOutput !== "object" || Array.isArray(parsed.maxOutput)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxOutput must be an object.`);
+		const unknownMaxOutputField = Object.keys(parsed.maxOutput).find((field) => field !== "bytes" && field !== "lines");
+		if (unknownMaxOutputField) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxOutput.${unknownMaxOutputField} is not supported.`);
 		for (const field of ["bytes", "lines"] as const) {
 			const item = (parsed.maxOutput as Record<string, unknown>)[field];
 			if (item !== undefined && (!Number.isInteger(item) || (item as number) < 1)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': maxOutput.${field} must be a positive integer.`);
@@ -345,15 +354,22 @@ export function readAsyncRecoveryDescriptor(asyncDir: string | undefined): Steer
 	if (parsed.artifactConfig !== undefined) {
 		if (!parsed.artifactConfig || typeof parsed.artifactConfig !== "object" || Array.isArray(parsed.artifactConfig)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig must be an object.`);
 		const artifact = parsed.artifactConfig as Record<string, unknown>;
+		const artifactFields = new Set(["enabled", "dir", "includeInput", "includeOutput", "includeJsonl", "includeTranscript", "includeMetadata", "cleanupDays"]);
+		const unknownArtifactField = Object.keys(artifact).find((field) => !artifactFields.has(field));
+		if (unknownArtifactField) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.${unknownArtifactField} is not supported.`);
 		for (const field of ["enabled", "includeInput", "includeOutput", "includeJsonl", "includeMetadata"] as const) {
 			if (typeof artifact[field] !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.${field} must be a boolean.`);
 		}
+		if (artifact.dir !== undefined && artifact.dir !== "project" && artifact.dir !== "session" && artifact.dir !== "temp") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.dir must be project, session, or temp.`);
 		if (artifact.includeTranscript !== undefined && typeof artifact.includeTranscript !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.includeTranscript must be a boolean.`);
 		if (!Number.isInteger(artifact.cleanupDays) || (artifact.cleanupDays as number) < 0) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': artifactConfig.cleanupDays must be a non-negative integer.`);
 	}
 	if (parsed.controlConfig !== undefined) {
 		if (!parsed.controlConfig || typeof parsed.controlConfig !== "object" || Array.isArray(parsed.controlConfig)) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig must be an object.`);
 		const control = parsed.controlConfig as Record<string, unknown>;
+		const controlFields = new Set(["enabled", "needsAttentionAfterMs", "activeNoticeAfterMs", "activeNoticeAfterTurns", "activeNoticeAfterTokens", "failedToolAttemptsBeforeAttention", "notifyOn", "notifyChannels"]);
+		const unknownControlField = Object.keys(control).find((field) => !controlFields.has(field));
+		if (unknownControlField) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig.${unknownControlField} is not supported.`);
 		if (typeof control.enabled !== "boolean") throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig.enabled must be a boolean.`);
 		for (const field of ["needsAttentionAfterMs", "activeNoticeAfterMs", "failedToolAttemptsBeforeAttention"] as const) {
 			if (!Number.isInteger(control[field]) || (control[field] as number) < 1) throw new Error(`Invalid async recovery descriptor '${descriptorPath}': controlConfig.${field} must be a positive integer.`);
@@ -389,7 +405,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	}
 
 	const reconciliation = location.asyncDir
-		? reconcileAsyncRun(location.asyncDir, { resultsDir, kill: deps.kill, now: deps.now })
+		? reconcileAsyncRun(location.asyncDir, omitUndefined({ resultsDir, kill: deps.kill, now: deps.now }))
 		: undefined;
 	const status = reconciliation?.status ?? null;
 	validateStatusForResume(status, location.asyncDir ? path.join(location.asyncDir, "status.json") : "status.json");
@@ -417,7 +433,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 			const selectedStep = statusSteps[requestedIndex];
 			if (selectedStep?.status === "running") {
 				const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selectedStep.capabilityCeiling);
-				return {
+				return omitUndefined({
 					kind: "live",
 					runId,
 					asyncDir: location.asyncDir ?? undefined,
@@ -431,7 +447,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 					launchContractDigest: selectedStep.launchContractDigest ?? result?.results?.[requestedIndex]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
 					...(capabilityCeiling ? { capabilityCeiling } : {}),
 					...(recoveryDescriptor ? { recoveryDescriptor } : {}),
-				};
+				});
 			}
 			if (selectedStep?.status === "pending") throw new Error(`Async run '${runId}' child ${requestedIndex} is pending and has not started yet. Wait for it to run or complete before resuming.`);
 			if (selectedStep && !terminalStepStatuses.has(selectedStep.status)) throw new Error(`Async run '${runId}' child ${requestedIndex} is ${selectedStep.status} and cannot be revived yet.`);
@@ -444,7 +460,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				throw new Error(`Async run '${runId}' has ${running.length} running children. Provide index to choose one.`);
 			}
 			const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, selected.step.capabilityCeiling);
-			return {
+			return omitUndefined({
 				kind: "live",
 				runId,
 				asyncDir: location.asyncDir ?? undefined,
@@ -458,7 +474,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 				launchContractDigest: selected.step.launchContractDigest ?? result?.results?.[selected.index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
 				...(capabilityCeiling ? { capabilityCeiling } : {}),
 				...(recoveryDescriptor ? { recoveryDescriptor } : {}),
-			};
+			});
 		}
 	}
 
@@ -480,7 +496,7 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 	const stepThinking = statusSteps[index]?.thinking ?? resultSteps[index]?.thinking ?? (stepCount === 1 ? result?.thinking : undefined);
 	const capabilityCeiling = intersectSubagentCapabilityCeilings(status?.capabilityCeiling, statusSteps[index]?.capabilityCeiling, result?.capabilityCeiling, resultSteps[index]?.capabilityCeiling);
 
-	return {
+	return omitUndefined({
 		kind: "revive",
 		runId,
 		asyncDir: location.asyncDir ?? undefined,
@@ -494,11 +510,11 @@ export function resolveAsyncResumeTarget(params: AsyncResumeParams, deps: AsyncR
 		launchContractDigest: statusSteps[index]?.launchContractDigest ?? resultSteps[index]?.launchContractDigest ?? result?.launchContractDigest ?? recoveryDescriptor?.launchContractDigest,
 		...(capabilityCeiling ? { capabilityCeiling } : {}),
 		...(recoveryDescriptor ? { recoveryDescriptor } : {}),
-	};
+	});
 }
 
 export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descriptor: SteeringRecoveryDescriptor): AgentConfig {
-	return {
+	return omitUndefined({
 		...agentConfig,
 		model: descriptor.model,
 		fallbackModels: descriptor.fallbackModels ? [...descriptor.fallbackModels] : undefined,
@@ -519,7 +535,7 @@ export function applySteeringRecoveryAgentConfig(agentConfig: AgentConfig, descr
 		output: descriptor.outputPath,
 		toolBudget: descriptor.initialToolBudget,
 		maxSubagentDepth: descriptor.maxSubagentDepth,
-	};
+	});
 }
 
 export function buildRevivedAsyncTask(target: AsyncResumeTarget, message: string): string {

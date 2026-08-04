@@ -33,7 +33,7 @@ export function writeChildToolDiagnostic(
 		? missing.filter((name) => mcpDirectTools.includes(name))
 		: [];
 	const diagnostic: ChildToolDiagnostic = {
-		agent,
+		...(agent === undefined ? {} : { agent }),
 		required,
 		available,
 		missing,
@@ -46,17 +46,21 @@ export function writeChildToolDiagnostic(
 
 export function readChildToolDiagnostic(filePath: string | undefined): ChildToolDiagnostic | undefined {
 	if (!filePath || !fs.existsSync(filePath)) return undefined;
-	const parsed = JSON.parse(fs.readFileSync(filePath, "utf-8")) as Partial<ChildToolDiagnostic>;
+	const parsed: unknown = JSON.parse(fs.readFileSync(filePath, "utf-8"));
 	const stringArray = (value: unknown): value is string[] => Array.isArray(value) && value.every((entry) => typeof entry === "string" && entry.length > 0);
-	if (!stringArray(parsed.required) || !stringArray(parsed.available) || !stringArray(parsed.missing) || (parsed.agent !== undefined && typeof parsed.agent !== "string") || (parsed.missingMcpDirectTools !== undefined && !stringArray(parsed.missingMcpDirectTools))) {
+	if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) {
+		throw new Error(`Malformed child tool diagnostic at '${filePath}'.`);
+	}
+	const record = parsed as Record<string, unknown>;
+	if (!stringArray(record.required) || !stringArray(record.available) || !stringArray(record.missing) || (record.agent !== undefined && typeof record.agent !== "string") || (record.missingMcpDirectTools !== undefined && !stringArray(record.missingMcpDirectTools))) {
 		throw new Error(`Malformed child tool diagnostic at '${filePath}'.`);
 	}
 	return {
-		...(parsed.agent ? { agent: parsed.agent } : {}),
-		required: parsed.required,
-		available: parsed.available,
-		missing: parsed.missing,
-		...(parsed.missingMcpDirectTools ? { missingMcpDirectTools: parsed.missingMcpDirectTools } : {}),
+		...(typeof record.agent === "string" && record.agent ? { agent: record.agent } : {}),
+		required: record.required,
+		available: record.available,
+		missing: record.missing,
+		...(record.missingMcpDirectTools ? { missingMcpDirectTools: record.missingMcpDirectTools } : {}),
 	};
 }
 

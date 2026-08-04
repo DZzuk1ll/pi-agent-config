@@ -1,4 +1,8 @@
-export type PrototypeMethod = (this: any, ...args: any[]) => any;
+/** Structural bridge for upstream prototype methods whose signatures are private. */
+export interface PrototypeMethod {
+	call<TThis extends object, TArgs extends unknown[], TResult>(thisArg: TThis, ...args: TArgs): TResult;
+	apply<TThis extends object, TArgs extends unknown[], TResult>(thisArg: TThis, args: TArgs): TResult;
+}
 
 interface PatchLayer {
 	name: string;

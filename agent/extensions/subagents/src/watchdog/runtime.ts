@@ -1,4 +1,5 @@
 import { createHash } from "node:crypto";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { computeWatchdogRepoChangeSignature, eventIndicatesRepoEdit, type WatchdogRepoChangeSignature } from "./change-signature.ts";
 import { WatchdogEmissionGuard } from "./emission-guard.ts";
@@ -11,16 +12,16 @@ import {
 } from "./lsp-diagnostics.ts";
 import { resolveWatchdogConfig } from "./settings.ts";
 import { formatWatchdogTurnDelta } from "./turn-delta.ts";
-import {
-	type ResolvedWatchdogConfig,
-	type WatchdogEndpointConfig,
-	type WatchdogLspRuntimeSnapshot,
-	type WatchdogRuntimeStatus,
-	type WatchdogSettingsError,
-	type WatchdogSettingsResult,
-	type WatchdogSettingsSource,
-	type WatchdogWarning,
-	type WatchdogWarningDetails,
+import type {
+	ResolvedWatchdogConfig,
+	WatchdogEndpointConfig,
+	WatchdogLspRuntimeSnapshot,
+	WatchdogRuntimeStatus,
+	WatchdogSettingsError,
+	WatchdogSettingsResult,
+	WatchdogSettingsSource,
+	WatchdogWarning,
+	WatchdogWarningDetails,
 } from "./types.ts";
 import { normalizeWatchdogWarningDetails } from "./warning-format.ts";
 
@@ -40,7 +41,7 @@ export interface WatchdogReviewRequest {
 	signal?: AbortSignal;
 }
 
-export type WatchdogReviewFunction = (request: WatchdogReviewRequest) => Promise<WatchdogReviewResult | void> | WatchdogReviewResult | void;
+export type WatchdogReviewFunction = (request: WatchdogReviewRequest) => Promise<WatchdogReviewResult | undefined> | WatchdogReviewResult | undefined;
 
 export interface WatchdogRuntimeSnapshot {
 	status: WatchdogRuntimeStatus;
@@ -285,11 +286,11 @@ export class MainWatchdogRuntime {
 		if (!this.isEnabled()) return;
 		try {
 			this.observedRepoEditThisTurn ||= eventIndicatesRepoEdit(event);
-			const delta = formatWatchdogTurnDelta({
+			const delta = formatWatchdogTurnDelta(omitUndefined({
 				includeUserPrompt: this.includeUserPromptInNextDelta,
 				userPrompt: this.userPrompt,
 				events: [event],
-			});
+			}));
 			this.includeUserPromptInNextDelta = false;
 			this.enqueueDelta(delta);
 		} catch (error) {

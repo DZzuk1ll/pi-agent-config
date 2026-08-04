@@ -34,16 +34,17 @@ function trust_store_path(): string {
 }
 
 function subject(
-	overrides: Partial<ProjectTrustSubject> = {},
+	overrides: Omit<Partial<ProjectTrustSubject>, 'hash'> & { hash?: string | undefined } = {},
 ): ProjectTrustSubject {
+	const { hash, ...rest } = overrides;
 	return {
 		kind: 'mcp-config',
 		id: '/repo/mcp.json',
-		hash: 'hash-a',
 		env_key: 'MY_PI_MCP_PROJECT_CONFIG',
 		prompt_title: 'Trust project MCP config?',
 		summary_lines: ['- demo: stdio demo'],
-		...overrides,
+		...rest,
+		...(hash !== undefined ? { hash } : 'hash' in overrides ? {} : { hash: 'hash-a' }),
 	};
 }
 

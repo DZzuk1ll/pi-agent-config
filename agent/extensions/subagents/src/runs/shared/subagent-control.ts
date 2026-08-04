@@ -1,10 +1,10 @@
-import {
-	type ActivityState,
-	type ControlConfig,
-	type ControlEvent,
-	type ControlEventType,
-	type ControlNotificationChannel,
-	type ResolvedControlConfig,
+import type {
+	ActivityState,
+	ControlConfig,
+	ControlEvent,
+	ControlEventType,
+	ControlNotificationChannel,
+	ResolvedControlConfig,
 } from "../../shared/types.ts";
 
 const CONTROL_EVENT_TYPES: ControlEventType[] = ["active_long_running", "needs_attention"];
@@ -62,8 +62,8 @@ export function resolveControlConfig(
 		enabled,
 		needsAttentionAfterMs,
 		activeNoticeAfterMs,
-		activeNoticeAfterTurns,
-		activeNoticeAfterTokens,
+		...(activeNoticeAfterTurns === undefined ? {} : { activeNoticeAfterTurns }),
+		...(activeNoticeAfterTokens === undefined ? {} : { activeNoticeAfterTokens }),
 		failedToolAttemptsBeforeAttention,
 		notifyOn: [...notifyOn],
 		notifyChannels: [...notifyChannels],

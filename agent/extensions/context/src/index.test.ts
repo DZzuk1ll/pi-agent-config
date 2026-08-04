@@ -19,6 +19,8 @@ import context_sidecar, {
 	load_context_settings_config,
 	set_context_sidecar_enabled,
 } from './index.js';
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 type FakeContext = {
 	cwd: string;
@@ -99,7 +101,7 @@ function large_output(token = 'needle-token'): string {
 function source_id_from(text: string): string {
 	const match = text.match(/Source: (ctx_[^\n]+)/);
 	expect(match).not.toBeNull();
-	return match![1]!;
+	return requirePresent(requirePresent(match)[1]);
 }
 
 function fake_context(
@@ -161,9 +163,9 @@ describe('context_sidecar extension', () => {
 		expect(fake.commands.has('context-stats')).toBe(true);
 		expect(fake.hooks.get('tool_result')).toHaveLength(1);
 
-		await fake.hooks.get('session_shutdown')![0]!({});
+		await requirePresent(requirePresent(fake.hooks.get('session_shutdown'))[0])({});
 		expect(is_context_sidecar_enabled()).toBe(false);
-		await fake.hooks.get('session_start')![0]!(
+		await requirePresent(requirePresent(fake.hooks.get('session_start'))[0])(
 			{},
 			{ cwd: '/tmp/project' },
 		);
@@ -194,36 +196,36 @@ describe('context_sidecar extension', () => {
 		try {
 			db.prepare(
 				'UPDATE context_sources SET created_at = ? WHERE id = ?',
-			).run(Date.now() - 3 * 24 * 60 * 60 * 1000, stale!.source_id);
+			).run(Date.now() - 3 * 24 * 60 * 60 * 1000, requirePresent(stale).source_id);
 		} finally {
 			db.close();
 		}
 
-		await fake.hooks.get('session_start')![0]!(
+		await requirePresent(requirePresent(fake.hooks.get('session_start'))[0])(
 			{},
 			fake_context('/repo', '/sessions/current.jsonl'),
 		);
 		expect(
-			get_context_store().get(stale!.source_id, undefined, {
+			get_context_store().get(requirePresent(stale).source_id, undefined, {
 				global: true,
 			}),
 		).toEqual([]);
 		expect(
-			get_context_store().get(fresh!.source_id, undefined, {
+			get_context_store().get(requirePresent(fresh).source_id, undefined, {
 				global: true,
 			}),
-		).toHaveLength(fresh!.chunk_count);
+		).toHaveLength(requirePresent(fresh).chunk_count);
 
-		await fake.hooks.get('session_shutdown')![0]!({});
+		await requirePresent(requirePresent(fake.hooks.get('session_shutdown'))[0])({});
 		expect(is_context_sidecar_enabled()).toBe(false);
 		set_context_sidecar_enabled(true, {
 			db_path: process.env.MY_PI_CONTEXT_DB,
 		});
 		expect(
-			get_context_store().get(fresh!.source_id, undefined, {
+			get_context_store().get(requirePresent(fresh).source_id, undefined, {
 				global: true,
 			}),
-		).toHaveLength(fresh!.chunk_count);
+		).toHaveLength(requirePresent(fresh).chunk_count);
 	});
 
 	it('saves context settings from the /context command', async () => {
@@ -242,7 +244,7 @@ describe('context_sidecar extension', () => {
 		const notifications: string[] = [];
 		context_sidecar(fake.pi);
 
-		await fake.commands.get('context')!.handler('settings light', {
+		await requirePresent(fake.commands.get('context')).handler('settings light', {
 			ui: {
 				notify: (message: string) => notifications.push(message),
 			},
@@ -253,7 +255,7 @@ describe('context_sidecar extension', () => {
 			retention_days: 1,
 			max_mb: 50,
 		});
-		expect(notifications[0]!).toContain('Context settings saved');
+		expect(requirePresent(notifications[0])).toContain('Context settings saved');
 	});
 
 	it('stores and searches with session/project scope from extension context', async () => {
@@ -261,7 +263,7 @@ describe('context_sidecar extension', () => {
 		process.env.MY_PI_CONTEXT_DB = db_path;
 		const fake = create_fake_pi();
 		context_sidecar(fake.pi);
-		const tool_result = fake.hooks.get('tool_result')![0]!;
+		const tool_result = requirePresent(requirePresent(fake.hooks.get('tool_result'))[0]);
 		const project_a = fake_context('/repo-a', '/sessions/a.jsonl');
 		const project_b = fake_context('/repo-b', '/sessions/b.jsonl');
 
@@ -292,7 +294,7 @@ describe('context_sidecar extension', () => {
 				.prepare(
 					'SELECT session_id, project_path FROM context_sources WHERE id = ?',
 				)
-				.get(source_id_from(a.content[0]!.text));
+				.get(source_id_from(requirePresent(a.content[0]).text));
 			expect(row).toMatchObject({
 				session_id: '/sessions/a.jsonl',
 				project_path: '/repo-a',
@@ -301,8 +303,8 @@ describe('context_sidecar extension', () => {
 			db.close();
 		}
 
-		const scoped = await fake.tools
-			.get('context_search')!
+		const scoped = await requirePresent(fake.tools
+			.get('context_search'))
 			.execute(
 				'call-1',
 				{ query: 'scope-token', limit: 5 },
@@ -310,11 +312,11 @@ describe('context_sidecar extension', () => {
 				undefined,
 				project_a,
 			);
-		expect(scoped.content[0]!.text).toContain('scope-token-a');
-		expect(scoped.content[0]!.text).not.toContain('scope-token-b');
+		expect(requirePresent(scoped.content[0]).text).toContain('scope-token-a');
+		expect(requirePresent(scoped.content[0]).text).not.toContain('scope-token-b');
 
-		const global = await fake.tools
-			.get('context_search')!
+		const global = await requirePresent(fake.tools
+			.get('context_search'))
 			.execute(
 				'call-2',
 				{ query: 'scope-token', global: true },
@@ -322,8 +324,8 @@ describe('context_sidecar extension', () => {
 				undefined,
 				project_a,
 			);
-		expect(global.content[0]!.text).toContain('scope-token-a');
-		expect(global.content[0]!.text).toContain('scope-token-b');
+		expect(requirePresent(global.content[0]).text).toContain('scope-token-a');
+		expect(requirePresent(global.content[0]).text).toContain('scope-token-b');
 
 	});
 
@@ -331,7 +333,7 @@ describe('context_sidecar extension', () => {
 		process.env.MY_PI_CONTEXT_DB = temp_db();
 		const fake = create_fake_pi();
 		context_sidecar(fake.pi);
-		const tool_result = fake.hooks.get('tool_result')![0]!;
+		const tool_result = requirePresent(requirePresent(fake.hooks.get('tool_result'))[0]);
 
 		expect(
 			await tool_result({
@@ -369,11 +371,11 @@ describe('context_sidecar extension', () => {
 			content: [{ type: 'text', text: large_output('hook-token') }],
 		})) as ToolResult;
 
-		expect(replacement.content[0]!.text).toContain(
+		expect(requirePresent(replacement.content[0]).text).toContain(
 			'[context-sidecar]',
 		);
-		expect(replacement.content[0]!.text).toContain('context_search');
-		const source_id = source_id_from(replacement.content[0]!.text);
+		expect(requirePresent(replacement.content[0]).text).toContain('context_search');
+		const source_id = source_id_from(requirePresent(replacement.content[0]).text);
 		expect(
 			get_context_store().search('hook-token', { source_id }),
 		).toHaveLength(1);
@@ -388,12 +390,12 @@ describe('context_sidecar extension', () => {
 			tool_name: 'mcp__demo__large',
 			force: true,
 		});
-		const tool_result = fake.hooks.get('tool_result')![0]!;
+		const tool_result = requirePresent(requirePresent(fake.hooks.get('tool_result'))[0]);
 
 		expect(
 			await tool_result({
 				toolName: 'mcp__demo__large',
-				content: [{ type: 'text', text: stored!.receipt }],
+				content: [{ type: 'text', text: requirePresent(stored).receipt }],
 			}),
 		).toBeUndefined();
 		expect(get_context_store().list({ global: true })).toHaveLength(
@@ -410,55 +412,55 @@ describe('context_sidecar extension', () => {
 		process.env.MY_PI_CONTEXT_DB = temp_db();
 		const fake = create_fake_pi();
 		context_sidecar(fake.pi);
-		const tool_result = fake.hooks.get('tool_result')![0]!;
+		const tool_result = requirePresent(requirePresent(fake.hooks.get('tool_result'))[0]);
 		const replacement = (await tool_result({
 			toolName: 'bash',
 			content: [{ type: 'text', text: large_output('tool-token') }],
 		})) as ToolResult;
-		const source_id = source_id_from(replacement.content[0]!.text);
+		const source_id = source_id_from(requirePresent(replacement.content[0]).text);
 
-		const search = await fake.tools
-			.get('context_search')!
+		const search = await requirePresent(fake.tools
+			.get('context_search'))
 			.execute('call-1', {
 				query: 'tool-token',
 				limit: 1,
 			});
-		expect(search.content[0]!.text).toContain('tool-token');
+		expect(requirePresent(search.content[0]).text).toContain('tool-token');
 		expect(search.details).toMatchObject({ count: 1 });
 
 
-		const get = await fake.tools
-			.get('context_get')!
+		const get = await requirePresent(fake.tools
+			.get('context_get'))
 			.execute('call-2', {
 				source_id,
 			});
-		expect(get.content[0]!.text).toContain('tool-token');
+		expect(requirePresent(get.content[0]).text).toContain('tool-token');
 		expect(get.details).toMatchObject({ count: 1 });
 
-		const alias_get = await fake.tools
-			.get('context_get')!
+		const alias_get = await requirePresent(fake.tools
+			.get('context_get'))
 			.execute('call-2a', {
 				source_id,
 				chunk_id: '0001',
 			});
-		expect(alias_get.content[0]!.text).toContain('tool-token');
+		expect(requirePresent(alias_get.content[0]).text).toContain('tool-token');
 		expect(alias_get.details).toMatchObject({ count: 1 });
 
 		const export_dir = mkdtempSync(
 			join(tmpdir(), 'pi-context-export-'),
 		);
 		dirs.push(export_dir);
-		const exported = await fake.tools
-			.get('context_export')!
+		const exported = await requirePresent(fake.tools
+			.get('context_export'))
 			.execute('call-export', {
 				source_id,
 				file_path: join(export_dir, 'export.txt'),
 			});
-		expect(exported.content[0]!.text).toContain('Exported 1 chunk(s)');
-		expect(exported.content[0]!.text).toContain(
+		expect(requirePresent(exported.content[0]).text).toContain('Exported 1 chunk(s)');
+		expect(requirePresent(exported.content[0]).text).toContain(
 			join(export_dir, 'export.txt'),
 		);
-		expect(exported.content[0]!.text).not.toContain('tool-token');
+		expect(requirePresent(exported.content[0]).text).not.toContain('tool-token');
 		expect(
 			readFileSync(join(export_dir, 'export.txt'), 'utf8'),
 		).toContain('tool-token');
@@ -470,7 +472,7 @@ describe('context_sidecar extension', () => {
 		});
 
 		const managed_export_dir = join(
-			dirname(process.env.MY_PI_CONTEXT_DB!),
+			dirname(requirePresent(process.env.MY_PI_CONTEXT_DB)),
 			'context-exports',
 		);
 		mkdirSync(managed_export_dir, { recursive: true });
@@ -479,11 +481,11 @@ describe('context_sidecar extension', () => {
 		const stale_date = new Date(Date.now() - 8 * 24 * 60 * 60 * 1000);
 		utimesSync(stale_export, stale_date, stale_date);
 
-		const default_export = await fake.tools
-			.get('context_export')!
+		const default_export = await requirePresent(fake.tools
+			.get('context_export'))
 			.execute('call-export-default', { source_id });
 		const managed_file = join(managed_export_dir, `${source_id}.txt`);
-		expect(default_export.content[0]!.text).toContain(managed_file);
+		expect(requirePresent(default_export.content[0]).text).toContain(managed_file);
 		expect(readFileSync(managed_file, 'utf8')).toContain(
 			'tool-token',
 		);
@@ -495,31 +497,31 @@ describe('context_sidecar extension', () => {
 		});
 		expect(existsSync(stale_export)).toBe(false);
 
-		const missing_chunk = await fake.tools
-			.get('context_get')!
+		const missing_chunk = await requirePresent(fake.tools
+			.get('context_get'))
 			.execute('call-2b', {
 				source_id,
 				chunk_id: 'missing',
 			});
-		expect(missing_chunk.content[0]!.text).toContain(
+		expect(requirePresent(missing_chunk.content[0]).text).toContain(
 			'No chunk found for chunk_id "missing".',
 		);
-		expect(missing_chunk.content[0]!.text).toContain(
+		expect(requirePresent(missing_chunk.content[0]).text).toContain(
 			'Valid ordinals: 1',
 		);
-		expect(missing_chunk.content[0]!.text).toContain('Try chunk_id:');
+		expect(requirePresent(missing_chunk.content[0]).text).toContain('Try chunk_id:');
 
 
 		const notifications: string[] = [];
-		await fake.commands.get('context-stats')!.handler('', {
+		await requirePresent(fake.commands.get('context-stats')).handler('', {
 			ui: {
 				notify(message: string, type: string) {
 					notifications.push(`${type}:${message}`);
 				},
 			},
 		});
-		expect(notifications[0]!).toContain('info:Enabled: true');
-		expect(notifications[0]!).toContain('Scope: global');
+		expect(requirePresent(notifications[0])).toContain('info:Enabled: true');
+		expect(requirePresent(notifications[0])).toContain('Scope: global');
 
 	});
 });

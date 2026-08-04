@@ -5,10 +5,12 @@
  * browser and restore options.
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext, SessionEntry } from "@earendil-works/pi-coding-agent";
 import type { RewindState } from "./state.js";
 import type { CheckpointData } from "./core.js";
 import { restoreCheckpoint, createCheckpoint, diffCheckpoints, git } from "./core.js";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 // ============================================================================
 // Helpers
@@ -144,14 +146,14 @@ async function runRewindFlow(
     // Navigate conversation tree to the checkpoint's point
     // Find the entry closest to the checkpoint timestamp
     const branch = ctx.sessionManager.getBranch();
-    const targetEntry = branch.reduce((best: any, entry: any) => {
-      if (!entry.timestamp) return best;
+	let targetEntry: SessionEntry | undefined;
+	for (const entry of branch) {
+	  if (!entry.timestamp) continue;
       const entryTs = new Date(entry.timestamp).getTime();
-      if (!best) return entryTs <= target.timestamp ? entry : best;
-      const bestTs = new Date(best.timestamp).getTime();
-      if (entryTs <= target.timestamp && entryTs > bestTs) return entry;
-      return best;
-    }, null);
+	  if (entryTs > target.timestamp) continue;
+	  const bestTs = targetEntry?.timestamp ? new Date(targetEntry.timestamp).getTime() : -Infinity;
+	  if (entryTs > bestTs) targetEntry = entry;
+	}
 
     if (targetEntry) {
       try {
@@ -205,7 +207,7 @@ async function performRestore(
 export async function handleForkRestore(
   state: RewindState,
   event: { entryId: string },
-  ctx: any,
+	ctx: ExtensionContext,
 ): Promise<{ cancel: true } | { skipConversationRestore: true } | undefined> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return undefined;
   if (!ctx.hasUI) return undefined;
@@ -239,7 +241,7 @@ export async function handleForkRestore(
   if (choice === "Conversation only (keep files)") return undefined;
 
   if (choice === "↩ Undo last rewind" && state.redoStack.length > 0) {
-    const undoCp = state.redoStack.pop()!;
+    const undoCp = requirePresent(state.redoStack.pop());
     await performRestore(state, ctx, undoCp, "files");
     ctx.ui.notify("Files restored to before last rewind", "info");
     return { cancel: true };
@@ -263,7 +265,7 @@ export async function handleForkRestore(
 export async function handleTreeRestore(
   state: RewindState,
   event: { preparation: { targetId: string } },
-  ctx: any,
+	ctx: ExtensionContext,
 ): Promise<{ cancel: true } | undefined> {
   if (!state.gitAvailable || !state.repoRoot || !state.sessionId) return undefined;
   if (!ctx.hasUI) return undefined;
@@ -285,7 +287,7 @@ export async function handleTreeRestore(
   if (choice === "Keep current files") return undefined;
 
   if (choice === "↩ Undo last rewind" && state.redoStack.length > 0) {
-    const undoCp = state.redoStack.pop()!;
+    const undoCp = requirePresent(state.redoStack.pop());
     await performRestore(state, ctx, undoCp, "files");
     ctx.ui.notify("Files restored to before last rewind", "info");
     return { cancel: true };

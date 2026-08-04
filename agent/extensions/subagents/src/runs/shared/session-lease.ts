@@ -57,7 +57,7 @@ interface SessionLeaseOptions {
 }
 
 export class SessionLeaseConflictError extends Error {
-	readonly owner?: SessionLeaseOwner;
+	readonly owner: SessionLeaseOwner | undefined;
 
 	constructor(message: string, owner?: SessionLeaseOwner) {
 		super(message);

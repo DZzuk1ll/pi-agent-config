@@ -21,7 +21,7 @@ export async function show_context_list(
 ): Promise<void> {
 	const scope = scope_from_context(ctx);
 	const text = format_list_results(
-		get_context_store(scope).list({ ...scope, limit }),
+		get_context_store(scope).list({ ...scope, ...(limit === undefined ? {} : { limit }) }),
 		{ audience: 'tui' },
 	);
 	if (ctx.hasUI) {
@@ -63,8 +63,8 @@ export async function purge_context(
 		? { deleted: get_context_store(scope).cleanup().deleted }
 		: get_context_store(scope).purge_with_details({
 				...scope,
-				older_than_days: options.source_id ? undefined : days,
-				source_id: options.source_id,
+				...(options.source_id ? {} : { older_than_days: days }),
+				...(options.source_id === undefined ? {} : { source_id: options.source_id }),
 			});
 	ctx.ui.notify(format_purge_details(details), 'info');
 }

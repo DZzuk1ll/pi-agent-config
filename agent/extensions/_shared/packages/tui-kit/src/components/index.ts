@@ -96,7 +96,7 @@ function createActionsComponent<ScreenId extends string, ActionId extends string
 	const items: SelectItem[] = options.screen.items.map((item) => ({
 		value: item.id,
 		label: safeMenuText(item.label),
-		description: item.description ? safeMenuText(item.description) : undefined,
+		...(item.description ? { description: safeMenuText(item.description) } : {}),
 	}));
 	const list = new SelectList(items, Math.min(items.length, 10), selectTheme(options.theme));
 	setInitialSelection(list, items, options.selectedItemId);
@@ -155,13 +155,13 @@ function createChoiceComponent<ScreenId extends string, ActionId extends string>
 		const unavailable = item.disabled
 			? `unavailable${item.disabledReason ? `: ${safeMenuText(item.disabledReason)}` : ""}`
 			: undefined;
+		const description = [unavailable, item.description ? safeMenuText(item.description) : undefined]
+			.filter((value): value is string => Boolean(value))
+			.join(" · ");
 		return {
 			value: item.id,
 			label: `${item.disabled ? "[-] " : ""}${safeMenuText(item.label)}${current}`,
-			description:
-				[unavailable, item.description ? safeMenuText(item.description) : undefined]
-					.filter((value): value is string => Boolean(value))
-					.join(" · ") || undefined,
+			...(description ? { description } : {}),
 		};
 	});
 	const viewportSize = Math.min(items.length, options.screen.viewportSize ?? 10);

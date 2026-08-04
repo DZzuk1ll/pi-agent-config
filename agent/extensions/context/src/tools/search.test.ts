@@ -8,6 +8,8 @@ import {
 	set_context_sidecar_enabled,
 } from '../store.js';
 import { register_context_search_tool } from './search.js';
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 const dirs: string[] = [];
 const original_context_db = process.env.MY_PI_CONTEXT_DB;
@@ -36,7 +38,7 @@ function register_tool(): RegisteredTool {
 			tool = value;
 		},
 	} as unknown as ExtensionAPI);
-	return tool!;
+	return requirePresent(tool);
 }
 
 afterEach(() => {
@@ -80,10 +82,10 @@ describe('context_search tool', () => {
 		expect(tool.description).toContain('not broad retrieval');
 		expect(tool.promptSnippet).toContain('export broad results');
 		expect(
-			tool.parameters.properties.full_content!.description,
+			requirePresent(tool.parameters.properties.full_content).description,
 		).toContain('Last resort for small matches');
-		expect(result.content[0]!.text).toContain('alpha-token');
-		expect(result.content[0]!.text).toContain('beta-token');
+		expect(requirePresent(result.content[0]).text).toContain('alpha-token');
+		expect(requirePresent(result.content[0]).text).toContain('beta-token');
 		expect(result.details.count).toBe(2);
 	});
 });

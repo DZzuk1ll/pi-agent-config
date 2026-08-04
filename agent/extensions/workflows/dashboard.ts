@@ -9,6 +9,8 @@ import {
 	mergeWorkflowDashboardEntries,
 	type WorkflowDashboardEntry,
 } from "./dashboard-model.ts";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
+
 
 const REFRESH_MS = 400;
 const CANCEL_CONFIRM_MS = 3_000;
@@ -74,7 +76,7 @@ function agentKey(runId: string, nodeId: string): string {
 	return `agent:${runId}:${nodeId}`;
 }
 
-function fit(text: string, width: number): string {
+function fitText(text: string, width: number): string {
 	const clamped = truncateToWidth(text, Math.max(0, width), "");
 	return clamped + " ".repeat(Math.max(0, width - visibleWidth(clamped)));
 }
@@ -99,13 +101,13 @@ function wrapLines(values: readonly string[], width: number): string[] {
 export class WorkflowDashboard {
 	private history: WorkflowDetails[];
 	private entries: WorkflowDashboardEntry[] = [];
-	private expandedRunId?: string;
-	private selectedKey?: string;
-	private notice?: string;
+	private expandedRunId: string | undefined;
+	private selectedKey: string | undefined;
+	private notice: string | undefined;
 	private noticeAt = 0;
-	private cancelConfirmation?: { runId: string; expiresAt: number };
+	private cancelConfirmation: { runId: string; expiresAt: number } | undefined;
 	private lastActiveIds = new Set<string>();
-	private transcript?: WorkflowTranscriptPage & { runId: string; loading?: boolean; loadedAt: number };
+	private transcript: (WorkflowTranscriptPage & { runId: string; loading?: boolean; loadedAt: number }) | undefined;
 	private transcriptRequest?: AbortController;
 	private detailScroll = 0;
 	private detailAutoFollow = false;
@@ -299,7 +301,7 @@ export class WorkflowDashboard {
 		}
 		if (this.disposed || request.signal.aborted || this.selectedAgent()?.runId !== childRunId) return;
 		const preserved = page.status !== "ok" && (previous?.events.length ?? 0) > 0;
-		const events = preserved ? previous!.events : append ? [...(previous?.events ?? []), ...page.events] : page.events;
+		const events = preserved ? requirePresent(previous).events : append ? [...(previous?.events ?? []), ...page.events] : page.events;
 		this.transcript = {
 			...page,
 			events,
@@ -432,9 +434,9 @@ export class WorkflowDashboard {
 		for (let index = 0; index < this.bodyHeight; index++) {
 			lines.push(
 				this.theme.fg("border", "│")
-					+ fit(roster[index] ?? "", rosterWidth)
+						+ fitText(roster[index] ?? "", rosterWidth)
 					+ this.theme.fg("border", "│")
-					+ fit(visibleDetail[index] ?? "", detailWidth)
+						+ fitText(visibleDetail[index] ?? "", detailWidth)
 					+ this.theme.fg("border", "│"),
 			);
 		}
@@ -445,7 +447,7 @@ export class WorkflowDashboard {
 		const toolToggle = this.expandedTools ? "x collapse tools" : "x expand tools";
 		const footerText = this.notice
 			?? ` ↑↓/jk workflow/agent · ⇧k/⇧j scroll · PgUp/PgDn page · ${toolToggle} · r refresh${pagination} · c cancel · Esc close · ${position}`;
-		lines.push(this.theme.fg("border", "│") + fit(this.theme.fg("dim", footerText), innerWidth) + this.theme.fg("border", "│"));
+		lines.push(this.theme.fg("border", "│") + fitText(this.theme.fg("dim", footerText), innerWidth) + this.theme.fg("border", "│"));
 		lines.push(this.theme.fg("border", `╰${"─".repeat(innerWidth)}╯`));
 		return lines.map((line) => truncateToWidth(line, width, ""));
 	}

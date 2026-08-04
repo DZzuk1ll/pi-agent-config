@@ -1,8 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { basename, dirname } from "node:path";
 
-import { Theme } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth } from "@earendil-works/pi-tui";
+import { Theme, type ExtensionAPI, type ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, type TUI } from "@earendil-works/pi-tui";
 import { registerPrototypePatch } from "../../_shared/runtime/prototype-patch.ts";
 
 import { readSettings, type SettingsFile } from "./settings.ts";
@@ -373,7 +373,8 @@ export class ProviderUsageSource {
 					signal: requestController.signal,
 				});
 				if (response.ok) {
-					const parsed = target.parse(await response.json());
+					const body: unknown = await response.json();
+					const parsed = target.parse(body);
 					windows = target.placeholders.map((placeholder) =>
 						parsed.find((window) => window.label === placeholder.label) ?? placeholder);
 				}
@@ -638,12 +639,12 @@ export class ClaudeFooterComponent {
  * the extension API; only the thinking level is read from it, so omitting it just
  * drops the effort suffix.
  */
-export function installClaudeFooter(ctx: any, pi?: any): void {
+export function installClaudeFooter(ctx: ExtensionContext, pi?: Pick<ExtensionAPI, "getThinkingLevel">): void {
 	if (!ctx?.hasUI || typeof ctx.ui?.setFooter !== "function") return;
 	if (resolveFooterSettings(readSettings().values).style !== "claude") {
 		return;
 	}
-	ctx.ui.setFooter((tui: any, _theme: unknown, footerData: FooterDataLike) => {
+	ctx.ui.setFooter((tui: TUI, _theme: unknown, footerData: FooterDataLike) => {
 		const registry = ctx.modelRegistry;
 		const usageSource = registry
 			&& typeof registry.isUsingOAuth === "function"
@@ -725,11 +726,14 @@ export function installClaudeFooter(ctx: any, pi?: any): void {
  * left untouched — Claude Code recolors that state too.
  */
 export function patchEditorBorderColor(): () => void {
-	const proto = Theme.prototype as any;
+	const proto = Theme.prototype;
 	return registerPrototypePatch(proto, "getThinkingBorderColor", {
 		name: "claudify:editor-border-color",
-		wrap: (original) => function patchedThinkingBorderColor(level: unknown): (str: string) => string {
-		const passthrough = original.call(this, level);
+		wrap: (original) => function patchedThinkingBorderColor(this: Theme, level: unknown): (str: string) => string {
+			const passthrough: unknown = original.call(this, level);
+			if (typeof passthrough !== "function") {
+				throw new TypeError("Theme.getThinkingBorderColor returned a non-function value");
+			}
 		return (str: string): string => {
 			if (resolveFooterSettings(readSettings().values).editorBorder !== "gray") return passthrough(str);
 			try {

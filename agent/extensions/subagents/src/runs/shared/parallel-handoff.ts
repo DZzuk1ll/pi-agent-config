@@ -1,5 +1,7 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import type {
 	ParallelHandoffGroup,
@@ -23,10 +25,62 @@ export interface ParallelHandoffResult {
 	sessionPath?: string;
 }
 
+const ParallelHandoffPatchSchema = Type.Object({
+	path: Type.String(),
+	branch: Type.String(),
+	changed: Type.Boolean(),
+	diffStat: Type.String(),
+	filesChanged: Type.Number(),
+	insertions: Type.Number(),
+	deletions: Type.Number(),
+	error: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+const ParallelHandoffChildSchema = Type.Object({
+	index: Type.Number(),
+	taskIndex: Type.Number(),
+	agent: Type.String(),
+	status: Type.Union([Type.Literal("completed"), Type.Literal("failed"), Type.Literal("paused"), Type.Literal("stopped"), Type.Literal("detached")]),
+	summary: Type.String(),
+	outputPath: Type.Optional(Type.String()),
+	structuredOutput: Type.Optional(Type.Unknown()),
+	structuredOutputPath: Type.Optional(Type.String()),
+	sessionPath: Type.Optional(Type.String()),
+	patch: ParallelHandoffPatchSchema,
+}, { additionalProperties: false });
+const ParallelHandoffCleanupTaskSchema = Type.Object({
+	index: Type.Number(),
+	path: Type.String(),
+	branch: Type.String(),
+	worktreeRemoved: Type.Boolean(),
+	branchRemoved: Type.Boolean(),
+	errors: Type.Optional(Type.Array(Type.String())),
+}, { additionalProperties: false });
+const ParallelHandoffManifestSchema = Type.Object({
+	version: Type.Literal(1),
+	runId: Type.String(),
+	mode: Type.Union([Type.Literal("parallel"), Type.Literal("chain")]),
+	source: Type.Union([Type.Literal("foreground"), Type.Literal("async")]),
+	cwd: Type.String(),
+	createdAt: Type.Number(),
+	updatedAt: Type.Number(),
+	groups: Type.Array(Type.Object({
+		stepIndex: Type.Number(),
+		baseCommit: Type.String(),
+		repoRoot: Type.String(),
+		children: Type.Array(ParallelHandoffChildSchema),
+		cleanup: Type.Object({
+			state: Type.Union([Type.Literal("complete"), Type.Literal("partial")]),
+			tasks: Type.Array(ParallelHandoffCleanupTaskSchema),
+			pruned: Type.Boolean(),
+			errors: Type.Optional(Type.Array(Type.String())),
+		}, { additionalProperties: false }),
+	}, { additionalProperties: false })),
+}, { additionalProperties: false });
+
 function readManifest(manifestPath: string): ParallelHandoffManifest | undefined {
 	if (!fs.existsSync(manifestPath)) return undefined;
-	const parsed = JSON.parse(fs.readFileSync(manifestPath, "utf-8")) as ParallelHandoffManifest;
-	if (parsed.version !== 1 || !Array.isArray(parsed.groups)) {
+	const parsed: unknown = JSON.parse(fs.readFileSync(manifestPath, "utf-8"));
+	if (!Value.Check(ParallelHandoffManifestSchema, parsed)) {
 		throw new Error(`Invalid parallel handoff manifest: ${manifestPath}`);
 	}
 	return parsed;
@@ -93,12 +147,13 @@ export function writeParallelHandoffGroup(input: {
 		baseCommit: input.setup.baseCommit,
 		repoRoot: input.setup.cwd,
 		children: input.results.map((result, taskIndex) => {
+			const branch = input.setup.worktrees[taskIndex]?.branch;
 			const diff = input.diffs[taskIndex] ?? missingDiff({
 				manifestPath: input.manifestPath,
 				stepIndex: input.stepIndex,
 				taskIndex,
 				agent: result.agent,
-				branch: input.setup.worktrees[taskIndex]?.branch,
+				...(branch === undefined ? {} : { branch }),
 			});
 			return {
 				index: input.flatStartIndex + taskIndex,

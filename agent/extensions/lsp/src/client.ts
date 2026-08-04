@@ -2,6 +2,8 @@ import { spawn, type ChildProcess } from 'node:child_process';
 import { EventEmitter } from 'node:events';
 import { pathToFileURL } from 'node:url';
 import { create_child_process_env } from './env.js';
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 export interface LspPosition {
 	line: number;
@@ -66,6 +68,58 @@ interface JsonRpcMessage {
 	error?: { code: number; message: string; data?: unknown };
 }
 
+function recordValue(value: unknown): Record<string, unknown> | undefined {
+	return typeof value === 'object' && value !== null && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: undefined;
+}
+
+function isPosition(value: unknown): value is LspPosition {
+	const record = recordValue(value);
+	return record !== undefined
+		&& typeof record.line === 'number'
+		&& Number.isInteger(record.line)
+		&& record.line >= 0
+		&& typeof record.character === 'number'
+		&& Number.isInteger(record.character)
+		&& record.character >= 0;
+}
+
+function isRange(value: unknown): value is LspRange {
+	const record = recordValue(value);
+	return record !== undefined && isPosition(record.start) && isPosition(record.end);
+}
+
+export function isLspDiagnostic(value: unknown): value is LspDiagnostic {
+	const record = recordValue(value);
+	return record !== undefined
+		&& isRange(record.range)
+		&& typeof record.message === 'string'
+		&& (record.severity === undefined || (typeof record.severity === 'number' && [1, 2, 3, 4].includes(record.severity)))
+		&& (record.code === undefined || typeof record.code === 'string' || typeof record.code === 'number')
+		&& (record.source === undefined || typeof record.source === 'string');
+}
+
+function decodeJsonRpcMessage(value: unknown): JsonRpcMessage {
+	const record = recordValue(value);
+	if (!record) throw new TypeError('Invalid LSP JSON-RPC message.');
+	const error = recordValue(record.error);
+	if (
+		record.jsonrpc !== '2.0'
+		|| (record.id !== undefined && typeof record.id !== 'string' && typeof record.id !== 'number')
+		|| (record.method !== undefined && typeof record.method !== 'string')
+		|| (record.error !== undefined && (!error || typeof error.code !== 'number' || typeof error.message !== 'string'))
+	) throw new TypeError('Invalid LSP JSON-RPC message.');
+	return {
+		jsonrpc: '2.0',
+		...(record.id === undefined ? {} : { id: record.id }),
+		...(record.method === undefined ? {} : { method: record.method }),
+		...(record.params === undefined ? {} : { params: record.params }),
+		...(record.result === undefined ? {} : { result: record.result }),
+		...(error ? { error: { code: error.code as number, message: error.message as string, ...(error.data === undefined ? {} : { data: error.data }) } } : {}),
+	};
+}
+
 export interface LspClientOptions {
 	command: string;
 	args: string[];
@@ -77,7 +131,7 @@ export interface LspClientOptions {
 export class LspClientStartError extends Error {
 	command: string;
 	args: string[];
-	code?: string;
+	code: string | undefined;
 
 	constructor(
 		message: string,
@@ -148,7 +202,7 @@ export class LspClient extends EventEmitter {
 				command: this.#options.command,
 				args: this.#options.args,
 				cause,
-				code,
+				...(code === undefined ? {} : { code }),
 			});
 
 		this.#proc.on('error', (err) => {
@@ -180,7 +234,7 @@ export class LspClient extends EventEmitter {
 		this.#proc.stderr?.on('data', () => {
 			// Discard stderr; many servers are chatty.
 		});
-		this.#proc.stdout!.on('data', (chunk: Buffer) => {
+		requirePresent(this.#proc.stdout).on('data', (chunk: Buffer) => {
 			this.#buffer = Buffer.concat([this.#buffer, chunk]);
 			this.#drain_buffer();
 		});
@@ -459,9 +513,7 @@ export class LspClient extends EventEmitter {
 			this.#buffer = this.#buffer.subarray(body_start + length);
 
 			try {
-				this.#handle_message(
-					JSON.parse(body.toString('utf8')) as JsonRpcMessage,
-				);
+				this.#handle_message(decodeJsonRpcMessage(JSON.parse(body.toString('utf8'))));
 			} catch (error) {
 				this.#emit_error(error);
 			}
@@ -476,7 +528,7 @@ export class LspClient extends EventEmitter {
 					? Number(message.id)
 					: null;
 		if (numeric_id != null && this.#pending.has(numeric_id)) {
-			const pending = this.#pending.get(numeric_id)!;
+			const pending = requirePresent(this.#pending.get(numeric_id));
 			this.#pending.delete(numeric_id);
 			clearTimeout(pending.timer);
 			if (message.error) {
@@ -495,10 +547,11 @@ export class LspClient extends EventEmitter {
 			message.method === 'textDocument/publishDiagnostics' &&
 			message.params
 		) {
-			const params = message.params as {
-				uri: string;
-				diagnostics: LspDiagnostic[];
-			};
+			const params = recordValue(message.params);
+			if (typeof params?.uri !== 'string' || !Array.isArray(params.diagnostics) || !params.diagnostics.every(isLspDiagnostic)) {
+				this.#emit_error(new TypeError('Invalid publishDiagnostics notification.'));
+				return;
+			}
 			this.#diagnostics_by_uri.set(params.uri, params.diagnostics);
 			this.emit('diagnostics', params.uri);
 			return;
@@ -564,7 +617,7 @@ export function normalize_document_symbol_result(
 		kind: entry.kind,
 		range: entry.location.range,
 		selectionRange: entry.location.range,
-		containerName: entry.containerName,
+		...(entry.containerName === undefined ? {} : { containerName: entry.containerName }),
 		uri: entry.location.uri,
 	}));
 }

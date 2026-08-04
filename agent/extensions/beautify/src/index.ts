@@ -291,8 +291,8 @@ class BeautifyEditor extends CustomEditor {
 class BeautifyEditorWrapper implements EditorComponent {
   actionHandlers = new Map<AppKeybinding, () => void>();
   private scanTimers: Array<ReturnType<typeof setTimeout>> = [];
-  private _onSubmit: ((text: string) => void) | undefined;
-  private _onChange: ((text: string) => void) | undefined;
+  private _onSubmit: (text: string) => void = () => {};
+  private _onChange: (text: string) => void = () => {};
   onEscape: (() => void) | undefined;
   onCtrlD: (() => void) | undefined;
   onPasteImage: (() => void) | undefined;
@@ -316,30 +316,33 @@ class BeautifyEditorWrapper implements EditorComponent {
     (this.inner as EditorComponent & { focused?: boolean }).focused = value;
   }
 
-  get borderColor(): ((str: string) => string) | undefined {
-    return this.inner.borderColor;
+  get borderColor(): (str: string) => string {
+    return this.inner.borderColor ?? ((text) => text);
   }
 
   set borderColor(value: ((str: string) => string) | undefined) {
-    this.inner.borderColor = value;
+    if (value) this.inner.borderColor = value;
+    else delete this.inner.borderColor;
   }
 
-  get onSubmit(): ((text: string) => void) | undefined {
+  get onSubmit(): (text: string) => void {
     return this._onSubmit;
   }
 
   set onSubmit(handler: ((text: string) => void) | undefined) {
-    this._onSubmit = handler;
-    this.inner.onSubmit = handler;
+    this._onSubmit = handler ?? (() => {});
+    if (handler) this.inner.onSubmit = handler;
+    else delete this.inner.onSubmit;
   }
 
-  get onChange(): ((text: string) => void) | undefined {
+  get onChange(): (text: string) => void {
     return this._onChange;
   }
 
   set onChange(handler: ((text: string) => void) | undefined) {
-    this._onChange = handler;
-    this.inner.onChange = handler;
+    this._onChange = handler ?? (() => {});
+    if (handler) this.inner.onChange = handler;
+    else delete this.inner.onChange;
   }
 
   getText(): string {
@@ -503,7 +506,7 @@ export default function piBeautify(pi: ExtensionAPI) {
     return {
       action: "transform",
       text,
-      images: event.images,
+      ...(event.images !== undefined ? { images: event.images } : {}),
     };
   });
 }

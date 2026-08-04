@@ -15,7 +15,7 @@
  *   pi install github.com/arpagon/pi-rewind
  */
 
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 import {
   isGitRepo,
   getRepoRoot,
@@ -30,23 +30,26 @@ import {
 import { createInitialState, resetState } from "./state.js";
 import { updateStatus, clearStatus } from "./ui.js";
 import { registerCommands, handleForkRestore, handleTreeRestore } from "./commands.js";
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 /** Truncate a string to maxLen, adding ellipsis if needed */
 function truncate(s: string, maxLen: number): string {
   if (s.length <= maxLen) return s;
-  return s.slice(0, maxLen - 1) + "…";
+  return `${s.slice(0, maxLen - 1)}…`;
 }
 
 /** Extract a human-readable description from a tool_call event */
-function describeToolCall(toolName: string, input: any): string {
-  if (!input) return toolName;
+function describeToolCall(toolName: string, input: unknown): string {
+	if (!input || typeof input !== "object") return toolName;
+	const args = input as Record<string, unknown>;
   switch (toolName) {
     case "write":
-      return `write → ${input.path || "?"}`;
+      return `write → ${typeof args.path === "string" && args.path ? args.path : "?"}`;
     case "edit":
-      return `edit → ${input.path || "?"}`;
+      return `edit → ${typeof args.path === "string" && args.path ? args.path : "?"}`;
     case "bash":
-      return `bash: ${truncate(String(input.command || ""), 50)}`;
+      return `bash: ${truncate(typeof args.command === "string" ? args.command : "", 50)}`;
     default:
       return toolName;
   }
@@ -62,7 +65,7 @@ export default function (pi: ExtensionAPI) {
   // Session lifecycle
   // ========================================================================
 
-  async function initSession(ctx: any): Promise<void> {
+  async function initSession(ctx: ExtensionContext): Promise<void> {
     resetState(state);
 
     state.gitAvailable = await isGitRepo(ctx.cwd);
@@ -210,9 +213,9 @@ export default function (pi: ExtensionAPI) {
           const ts = Date.now();
           const id = `turn-${state.sessionId}-${state.currentTurnIndex}-${ts}`;
           const cp = await createCheckpoint({
-            root: state.repoRoot!,
+            root: requirePresent(state.repoRoot),
             id,
-            sessionId: state.sessionId!,
+            sessionId: requirePresent(state.sessionId),
             trigger: "tool",
             turnIndex: state.currentTurnIndex,
             description: desc,
@@ -220,7 +223,7 @@ export default function (pi: ExtensionAPI) {
 
           // Skip if worktree is identical to last checkpoint (read-only bash like ls, find, cat)
           if (state.lastWorktreeTree && cp.worktreeTreeSha === state.lastWorktreeTree) {
-            await deleteCheckpoint(state.repoRoot!, cp.id);
+            await deleteCheckpoint(requirePresent(state.repoRoot), cp.id);
             return;
           }
 

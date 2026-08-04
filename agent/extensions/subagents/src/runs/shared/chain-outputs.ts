@@ -2,6 +2,8 @@ import { isDynamicParallelStep, isParallelStep, type ChainStep, type SequentialS
 import type { ChainOutputMap, ChainOutputMapEntry, SingleResult } from "../../shared/types.ts";
 import { getSingleResultOutput } from "../../shared/utils.ts";
 import { DynamicFanoutError, hasDynamicFanoutFields, type DynamicFanoutConfig, validateDynamicStepShape } from "./dynamic-fanout.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const OUTPUT_REF_PATTERN = /\{outputs\.([^}]*)\}/g;
 const SAFE_OUTPUT_NAME_PATTERN = /^[A-Za-z_][A-Za-z0-9_]*$/;
@@ -40,7 +42,7 @@ export function validateChainOutputBindingsWithContext(
 	const seen = new Set<string>(priorOutputNames);
 	for (let stepIndex = 0; stepIndex < steps.length; stepIndex++) {
 		const displayStepIndex = (context.startStepIndex ?? 0) + stepIndex + 1;
-		const step = steps[stepIndex]!;
+		const step = requirePresent(steps[stepIndex]);
 		if (hasDynamicFanoutFields(step)) {
 			if (!isDynamicParallelStep(step)) {
 				throw new ChainOutputValidationError(`Dynamic chain step ${displayStepIndex} requires expand, a single parallel template object, and collect; dynamic expand/collect cannot be mixed with static parallel arrays.`);
@@ -67,7 +69,7 @@ export function validateChainOutputBindingsWithContext(
 		for (const template of taskTemplatesForStep(step)) {
 			for (const match of template.matchAll(OUTPUT_REF_PATTERN)) {
 				const rawReference = match[0];
-				const name = match[1]!;
+				const name = requirePresent(match[1]);
 				if (!SAFE_OUTPUT_NAME_PATTERN.test(name)) {
 					throw new ChainOutputValidationError(`Invalid chain output reference '${rawReference}' at step ${displayStepIndex}. Use {outputs.name} with /^[A-Za-z_][A-Za-z0-9_]*$/ names.`);
 				}

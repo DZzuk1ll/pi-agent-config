@@ -167,9 +167,10 @@ export class WorkflowController {
 					onProgress: (progress) => this.updateProgress(record, progress),
 				});
 				record.state = result.ok ? "done" : "failed";
+				delete record.currentTool;
 				record.endedAt = Date.now();
-				record.runId = result.runId;
-				record.model = result.model ?? record.model;
+				if (result.runId !== undefined) record.runId = result.runId;
+				if (result.model !== undefined) record.model = result.model;
 				if (result.error) record.error = result.error;
 				if (result.usage) record.usage = result.usage;
 				record.preview = (result.output || record.preview || "").slice(-2_000);
@@ -177,6 +178,7 @@ export class WorkflowController {
 				return result;
 			} catch (error) {
 				record.state = taskController.signal.aborted ? "aborted" : "failed";
+				delete record.currentTool;
 				record.endedAt = Date.now();
 				record.error = error instanceof Error ? error.message : String(error);
 				this.onChange();
@@ -226,6 +228,7 @@ export class WorkflowController {
 		for (const record of this.details.agents) {
 			if (record.state === "queued" || record.state === "running") {
 				record.state = this.signal.aborted ? "aborted" : "failed";
+				delete record.currentTool;
 				record.endedAt = Date.now();
 				record.error ??= "Agent did not settle before workflow cleanup";
 			}

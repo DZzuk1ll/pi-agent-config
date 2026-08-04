@@ -1,6 +1,9 @@
 import { randomUUID } from "node:crypto";
+import * as path from "node:path";
 import { abortError } from "../_shared/runtime/lifecycle.ts";
 import { sanitizeForDisplay, truncateUtf8, utf8ByteLength } from "../_shared/runtime/text.ts";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
+
 
 const VERSION = 2 as const;
 const REQUEST_EVENT = "prompt-template:subagent:request";
@@ -18,11 +21,12 @@ const MAX_STRUCTURED_NODES = 4_096;
 const MAX_PROGRESS_COUNT = 1_000_000_000;
 const MAX_PROGRESS_DURATION_MS = 7 * 24 * 60 * 60 * 1_000;
 const MAX_PROGRESS_TOKENS = 1_000_000_000_000;
+const MAX_AGENT_CWD_BYTES = 4_096;
 
 export type WorkflowThinking = "off" | "minimal" | "low" | "medium" | "high" | "xhigh" | "max";
 
 export interface DelegationEvents {
-	on(event: string, handler: (data: unknown) => void): (() => void) | void;
+	on(event: string, handler: (data: unknown) => void): (() => void) | undefined;
 	emit(event: string, data: unknown): void;
 }
 
@@ -54,6 +58,7 @@ export interface AgentCallOptions {
 	model?: string;
 	thinking?: WorkflowThinking;
 	schema?: Record<string, unknown>;
+	cwd?: string;
 }
 
 export interface DelegationProgress {
@@ -118,7 +123,7 @@ function cleanAgentOutput(value: string): string {
 	const sanitized = sanitizeForDisplay(value);
 	requireBoundedString(sanitized, MAX_AGENT_OUTPUT_BYTES, "Sanitized subagent text output");
 	const lines = sanitized.trimEnd().split("\n");
-	while (lines.length > 0 && (!lines.at(-1)?.trim() || /^[✻*]\s+(?:Done|Worked)\s+(?:for|in)\s+\d/i.test(lines.at(-1)!.trim()))) {
+	while (lines.length > 0 && (!lines.at(-1)?.trim() || /^[✻*]\s+(?:Done|Worked)\s+(?:for|in)\s+\d/i.test(requirePresent(lines.at(-1)).trim()))) {
 		lines.pop();
 	}
 	return lines.join("\n").trimEnd();
@@ -240,6 +245,10 @@ export class DelegationClient {
 		onProgress?: (progress: DelegationProgress) => void;
 	}): Promise<AgentCallResult> {
 		if (!options.prompt.trim()) return Promise.reject(new Error("agent() requires a non-empty prompt"));
+		const requestedCwd = options.call.cwd?.trim();
+		if (requestedCwd?.includes("\0") || (requestedCwd && utf8ByteLength(requestedCwd) > MAX_AGENT_CWD_BYTES)) {
+			return Promise.reject(new Error(`agent() cwd must be at most ${MAX_AGENT_CWD_BYTES} UTF-8 bytes and contain no NUL`));
+		}
 		const request: DelegationRequest = {
 			version: VERSION,
 			requestId: randomUUID(),
@@ -248,7 +257,7 @@ export class DelegationClient {
 			agent: options.call.agent?.trim() || "general-purpose",
 			task: options.prompt,
 			context: "fresh",
-			cwd: this.cwd,
+			cwd: requestedCwd ? path.resolve(this.cwd, requestedCwd) : this.cwd,
 			...(options.call.model ? { model: options.call.model } : {}),
 			...(options.call.thinking ? { thinking: options.call.thinking } : {}),
 			artifacts: true,
@@ -277,7 +286,7 @@ export class DelegationClient {
 				settled = true;
 				cleanup();
 				if (error) reject(error instanceof Error ? error : new Error(String(error)));
-				else resolve(result!);
+				else resolve(requirePresent(result));
 			};
 			const onAbort = () => {
 				if (settled || cancelStarted) return;

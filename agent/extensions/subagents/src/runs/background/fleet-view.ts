@@ -18,6 +18,7 @@ import { readStatus } from "../../shared/utils.ts";
 import { formatNestedRunStatusLines } from "../shared/nested-render.ts";
 import { contextModeLabel, summarizeContextModes } from "../shared/context-mode.ts";
 import { formatAsyncRunOutputPath, formatAsyncRunProgressLabel, listAsyncRuns, type AsyncRunSummary } from "./async-status.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
 
 const DEFAULT_TRANSCRIPT_LINES = 80;
 const MAX_TRANSCRIPT_LINES = 500;
@@ -207,14 +208,14 @@ function readSessionTranscriptTail(sessionFile: string, maxLines: number, truste
 }
 
 function formatActivityFacts(input: {
-	activityState?: ActivityState;
-	lastActivityAt?: number;
-	currentTool?: string;
-	currentToolStartedAt?: number;
-	currentPath?: string;
-	turnCount?: number;
-	toolCount?: number;
-	tokens?: { total: number };
+	activityState?: ActivityState | undefined;
+	lastActivityAt?: number | undefined;
+	currentTool?: string | undefined;
+	currentToolStartedAt?: number | undefined;
+	currentPath?: string | undefined;
+	turnCount?: number | undefined;
+	toolCount?: number | undefined;
+	tokens?: { total: number } | undefined;
 }): string | undefined {
 	const facts: string[] = [];
 	if (input.currentTool && input.currentToolStartedAt !== undefined) facts.push(`tool ${input.currentTool} ${formatDuration(Math.max(0, Date.now() - input.currentToolStartedAt))}`);
@@ -321,13 +322,13 @@ export function inspectSubagentFleet(_params: FleetViewParams, deps: FleetViewDe
 
 	let asyncRuns: AsyncRunSummary[];
 	try {
-		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? ASYNC_DIR, {
+		asyncRuns = listAsyncRuns(deps.asyncDirRoot ?? ASYNC_DIR, omitUndefined({
 			states: ["queued", "running"],
 			sessionId: deps.state?.currentSessionId ?? undefined,
 			resultsDir: deps.resultsDir ?? RESULTS_DIR,
 			kill: deps.kill,
 			now: deps.now,
-		});
+		}));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		return { content: [{ type: "text", text: message }], isError: true, details: { mode: "management", results: [] } };
@@ -382,7 +383,7 @@ function selectTranscriptStep(status: AsyncStatus, options: TranscriptOptions): 
 	const hint = options.index === undefined && steps.length > 1
 		? `Tip: pass index to inspect a specific child transcript (${steps.map((candidate, index) => `${index}=${candidate.agent}`).join(", ")}).`
 		: undefined;
-	return { index: selectedIndex, step, hint };
+	return omitUndefined({ index: selectedIndex, step, hint });
 }
 
 function stepStateLine(mode: SubagentRunMode, index: number | undefined, step: AsyncJobStep | undefined): string | undefined {
@@ -440,7 +441,7 @@ export function formatAsyncRunTranscript(status: AsyncStatus, asyncDir: string, 
 		stepStateLine(status.mode, selected.index, selected.step),
 		selected.hint,
 	].filter((line): line is string => Boolean(line));
-	appendKnownArtifacts(lines, { outputPaths, sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined });
+	appendKnownArtifacts(lines, omitUndefined({ outputPaths, sessionFile, eventsPath: fs.existsSync(eventsPath) ? eventsPath : undefined, logPath: fs.existsSync(logPath) ? logPath : undefined }));
 
 	const warnings: string[] = [];
 	let transcriptLines: string[] = [];
@@ -486,7 +487,7 @@ export function formatNestedRunTranscript(run: NestedRunSummary, options: Transc
 		run.mode ? `Mode: ${run.mode}` : undefined,
 		run.agent ? `Agent: ${run.agent}` : run.agents?.length ? `Agents: ${run.agents.join(", ")}` : undefined,
 	].filter((line): line is string => Boolean(line));
-	appendKnownArtifacts(lines, { outputPaths: [], sessionFile: run.sessionFile });
+	appendKnownArtifacts(lines, omitUndefined({ outputPaths: [], sessionFile: run.sessionFile }));
 	if (!run.sessionFile) {
 		appendTranscriptBody(lines, "Transcript tail", [], false);
 		return lines.join("\n");
@@ -535,7 +536,7 @@ export function formatAsyncResultTranscript(data: {
 		index !== undefined && child ? `Child: ${index} (${child.agent ?? "subagent"})` : undefined,
 		index === undefined && children.length > 1 ? `Tip: pass index to inspect a specific child transcript (${children.map((candidate, childIndex) => `${childIndex}=${candidate.agent ?? "subagent"}`).join(", ")}).` : undefined,
 	].filter((line): line is string => Boolean(line));
-	appendKnownArtifacts(lines, { outputPaths: [], sessionFile, resultPath });
+	appendKnownArtifacts(lines, omitUndefined({ outputPaths: [], sessionFile, resultPath }));
 	appendTranscriptBody(lines, "Result transcript tail", transcriptLines.filter((line) => line.trim()), output.split(/\r?\n/).length > lineLimit);
 	return lines.join("\n");
 }

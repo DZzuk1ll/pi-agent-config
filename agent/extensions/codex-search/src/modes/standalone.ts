@@ -14,6 +14,9 @@ import type {
   StandaloneExternalWebAccess,
   ResponseLength,
 } from "./types.ts";
+import { Type } from "typebox";
+import { Value } from "typebox/value";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 
 export interface SearchQuery {
   q: string;
@@ -100,11 +103,11 @@ export interface StandaloneCommandsOptions {
   signal?: AbortSignal;
 }
 
-interface StandaloneSearchResponse {
-  encrypted_output?: string;
-  output?: string;
-  results?: unknown;
-}
+const StandaloneSearchResponseSchema = Type.Object({
+  encrypted_output: Type.Optional(Type.String()),
+  output: Type.Optional(Type.String()),
+  results: Type.Optional(Type.Array(Type.Unknown())),
+}, { additionalProperties: true });
 
 export function externalWebAccessForFreshness(freshness: Freshness): StandaloneExternalWebAccess {
   if (freshness === "cached") return false;
@@ -230,12 +233,12 @@ export async function runStandaloneCommands(
   body.max_output_tokens = maxOutputTokens ?? 8000;
 
   const bodyText = JSON.stringify(body);
-  let response = await transport.fetch(transport.resolveSearchEndpoint(), {
+  let response = await transport.fetch(transport.resolveSearchEndpoint(), omitUndefined({
     method: "POST",
     headers,
     body: bodyText,
     signal,
-  });
+  }));
 
   if (!response.ok) {
     let status = response.status;
@@ -245,12 +248,12 @@ export async function runStandaloneCommands(
       if (signal?.aborted) {
         throw new CodexError("timeout", "Codex standalone request was aborted before retry.");
       }
-      response = await transport.fetch(transport.resolveSearchEndpoint(), {
+      response = await transport.fetch(transport.resolveSearchEndpoint(), omitUndefined({
         method: "POST",
         headers,
         body: bodyText,
         signal,
-      });
+      }));
       if (!response.ok) {
         status = response.status;
         rawText = await response.text();
@@ -266,7 +269,16 @@ export async function runStandaloneCommands(
     }
   }
 
-  const data = (await response.json()) as StandaloneSearchResponse;
+  let raw: unknown;
+  try {
+    raw = await response.json();
+  } catch (error) {
+    throw new CodexError("schema", `Codex standalone response was not valid JSON: ${error instanceof Error ? error.message : String(error)}`);
+  }
+  if (!Value.Check(StandaloneSearchResponseSchema, raw)) {
+    throw new CodexError("schema", "Codex standalone response did not match the expected schema.");
+  }
+  const data = raw;
   const text = typeof data.output === "string" ? data.output : "";
   const structuredResults = Array.isArray(data.results) ? data.results : undefined;
   const refIds = {
@@ -376,10 +388,10 @@ function extractCitations(results: unknown[] | undefined, text: string): CodexCi
   const citations = new Map<string, CodexCitation>();
   for (const result of results ?? []) {
     if (!isRecord(result) || typeof result.url !== "string" || !isHttpUrl(result.url)) continue;
-    citations.set(result.url, {
+    citations.set(result.url, omitUndefined({
       title: typeof result.title === "string" ? result.title : undefined,
       url: result.url,
-    });
+    }));
   }
   for (const citation of extractMarkdownCitations(text)) {
     if (!citations.has(citation.url)) citations.set(citation.url, citation);

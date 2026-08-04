@@ -255,7 +255,7 @@ export function createMockContext(overrides: Record<string, unknown> = {}) {
 		model: overrides.model,
 		ui: {
 			notify(message: string, level?: string) {
-				notifications.push({ message, level });
+				notifications.push({ message, ...(level === undefined ? {} : { level }) });
 			},
 			setStatus(key: string, value: string | undefined) {
 				statuses.set(key, value);
@@ -336,10 +336,12 @@ export function createCustomSelectorHarness(
 ) {
 	if (typeof factory !== "function") throw new Error("Expected a custom component factory");
 	let result: unknown;
-	let resolveResult!: (value: unknown) => void;
+	let pendingResolveResult: ((value: unknown) => void) | undefined;
 	const resultPromise = new Promise<unknown>((resolve) => {
-		resolveResult = resolve;
+		pendingResolveResult = resolve;
 	});
+	if (!pendingResolveResult) throw new Error("Promise executor did not initialize its resolver");
+	const resolveResult = pendingResolveResult;
 	const component = (
 		factory as (...args: unknown[]) => {
 			render(width: number): string[];

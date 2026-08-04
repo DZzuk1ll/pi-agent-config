@@ -12,7 +12,19 @@
       "recommended": true,
       "suspicious": {
         "noControlCharactersInRegex": "off",
-        "noExplicitAny": "off"
+        "noExplicitAny": "error",
+        "noFocusedTests": "error"
+      },
+      "style": {
+        "noNonNullAssertion": "error",
+        "useNodejsImportProtocol": "warn",
+        "useTemplate": "warn"
+      },
+      "complexity": {
+        "noUselessStringRaw": "warn",
+        "noUselessTernary": "warn",
+        "useIndexOf": "warn",
+        "useLiteralKeys": "warn"
       }
     }
   }

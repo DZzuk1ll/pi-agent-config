@@ -4,6 +4,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
 	create_command_context,
+	create_deferred,
 	create_mock_client,
 	create_test_pi,
 	register_test_lsp_extension,
@@ -57,16 +58,11 @@ describe('lsp server manager', () => {
 		mkdirSync(join(root, 'src'), { recursive: true });
 		writeFileSync(join(root, 'package.json'), '{}\n');
 		writeFileSync(file, 'export const value = 1;\n');
-		let release_first!: () => void;
-		const first_hover = new Promise<{ contents: string }>(
-			(resolve) => {
-				release_first = () => resolve({ contents: 'first' });
-			},
-		);
+		const first_hover = create_deferred<{ contents: string }>();
 		const close_document = vi.fn().mockResolvedValue(undefined);
 		const hover = vi
 			.fn()
-			.mockReturnValueOnce(first_hover)
+			.mockReturnValueOnce(first_hover.promise)
 			.mockResolvedValueOnce({ contents: 'second' });
 		const client = create_mock_client({
 			close_document,
@@ -103,7 +99,7 @@ describe('lsp server manager', () => {
 
 		expect(second.content[0].text).toBe('second');
 		expect(close_document).not.toHaveBeenCalled();
-		release_first();
+		first_hover.resolve({ contents: 'first' });
 		await first;
 		expect(close_document).toHaveBeenCalledTimes(1);
 	});

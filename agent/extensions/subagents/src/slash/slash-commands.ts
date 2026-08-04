@@ -23,6 +23,7 @@ import { SUBAGENT_FANOUT_CHILD_ENV } from "../runs/shared/pi-args.ts";
 import { assertJsonSchemaObject } from "../runs/shared/structured-output.ts";
 import { validateAcceptanceInput } from "../runs/shared/acceptance.ts";
 import type { SlashSubagentResponse, SlashSubagentUpdate } from "./slash-bridge.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import { registerPromptWorkflowCommands } from "./prompt-workflows.ts";
 import { openSubagentsAdmin } from "./subagents-admin.ts";
 import { openSubagentFleet } from "../tui/fleet.ts";
@@ -48,6 +49,8 @@ import {
 	type SubagentState,
 	type Usage,
 } from "../shared/types.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 interface InlineConfig {
 	output?: string | false;
@@ -81,16 +84,16 @@ const parseInlineConfig = (raw: string): InlineConfig => {
 			case "output": config.output = val === "false" ? false : val; break;
 			case "outputMode": if (val === "inline" || val === "file-only") config.outputMode = val; break;
 			case "reads": config.reads = val === "false" ? false : val.split("+").filter(Boolean); break;
-			case "model": config.model = val || undefined; break;
+			case "model": if (val) config.model = val; break;
 			case "skill": case "skills": config.skill = val === "false" ? false : val.split("+").filter(Boolean); break;
 			case "progress": config.progress = val !== "false"; break;
-			case "as": config.as = val || undefined; break;
-			case "label": config.label = val || undefined; break;
-			case "phase": config.phase = val || undefined; break;
-			case "cwd": config.cwd = val || undefined; break;
+			case "as": if (val) config.as = val; break;
+			case "label": if (val) config.label = val; break;
+			case "phase": if (val) config.phase = val; break;
+			case "cwd": if (val) config.cwd = val; break;
 			case "count": { const n = Number(val); if (Number.isInteger(n) && n > 0) config.count = n; break; }
-			case "outputSchema": config.outputSchema = val || undefined; break;
-			case "acceptance": config.acceptance = val || undefined; break;
+			case "outputSchema": if (val) config.outputSchema = val; break;
+			case "acceptance": if (val) config.acceptance = val; break;
 		}
 	}
 	return config;
@@ -140,7 +143,7 @@ const makeAgentCompletions = (state: SubagentState, multiAgent: boolean) => (pre
 	// inside a task are ignored.
 	let inSingle = false, inDouble = false, depth = 0, segStart = 0;
 	for (let i = 0; i < prefix.length; i++) {
-		const ch = prefix[i]!;
+		const ch = requirePresent(prefix[i]);
 		if (inSingle) { if (ch === "'") inSingle = false; continue; }
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
@@ -329,7 +332,9 @@ class SubagentsStopSelector implements Component {
 		}
 		if (this.confirming) {
 			if (matchesKey(data, "return") || data.toLowerCase() === "y") {
-				this.done({ confirmed: true, target: this.targets[this.selected] });
+				const target = this.targets[this.selected];
+				if (!target) throw new Error("No subagent stop target is selected");
+				this.done({ confirmed: true, target });
 				return;
 			}
 			if (data.toLowerCase() === "n" || matchesKey(data, "backspace")) {
@@ -360,7 +365,7 @@ class SubagentsStopSelector implements Component {
 		const maxRows = 10;
 		const start = Math.max(0, Math.min(this.selected - maxRows + 1, Math.max(0, this.targets.length - maxRows)));
 		for (let index = start; index < Math.min(this.targets.length, start + maxRows); index++) {
-			const target = this.targets[index]!;
+			const target = requirePresent(this.targets[index]);
 			const selected = index === this.selected;
 			const marker = selected ? "›" : " ";
 				const actionLabel = target.actionLabel;
@@ -372,7 +377,7 @@ class SubagentsStopSelector implements Component {
 		if (this.targets.length > maxRows) lines.push(this.theme.fg("dim", `Showing ${start + 1}-${Math.min(this.targets.length, start + maxRows)} of ${this.targets.length}`));
 		lines.push("");
 		if (this.confirming) {
-			const target = this.targets[this.selected]!;
+			const target = requirePresent(this.targets[this.selected]);
 			lines.push(this.theme.fg("warning", `Confirm: ${target.actionLabel} ${target.id}?`));
 			if (target.kind === "async") lines.push(this.theme.fg("dim", "Stop ends this run; use interrupt for a resumable pause."));
 			lines.push(this.theme.fg("dim", "Enter/Y confirms · N returns · Esc cancels"));
@@ -493,7 +498,7 @@ function buildSubagentCostReport(ctx: ExtensionContext): string {
 function parseSingleRequiredArg(args: string, usage: string): { ok: true; value: string } | { ok: false; message: string } {
 	const parts = args.trim().split(/\s+/).filter(Boolean);
 	if (parts.length !== 1) return { ok: false, message: usage };
-	return { ok: true, value: parts[0]! };
+	return { ok: true, value: requirePresent(parts[0]) };
 }
 
 function getProfileWorkerModel(profile: { subagents?: { agentOverrides?: Record<string, { model?: string }> } }): string | undefined {
@@ -536,7 +541,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			};
 		}
 		const outputSchema = loadSavedOutputSchema(chain, step.agent, (step as { outputSchema?: unknown }).outputSchema);
-		return {
+		return omitUndefined({
 			agent: step.agent,
 			task: step.task || undefined,
 			...(step.phase ? { phase: step.phase } : {}),
@@ -550,7 +555,7 @@ const mapSavedChainSteps = (chain: ChainConfig, worktree = false): ChainStep[] =
 			progress: step.progress,
 			skill: step.skill ?? step.skills,
 			model: step.model,
-		};
+		});
 	});
 };
 
@@ -765,7 +770,7 @@ export class SlashParseError extends Error {}
 function findUnmatchedCloseParen(input: string): boolean {
 	let depth = 0, inSingle = false, inDouble = false;
 	for (let i = 0; i < input.length; i++) {
-		const ch = input[i]!;
+		const ch = requirePresent(input[i]);
 		if (inSingle) { if (ch === "'") inSingle = false; continue; }
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
@@ -781,7 +786,7 @@ function splitOnArrow(input: string): string[] {
 	const segments: string[] = [];
 	let depth = 0, inSingle = false, inDouble = false, start = 0;
 	for (let i = 0; i < input.length; i++) {
-		const ch = input[i]!;
+		const ch = requirePresent(input[i]);
 		if (inSingle) { if (ch === "'") inSingle = false; continue; }
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
@@ -803,7 +808,7 @@ function splitGroupTasks(inner: string): string[] {
 	const parts: string[] = [];
 	let depth = 0, inSingle = false, inDouble = false, start = 0;
 	for (let i = 0; i < inner.length; i++) {
-		const ch = inner[i]!;
+		const ch = requirePresent(inner[i]);
 		if (inSingle) { if (ch === "'") inSingle = false; continue; }
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
@@ -824,7 +829,7 @@ export function parseSingleTaskToken(token: string): ParsedStep {
 	let task: string | undefined;
 	const qMatch = token.match(/^(\S+(?:\[[^\]]*\])?)\s+(?:"([^"]*)"|'([^']*)')$/);
 	if (qMatch) {
-		agentPart = qMatch[1]!;
+		agentPart = requirePresent(qMatch[1]);
 		task = (qMatch[2] ?? qMatch[3]) || undefined;
 	} else {
 		const dashIdx = token.indexOf(" -- ");
@@ -835,7 +840,7 @@ export function parseSingleTaskToken(token: string): ParsedStep {
 			agentPart = token;
 		}
 	}
-	return { kind: "step", ...parseAgentToken(agentPart), task };
+	return omitUndefined({ kind: "step", ...parseAgentToken(agentPart), task });
 }
 
 const parseGroupConfig = (raw: string): GroupConfig => {
@@ -860,7 +865,7 @@ const parseGroupConfig = (raw: string): GroupConfig => {
 const splitGroupBody = (trimmed: string): { inner: string; config: GroupConfig } => {
 	let depth = 0, inSingle = false, inDouble = false, closeIdx = -1;
 	for (let i = 0; i < trimmed.length; i++) {
-		const ch = trimmed[i]!;
+		const ch = requirePresent(trimmed[i]);
 		if (inSingle) { if (ch === "'") inSingle = false; continue; }
 		if (inDouble) { if (ch === '"') inDouble = false; continue; }
 		if (ch === "'") { inSingle = true; continue; }
@@ -1012,7 +1017,7 @@ const INLINE_ACCEPTANCE_LEVELS = new Set<string>(["auto", "attested", "checked"]
 
 function validateInlineAcceptanceInput(value: string, agent: string): asserts value is "auto" | "attested" | "checked" {
 	const errors = validateAcceptanceInput(value, `acceptance for step '${agent}'`);
-	if (errors.length > 0) throw new SlashParseError(errors[0]!);
+	if (errors.length > 0) throw new SlashParseError(requirePresent(errors[0]));
 	if (!INLINE_ACCEPTANCE_LEVELS.has(value)) {
 		throw new SlashParseError(`Inline acceptance for step '${agent}' supports auto, attested, or checked. Use the subagent tool API or a saved .chain.json file for none, verified, or review requirements; reviewed is an achieved status, not an input level.`);
 	}
@@ -1072,7 +1077,7 @@ export function buildChainExpressionSteps(
 	if (!hasGroupSyntax(input)) {
 		const parsed = parseAgentArgs(state, input, "chain", ctx);
 		if (!parsed) return null;
-		const baseCwd = state.baseCwd!; // parseAgentArgs already verified baseCwd is set
+		const baseCwd = requirePresent(state.baseCwd); // parseAgentArgs already verified baseCwd is set
 		try {
 			const chain: ChainStep[] = parsed.steps.map((step, i) =>
 				mapParsedTaskToStepObject(step, parsed.task || undefined, i === 0, { baseCwd, inGroup: false }),
@@ -1112,7 +1117,7 @@ export function buildChainExpressionSteps(
 			return null;
 		}
 	}
-	const firstStep = expression.steps[0]!;
+	const firstStep = requirePresent(expression.steps[0]);
 	const firstHasTask =
 		firstStep.kind === "group"
 			? firstStep.tasks.some((t) => Boolean(t.task))
@@ -1364,7 +1369,7 @@ export function registerSlashCommands(
 				ctx.ui.notify("Usage: /subagents-models [builtin-agent-name]", "error");
 				return;
 			}
-			const agent = parts[0]!;
+			const agent = requirePresent(parts[0]);
 			if (!(BUILTIN_AGENT_NAMES as readonly string[]).includes(agent)) {
 				ctx.ui.notify(`Unknown builtin agent: ${agent}`, "error");
 				return;

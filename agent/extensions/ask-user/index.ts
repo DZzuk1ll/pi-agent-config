@@ -18,6 +18,8 @@ import {
 	hasDistinctOptionLabels,
 } from "./prompt.ts";
 import { sanitizeForDisplay } from "../_shared/runtime/text.ts";
+import { requirePresent } from "../_shared/runtime/require-present.ts";
+
 
 const MIN_OPTIONS = 2;
 const MAX_OPTIONS = 5;
@@ -228,7 +230,7 @@ export default function askUser(pi: ExtensionAPI): void {
 					lines.push("");
 
 					for (let index = 0; index < allOptions.length; index += 1) {
-						const option = allOptions[index]!;
+						const option = requirePresent(allOptions[index]);
 						const selected = index === optionIndex;
 						const prefix = selected ? theme.fg("accent", " ❯ ") : "   ";
 						const marker = option.isOther ? "✎" : `${index + 1}.`;

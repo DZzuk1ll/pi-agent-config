@@ -12,9 +12,9 @@ import {
 	to_lsp_tool_error,
 	type LspToolErrorDetails,
 } from './format.js';
-import {
+import type {
 	LspServerManager,
-	type FileState,
+	FileState,
 } from './server-manager.js';
 
 const DIAGNOSTICS_MANY_CONCURRENCY = 8;

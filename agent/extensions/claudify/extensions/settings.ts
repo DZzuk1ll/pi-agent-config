@@ -75,7 +75,7 @@ let settingsCache: CachedSettings | null = null;
 function readSettingsFile(path: string): { data: Record<string, unknown>; status: SettingsFileStatus } {
 	if (!path || !existsSync(path)) return { data: {}, status: "missing" };
 	try {
-		const raw = JSON.parse(readFileSync(path, "utf8"));
+		const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
 		if (!raw || typeof raw !== "object" || Array.isArray(raw)) return { data: {}, status: "invalid" };
 		return { data: raw as Record<string, unknown>, status: "ok" };
 	} catch {
@@ -85,14 +85,14 @@ function readSettingsFile(path: string): { data: Record<string, unknown>; status
 
 function normalizeAliases(settings: Record<string, unknown>): SettingsFile {
 	const normalized = structuredClone(settings);
-	if (!Object.prototype.hasOwnProperty.call(normalized, "spinnerColor")
-		&& Object.prototype.hasOwnProperty.call(normalized, "spinnerVerbColor")) {
+	if (!Object.hasOwn(normalized, "spinnerColor")
+		&& Object.hasOwn(normalized, "spinnerVerbColor")) {
 		normalized.spinnerColor = normalized.spinnerVerbColor;
 	}
 	delete normalized.spinnerVerbColor;
 	if (normalized.toolBackground === "border") normalized.toolBackground = "outlines";
-	if (!Object.prototype.hasOwnProperty.call(normalized, "footerUsageBar")
-		&& Object.prototype.hasOwnProperty.call(normalized, "footerContextBar")) {
+	if (!Object.hasOwn(normalized, "footerUsageBar")
+		&& Object.hasOwn(normalized, "footerContextBar")) {
 		normalized.footerUsageBar = normalized.footerContextBar;
 	}
 	delete normalized.footerContextBar;
@@ -120,7 +120,7 @@ export function writeSettingsKey(key: string, value: unknown): SettingsWriteResu
 	let invalid = false;
 	try {
 		if (existsSync(path)) {
-			const raw = JSON.parse(readFileSync(path, "utf8"));
+			const raw: unknown = JSON.parse(readFileSync(path, "utf8"));
 			if (!raw || typeof raw !== "object" || Array.isArray(raw)) invalid = true;
 			else settings = raw as Record<string, unknown>;
 		}
@@ -150,7 +150,7 @@ export function writeSettingsKey(key: string, value: unknown): SettingsWriteResu
 		// existing (healthy) settings file. Immediate-commit editing calls this
 		// on every keystroke, so a torn write is a real exposure.
 		const tmp = `${path}.tmp`;
-		writeFileSync(tmp, JSON.stringify(settings, null, 2) + "\n");
+		writeFileSync(tmp, `${JSON.stringify(settings, null, 2)}\n`);
 		renameSync(tmp, path);
 		return { success: true, backupCreated };
 	} catch {

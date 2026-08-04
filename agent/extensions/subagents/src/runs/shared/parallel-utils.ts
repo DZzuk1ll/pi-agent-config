@@ -95,7 +95,6 @@ export function flattenSteps(steps: RunnerStep[]): RunnerSubagentStep[] {
 		if (isParallelGroup(step)) {
 			for (const task of step.parallel) flat.push(task);
 		} else if (isDynamicRunnerGroup(step)) {
-			continue;
 		} else {
 			flat.push(step);
 		}

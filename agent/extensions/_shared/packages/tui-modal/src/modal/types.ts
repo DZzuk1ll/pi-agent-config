@@ -80,7 +80,7 @@ export interface SettingsModalOptions {
 	enable_search?: boolean;
 	detail?: (item: SettingItem) => string | undefined;
 	metadata?: ModalMetadata;
-	on_change: (id: string, new_value: string) => boolean | void;
+	on_change: (id: string, new_value: string) => boolean | undefined;
 	on_cancel?: () => void;
 }
 

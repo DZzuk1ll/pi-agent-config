@@ -178,28 +178,28 @@ export function to_lsp_tool_error(
 			language,
 			workspace_root,
 			command,
-			install_hint,
-			code: error.code,
+			...(install_hint === undefined ? {} : { install_hint }),
+			...(error.code === undefined ? {} : { code: error.code }),
 			message: missing_binary
 				? `command "${command}" not found`
 				: error.message,
 		};
 	}
+	const code = typeof error === 'object' &&
+		error !== null &&
+		'code' in error &&
+		typeof error.code === 'string'
+			? error.code
+			: undefined;
 	return {
 		kind: 'tool_execution_failed',
 		file,
 		language,
 		workspace_root,
 		command,
-		install_hint,
+		...(install_hint === undefined ? {} : { install_hint }),
 		message: error instanceof Error ? error.message : String(error),
-		code:
-			typeof error === 'object' &&
-			error !== null &&
-			'code' in error &&
-			typeof (error as { code?: unknown }).code === 'string'
-				? (error as { code: string }).code
-				: undefined,
+		...(code === undefined ? {} : { code }),
 	};
 }
 

@@ -6,6 +6,8 @@ import { parseFrontmatter } from "../agents/frontmatter.ts";
 import type { SubagentParamsLike } from "../runs/foreground/subagent-executor.ts";
 import type { ChainStep } from "../shared/settings.ts";
 import { getAgentDir, getProjectConfigDir } from "../shared/utils.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 interface PromptWorkflow {
 	name: string;
@@ -179,7 +181,7 @@ function parseRuntimeOptions(words: string[]): { args: string[]; agentOverride?:
 	let worktree = false;
 	let bg = false;
 	for (let i = 0; i < words.length; i++) {
-		const word = words[i]!;
+		const word = requirePresent(words[i]);
 		if (word === "--fork") {
 			fork = true;
 			continue;
@@ -207,7 +209,7 @@ function parseRuntimeOptions(words: string[]): { args: string[]; agentOverride?:
 		}
 		args.push(word);
 	}
-	return { args, agentOverride, fork, fresh, worktree, bg };
+	return { args, ...(agentOverride === undefined ? {} : { agentOverride }), fork, fresh, worktree, bg };
 }
 
 function splitChainDeclaration(input: string): { declaration: string; argsText: string } {
@@ -242,7 +244,7 @@ function workflowChainStep(workflow: PromptWorkflow, args: string[], runtime: Re
 	const skill = params.skill === true ? undefined : params.skill;
 	return {
 		agent: params.agent ?? "delegate",
-		task: params.task,
+		...(params.task === undefined ? {} : { task: params.task }),
 		...(params.model ? { model: params.model } : {}),
 		...(skill !== undefined ? { skill } : {}),
 		...(params.cwd ? { cwd: params.cwd } : {}),

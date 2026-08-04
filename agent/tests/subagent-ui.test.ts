@@ -2,7 +2,7 @@ import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
 import { join } from "node:path";
 import test from "node:test";
-
+import { SubagentParams } from "../extensions/subagents/src/extension/schemas.ts";
 import { createJiti } from "../node_modules/jiti/lib/jiti.mjs";
 
 const globalNodeModules = execFileSync("npm", ["root", "-g"], { encoding: "utf8" }).trim();
@@ -28,6 +28,13 @@ const theme = {
 	fg: (_color: string, text: string) => text,
 	bold: (text: string) => text,
 };
+
+test("top-level parallel tasks expose a user-facing label", () => {
+	const tasksSchema = SubagentParams.properties.tasks as unknown as {
+		items: { properties: Record<string, unknown> };
+	};
+	assert.ok(tasksSchema.items.properties.label);
+});
 
 test("running subagent spinner advances every 80 ms", () => {
 	assert.notEqual(renderModule.runningGlyph(0, 0), renderModule.runningGlyph(0, 80));

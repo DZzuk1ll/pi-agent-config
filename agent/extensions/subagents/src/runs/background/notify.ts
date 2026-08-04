@@ -15,6 +15,8 @@ import {
 	resolveCompletionBatchConfig,
 } from "./completion-batcher.ts";
 import { SUBAGENT_ASYNC_COMPLETE_EVENT, SUBAGENT_FOREGROUND_COMPLETE_EVENT, type ParallelHandoffReference, type SubagentState } from "../../shared/types.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 export interface SubagentNotifyDetails {
 	agent: string;
@@ -97,7 +99,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const body = lines.slice(2);
 	let sessionIndex = -1;
 	for (let i = body.length - 1; i >= 1; i--) {
-		if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(body[i]!)) {
+		if (body[i - 1]?.trim() === "" && /^(Session|Session file|Session share error):\s+/.test(requirePresent(body[i]))) {
 			sessionIndex = i;
 			break;
 		}
@@ -108,7 +110,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 	const firstMetadataIndex = metadataIndexes.length ? Math.min(...metadataIndexes) : body.length;
 	const resultEnd = firstMetadataIndex > 0 && body[firstMetadataIndex - 1]?.trim() === "" ? firstMetadataIndex - 1 : firstMetadataIndex;
 	const resultPreview = body.slice(0, resultEnd).join("\n").trim() || "(no output)";
-	const handoffPath = handoffIndex >= 0 ? body[handoffIndex]!.slice("Parallel handoff: ".length).trim() : undefined;
+	const handoffPath = handoffIndex >= 0 ? requirePresent(body[handoffIndex]).slice("Parallel handoff: ".length).trim() : undefined;
 	let sessionLabel: string | undefined;
 	let sessionValue: string | undefined;
 	if (sessionLine) {
@@ -117,7 +119,7 @@ export function parseSubagentNotifyContent(content: string): SubagentNotifyDetai
 		sessionValue = sessionLine.slice(separator + 1).trim();
 	}
 	return {
-		agent: match[3]!,
+		agent: requirePresent(match[3]),
 		status: match[2] as SubagentNotifyDetails["status"],
 		...(match[1] === "Detached foreground task" ? { source: "foreground" as const } : {}),
 		...(match[4] ? { taskInfo: match[4] } : {}),
@@ -153,7 +155,7 @@ interface PendingCompletion {
 function sendCompletion(pi: Pick<ExtensionAPI, "sendMessage">, items: PendingCompletion[]): boolean {
 	if (items.length === 0) return true;
 	const details = items.map((item) => item.details);
-	const content = details.length === 1 ? formatSingleCompletion(details[0]!) : formatGroupedCompletion(details);
+	const content = details.length === 1 ? formatSingleCompletion(requirePresent(details[0])) : formatGroupedCompletion(details);
 	try {
 		pi.sendMessage(
 			{
@@ -260,8 +262,9 @@ export default function registerSubagentNotify(
 		const inFlight = pending.get(key);
 		if (inFlight) return inFlight;
 		const details = buildCompletionDetails(result);
-		let resolve!: (accepted: boolean) => void;
-		const completion = new Promise<boolean>((settleCompletion) => { resolve = settleCompletion; });
+		let pendingResolve: ((accepted: boolean) => void) | undefined;
+		const completion = new Promise<boolean>((settleCompletion) => { pendingResolve = settleCompletion; });
+		const resolve = requirePresent(pendingResolve);
 		pending.set(key, completion);
 		const item: PendingCompletion = {
 			key,

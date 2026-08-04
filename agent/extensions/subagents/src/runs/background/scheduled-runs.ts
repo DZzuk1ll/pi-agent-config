@@ -3,6 +3,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import type { AgentToolResult } from "../../shared/tool-result.ts";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { Value } from "typebox/value";
+import { SubagentParams } from "../../extension/schemas.ts";
 import { writeAtomicJson } from "../../shared/atomic-json.ts";
 import { formatDuration, shortenPath } from "../../shared/formatters.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
@@ -14,6 +16,9 @@ import {
 import type { SubagentParamsLike } from "../foreground/subagent-executor.ts";
 import { validateExecutionAcceptance } from "../shared/acceptance.ts";
 import type { ResolvedSubagentCapabilityCeiling } from "../shared/capability-ceiling.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+import { omitUndefined } from "../../../../_shared/runtime/omit-undefined.ts";
+
 
 export const SCHEDULED_RUNS_DIR = path.join(TEMP_ROOT_DIR, "scheduled-subagent-runs");
 export const SCHEDULED_RUN_ACTIONS = ["schedule", "schedule-list", "schedule-status", "schedule-cancel"] as const;
@@ -95,7 +100,7 @@ export function parseScheduledRunTime(schedule: string, now = Date.now()): numbe
 		const hour = Number(iso[4]);
 		const minute = Number(iso[5]);
 		const second = iso[6] === undefined ? 0 : Number(iso[6]);
-		const offset = iso[7]!;
+		const offset = requirePresent(iso[7]);
 		const offsetHour = offset === "Z" ? 0 : Number(offset.slice(1, 3));
 		const offsetMinute = offset === "Z" ? 0 : Number(offset.slice(4, 6));
 		const daysInMonth = month >= 1 && month <= 12 ? new Date(Date.UTC(year, month, 0)).getUTCDate() : 0;
@@ -123,14 +128,14 @@ function readStoreData(filePath: string, cwd: string, sessionId: string): Schedu
 	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
 		throw new Error(`Scheduled subagent store '${filePath}' must be a JSON object.`);
 	}
-	const data = parsed as Partial<ScheduledRunStoreData>;
+	const data = parsed as Record<string, unknown>;
 	if (data.version !== 1) throw new Error(`Unsupported scheduled subagent store version in '${filePath}'.`);
 	if (!Array.isArray(data.jobs)) throw new Error(`Scheduled subagent store '${filePath}' must contain a jobs array.`);
 	const jobs: ScheduledRunJob[] = [];
 	const validStates = new Set<ScheduledRunState>(["scheduled", "running", "fired", "canceled", "missed", "failed"]);
 	for (const [index, job] of data.jobs.entries()) {
 		if (!job || typeof job !== "object" || Array.isArray(job)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} must be an object.`);
-		const candidate = job as Partial<ScheduledRunJob>;
+		const candidate = job as Record<string, unknown>;
 		if (typeof candidate.id !== "string" || typeof candidate.name !== "string" || typeof candidate.schedule !== "string" || typeof candidate.cwd !== "string" || typeof candidate.sessionId !== "string") {
 			throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid string fields.`);
 		}
@@ -138,9 +143,31 @@ function readStoreData(filePath: string, cwd: string, sessionId: string): Schedu
 		if (timestamps.some((value) => typeof value !== "number" || !Number.isFinite(value) || Number.isNaN(new Date(value).getTime()))) {
 			throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid timestamps.`);
 		}
-		if (!candidate.state || !validStates.has(candidate.state)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid state.`);
-		if (!candidate.params || typeof candidate.params !== "object" || Array.isArray(candidate.params)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid params.`);
-		jobs.push(candidate as ScheduledRunJob);
+		if (typeof candidate.state !== "string" || !validStates.has(candidate.state as ScheduledRunState)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid state.`);
+		if (!Value.Check(SubagentParams, candidate.params)) throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid params.`);
+		for (const field of ["lastRunId", "lastAsyncDir", "lastError"] as const) {
+			if (candidate[field] !== undefined && typeof candidate[field] !== "string") throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid ${field}.`);
+		}
+		for (const field of ["firedAt", "canceledAt"] as const) {
+			if (candidate[field] !== undefined && typeof candidate[field] !== "number") throw new Error(`Scheduled subagent store '${filePath}' job ${index} has invalid ${field}.`);
+		}
+		jobs.push(omitUndefined({
+			id: candidate.id as string,
+			name: candidate.name as string,
+			schedule: candidate.schedule as string,
+			runAt: candidate.runAt as number,
+			state: candidate.state as ScheduledRunState,
+			createdAt: candidate.createdAt as number,
+			updatedAt: candidate.updatedAt as number,
+			cwd: candidate.cwd as string,
+			sessionId: candidate.sessionId as string,
+			params: candidate.params,
+			lastRunId: typeof candidate.lastRunId === "string" ? candidate.lastRunId : undefined,
+			lastAsyncDir: typeof candidate.lastAsyncDir === "string" ? candidate.lastAsyncDir : undefined,
+			lastError: typeof candidate.lastError === "string" ? candidate.lastError : undefined,
+			firedAt: typeof candidate.firedAt === "number" ? candidate.firedAt : undefined,
+			canceledAt: typeof candidate.canceledAt === "number" ? candidate.canceledAt : undefined,
+		}));
 	}
 	return {
 		version: 1,
@@ -198,8 +225,8 @@ function jobMode(params: SubagentParamsLike): Details["mode"] {
 }
 
 function describeScheduledTarget(params: SubagentParamsLike): string {
-	if ((params.chain?.length ?? 0) > 0) return `chain (${params.chain!.length})`;
-	if ((params.tasks?.length ?? 0) > 0) return `parallel (${params.tasks!.length})`;
+	if ((params.chain?.length ?? 0) > 0) return `chain (${requirePresent(params.chain).length})`;
+	if ((params.tasks?.length ?? 0) > 0) return `parallel (${requirePresent(params.tasks).length})`;
 	return params.agent ? `agent ${params.agent}` : "subagent run";
 }
 
@@ -215,7 +242,7 @@ function resolveJobById(jobs: ScheduledRunJob[], requestedId: string): Scheduled
 	const exact = jobs.find((job) => job.id === requestedId);
 	if (exact) return exact;
 	const matches = jobs.filter((job) => job.id.startsWith(requestedId));
-	if (matches.length === 1) return matches[0]!;
+	if (matches.length === 1) return requirePresent(matches[0]);
 	if (matches.length > 1) throw new Error(`Ambiguous scheduled run id prefix '${requestedId}' matched: ${matches.map((job) => job.id).join(", ")}. Provide a longer id.`);
 	throw new Error(`Scheduled run '${requestedId}' not found.`);
 }
@@ -311,7 +338,7 @@ export class ScheduledRunManager {
 		const store = this.requireStore();
 		const sanitized = sanitizeScheduledParams(params);
 		if (sanitized.error) return textResult(sanitized.error, true);
-		const scheduleInput = params.schedule!.trim();
+		const scheduleInput = requirePresent(params.schedule).trim();
 		const sessionId = resolveCurrentSessionId(ctx.sessionManager);
 		if (this.deps.resolveCapabilityCeiling?.(sessionId)) {
 			return textResult("Cannot schedule a capability-ceiling-restricted run because this store does not yet persist ceilings. Remove the active parent restriction or run it immediately.", true);
@@ -322,7 +349,7 @@ export class ScheduledRunManager {
 		if (pendingCount >= maxPending) return textResult(`Scheduled subagent limit reached (${pendingCount}/${maxPending} pending or running). Cancel an existing scheduled run before adding another.`, true);
 		const id = this.randomId();
 		const scheduleName = params.scheduleName?.trim();
-		const executionParams = sanitized.params!;
+		const executionParams = requirePresent(sanitized.params);
 		const now = this.now();
 		const job: ScheduledRunJob = {
 			id,
@@ -415,7 +442,7 @@ export class ScheduledRunManager {
 			store.mutate((data) => {
 				for (const missed of dueToMiss) {
 					const job = data.jobs.find((candidate) => candidate.id === missed.id);
-					if (!job || job.state !== "scheduled") continue;
+					if (job?.state !== "scheduled") continue;
 					job.state = "missed";
 					job.updatedAt = now;
 					job.lastError = `Missed scheduled time by more than ${formatDuration(maxLatenessMs)} while Pi was not available.`;
@@ -443,7 +470,7 @@ export class ScheduledRunManager {
 		const ctx = this.ctx;
 		if (!store || !ctx) return;
 		let job = store.get(jobId);
-		if (!job || job.state !== "scheduled") return;
+		if (job?.state !== "scheduled") return;
 		const now = this.now();
 		// A timer capped at MAX_TIMER_DELAY_MS may fire before runAt for far-future schedules; re-arm and wait.
 		if (now < job.runAt) {
@@ -454,7 +481,7 @@ export class ScheduledRunManager {
 		if (job.runAt + maxLatenessMs < now) {
 			store.mutate((data) => {
 				const stored = data.jobs.find((candidate) => candidate.id === jobId);
-				if (!stored || stored.state !== "scheduled") return;
+				if (stored?.state !== "scheduled") return;
 				stored.state = "missed";
 				stored.updatedAt = now;
 				stored.lastError = `Missed scheduled time by more than ${formatDuration(maxLatenessMs)}.`;
@@ -463,13 +490,13 @@ export class ScheduledRunManager {
 		}
 		store.mutate((data) => {
 			const stored = data.jobs.find((candidate) => candidate.id === jobId);
-			if (!stored || stored.state !== "scheduled") return;
+			if (stored?.state !== "scheduled") return;
 			stored.state = "running";
 			stored.firedAt = now;
 			stored.updatedAt = now;
 		});
 		job = store.get(jobId);
-		if (!job || job.state !== "running") return;
+		if (job?.state !== "running") return;
 		const controller = new AbortController();
 		try {
 			const result = await this.deps.launch(job.params, ctx, controller.signal);
@@ -483,9 +510,10 @@ export class ScheduledRunManager {
 					stored.lastError = result.content.find((item) => item.type === "text")?.text ?? "Scheduled subagent launch failed.";
 					return;
 				}
-				stored.state = "fired";
-				stored.lastRunId = launchRunId;
-				stored.lastAsyncDir = result.details?.asyncDir;
+					stored.state = "fired";
+					stored.lastRunId = launchRunId;
+					if (result.details?.asyncDir === undefined) delete stored.lastAsyncDir;
+					else stored.lastAsyncDir = result.details.asyncDir;
 			});
 		} catch (error) {
 			const message = error instanceof Error ? error.message : String(error);

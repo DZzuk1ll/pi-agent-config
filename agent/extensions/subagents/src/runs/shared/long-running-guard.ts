@@ -1,4 +1,6 @@
 import type { ResolvedControlConfig } from "../../shared/types.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 interface LongRunningNoticeMetrics {
 	startedAt: number;
@@ -18,9 +20,9 @@ interface FailedMutatingAttempt {
 
 interface MutatingFailureState {
 	consecutiveFailures: number;
-	lastFailureAt?: number;
+	lastFailureAt: number | undefined;
 	recentFailures: FailedMutatingAttempt[];
-	lastMutatingPath?: string;
+	lastMutatingPath: string | undefined;
 	repeatedPathFailures: number;
 }
 
@@ -72,7 +74,7 @@ function hasUnquotedFileRedirection(command: string): boolean {
 	let inSingle = false;
 	let inDouble = false;
 	for (let i = 0; i < command.length; i++) {
-		const char = command[i]!;
+		const char = requirePresent(command[i]);
 		if (char === "'" && !inDouble) {
 			inSingle = !inSingle;
 			continue;
@@ -86,9 +88,9 @@ function hasUnquotedFileRedirection(command: string): boolean {
 		if (command[i - 1] === "-") continue;
 		const isDouble = command[i + 1] === ">";
 		let cursor = i + (isDouble ? 2 : 1);
-		while (cursor < command.length && /\s/.test(command[cursor]!)) cursor++;
+		while (cursor < command.length && /\s/.test(requirePresent(command[cursor]))) cursor++;
 		if (cursor >= command.length) continue;
-		const targetStart = command[cursor]!;
+		const targetStart = requirePresent(command[cursor]);
 		if (targetStart === "&" || targetStart === "|" || targetStart === ";") continue;
 		if (targetStart === "(" || targetStart === ")") continue;
 		return true;
@@ -139,7 +141,9 @@ export function resetMutatingFailureState(state: MutatingFailureState): void {
 export function createMutatingFailureState(): MutatingFailureState {
 	return {
 		consecutiveFailures: 0,
+		lastFailureAt: undefined,
 		recentFailures: [],
+		lastMutatingPath: undefined,
 		repeatedPathFailures: 0,
 	};
 }

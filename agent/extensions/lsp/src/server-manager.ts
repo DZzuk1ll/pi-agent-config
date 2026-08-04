@@ -29,6 +29,8 @@ import {
 	default_lsp_trust_store_path,
 	is_lsp_binary_trusted,
 } from './trust.js';
+import { requirePresent } from "../../_shared/runtime/require-present.ts";
+
 
 const LSP_PROJECT_BINARY_ENV = 'MY_PI_LSP_PROJECT_BINARY';
 
@@ -120,11 +122,10 @@ async function should_use_project_lsp_binary(
 	};
 	const decision = await resolve_project_trust(subject, {
 		env: process.env,
-		has_ui: ctx?.hasUI,
-		select: ctx?.hasUI
-			? async (message, choices) =>
-					(await ctx.ui.select(message, choices)) ?? ''
-			: undefined,
+		...(ctx?.hasUI === undefined ? {} : { has_ui: ctx.hasUI }),
+		...(ctx?.hasUI
+			? { select: async (message: string, choices: string[]) => (await ctx.ui.select(message, choices)) ?? '' }
+			: {}),
 		warn: console.warn,
 		trust_store_path: default_lsp_trust_store_path(),
 	});
@@ -145,7 +146,7 @@ export class LspServerManager {
 	) => LspClientLike;
 	readonly #read_file: (path: string) => Promise<string>;
 	readonly #starting_servers = new Map<string, StartingServerState>();
-	readonly #idle_timeout_ms?: number;
+	readonly #idle_timeout_ms: number | undefined;
 
 	constructor(options: CreateLspServerManagerOptions = {}) {
 		this.cwd = options.cwd?.() ?? process.cwd();
@@ -359,7 +360,7 @@ export class LspServerManager {
 				workspace_root,
 				root_uri,
 				command: server_config.command,
-				install_hint: server_config.install_hint,
+				...(server_config.install_hint === undefined ? {} : { install_hint: server_config.install_hint }),
 				active_request_count: 0,
 				last_used_at: Date.now(),
 				open_documents: new Map(),
@@ -393,7 +394,7 @@ export class LspServerManager {
 	#clear_idle_timer(state: ServerState): void {
 		if (!state.idle_timer) return;
 		clearTimeout(state.idle_timer);
-		state.idle_timer = undefined;
+		delete state.idle_timer;
 	}
 
 	#schedule_idle_stop(state: ServerState): void {
@@ -403,7 +404,7 @@ export class LspServerManager {
 			if (
 				state.active_request_count > 0 ||
 				Date.now() - (state.last_used_at ?? 0) <
-					this.#idle_timeout_ms!
+					requirePresent(this.#idle_timeout_ms)
 			) {
 				this.#schedule_idle_stop(state);
 				return;

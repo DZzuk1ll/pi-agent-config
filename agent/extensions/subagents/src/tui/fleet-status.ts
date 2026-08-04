@@ -1,4 +1,5 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
 import { type EditorComponent, isKeyRelease, Key, matchesKey, truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 import {
 	claimInteractiveWidgetFocus,
@@ -7,6 +8,8 @@ import {
 } from "../../../_shared/runtime/interactive-widget-focus.ts";
 import type { AsyncJobStep, FleetViewPlacement, SubagentState } from "../shared/types.ts";
 import { isOwnedByOrchestratorUi } from "../shared/ui-ownership.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export const FLEET_STATUS_WIDGET_KEY = "subagent-fleet-status";
 
@@ -73,23 +76,23 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 		if (isOwnedByOrchestratorUi(control)) continue;
 		if (control.activeChildren) {
 			for (const child of [...control.activeChildren.values()].sort((left, right) => left.index - right.index)) {
-				entries.push({
+				entries.push(omitUndefined({
 					key: `foreground-active:${control.runId}:${child.index}`,
 					agent: child.agent,
 					description: child.description,
 					startedAt: child.startedAt,
 					tokens: child.tokens ?? 0,
-				});
+				}));
 			}
 			continue;
 		}
-		entries.push({
+		entries.push(omitUndefined({
 			key: `foreground-active:${control.runId}:${control.currentIndex ?? 0}`,
 			agent: control.currentAgent ?? control.mode,
 			description: control.description,
 			startedAt: control.startedAt,
 			tokens: control.tokens ?? 0,
-		});
+		}));
 	}
 
 	for (const job of state.asyncJobs.values()) {
@@ -103,26 +106,26 @@ export function collectFleetStatusEntries(state: SubagentState): FleetStatusEntr
 				return { agent, index, status: pending ? "pending" : "running" };
 			});
 		if (!steps?.length) {
-			entries.push({
+			entries.push(omitUndefined({
 				key: `async:${job.asyncId}`,
 				agent: job.mode ?? "subagent",
 				description: job.description,
 				startedAt,
 				tokens: job.totalTokens?.total ?? 0,
-			});
+			}));
 			continue;
 		}
 		for (const [offset, step] of steps.entries()) {
 			if (!isActiveState(step.status)) continue;
 			const index = step.index ?? offset;
 			if (step.status === "pending" && job.mode === "chain" && !job.activeParallelGroup && index !== (job.currentStep ?? 0)) continue;
-			entries.push({
+			entries.push(omitUndefined({
 				key: `async:${job.asyncId}:${index}`,
-				agent: step.label ? `${step.label} (${step.agent})` : step.agent,
-				description: job.description,
+				agent: step.agent,
+				description: step.label?.trim() || (steps.length === 1 ? job.description : undefined),
 				startedAt: step.startedAt ?? startedAt,
 				tokens: step.tokens?.total ?? (steps.length === 1 ? job.totalTokens?.total ?? 0 : 0),
-			});
+			}));
 		}
 	}
 
@@ -341,7 +344,7 @@ export class SubagentFleetStatus {
 		const hiddenBelow = this.entries.length - (start + visibleCount);
 		if (start > 0) lines.push(rightAlign("", theme.fg("dim", `↑ ${start} more`), width));
 		for (let index = start; index < start + visibleCount; index++) {
-			lines.push(this.renderEntry(index + 1, selectedIndex, this.entries[index]!, width, theme));
+			lines.push(this.renderEntry(index + 1, selectedIndex, requirePresent(this.entries[index]), width, theme));
 		}
 		if (hiddenBelow > 0) lines.push(rightAlign("", theme.fg("dim", `↓ ${hiddenBelow} more`), width));
 		return lines;

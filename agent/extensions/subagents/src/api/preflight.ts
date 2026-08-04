@@ -21,6 +21,9 @@ import { agentDefinitionDigest, AGENT_DEFINITION_PROJECTION_VERSION, launchBindi
 import { ASYNC_DIR, RESULTS_DIR, TEMP_ROOT_DIR } from "../shared/types.ts";
 import { processTerminalCandidatePath, processTerminalPath } from "../runs/background/process-terminal.ts";
 import { nestedResultsPath } from "../runs/shared/nested-events.ts";
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export const SUBAGENT_LAUNCH_CONTRACT_VERSION = 2 as const;
 
@@ -53,6 +56,7 @@ export interface SubagentLaunchContractInput {
 	skill?: string | string[] | boolean;
 	output?: string | boolean;
 	outputMode?: OutputMode;
+	reads?: string[] | boolean;
 	outputSchema?: JsonSchemaObject;
 	turnBudget?: ResolvedTurnBudget;
 	artifacts?: boolean;
@@ -161,8 +165,8 @@ export type SubagentLaunchContractResult =
 
 function packageVersion(): string {
 	const packagePath = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "package.json");
-	const parsed = JSON.parse(fs.readFileSync(packagePath, "utf-8")) as { version?: unknown };
-	if (typeof parsed.version !== "string" || !parsed.version.trim()) {
+	const parsed: unknown = JSON.parse(fs.readFileSync(packagePath, "utf-8"));
+	if (!parsed || typeof parsed !== "object" || Array.isArray(parsed) || !("version" in parsed) || typeof parsed.version !== "string" || !parsed.version.trim()) {
 		throw new Error(`Invalid package version in '${packagePath}'.`);
 	}
 	return parsed.version;
@@ -232,13 +236,14 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	if (matches.length > 1) {
 		return { ok: false, code: "ambiguous_agent", message: `Ambiguous agent: ${input.agent}`, diagnostics };
 	}
-	const agent = matches[0]!;
+	const agent = requirePresent(matches[0]);
 	const runId = input.runId ?? "preflight";
 	const skillInput = normalizeSkillInput(input.skill);
 	const outputOverride = normalizeSingleOutputOverride(input.output, agent.output);
 	const behavior = resolveStepBehavior(agent, {
 		...(outputOverride !== undefined ? { output: outputOverride } : {}),
 		...(input.outputMode !== undefined ? { outputMode: input.outputMode } : {}),
+		...(input.reads !== undefined ? { reads: input.reads } : {}),
 		...(skillInput !== undefined ? { skills: skillInput } : {}),
 		...(input.model !== undefined ? { model: input.model } : {}),
 	});
@@ -257,14 +262,14 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 
 	const availableModels = normalizeAvailableModels(input.availableModels);
 	const preferredProvider = input.preferredProvider ?? input.parentModel?.provider;
-	const primaryModel = resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, { scope: discovered.modelScope });
+	const primaryModel = resolveEffectiveSubagentModel(input.model, agent.model, input.parentModel, availableModels, preferredProvider, omitUndefined({ scope: discovered.modelScope }));
 	const effectiveThinkingConfig = input.thinking !== undefined ? input.thinking : agent.thinking;
 	const model = applyThinkingSuffix(primaryModel, effectiveThinkingConfig, input.thinking !== undefined);
-	const modelCandidates = buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, { scope: discovered.modelScope })
+	const modelCandidates = buildModelCandidates(primaryModel, agent.fallbackModels, availableModels, preferredProvider, omitUndefined({ scope: discovered.modelScope }))
 		.map((candidate) => applyThinkingSuffix(candidate, effectiveThinkingConfig, input.thinking !== undefined) ?? candidate);
 	let toolPlan: PiLaunchToolPlan;
 	try {
-		toolPlan = resolvePiLaunchToolPlan({
+		toolPlan = resolvePiLaunchToolPlan(omitUndefined({
 			tools: agent.tools,
 			extensions: agent.extensions,
 			subagentOnlyExtensions: agent.subagentOnlyExtensions,
@@ -274,7 +279,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			structuredOutput: Boolean(input.outputSchema),
 			capabilityCeiling: input.capabilityCeiling,
 			inheritedCapabilityCeiling: input.inheritedCapabilityCeiling,
-		});
+		}));
 	} catch (error) {
 		const message = error instanceof Error ? error.message : String(error);
 		diagnostics.push({ code: "denied_required_tool", severity: "error", message });
@@ -317,6 +322,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 	const candidates = candidateList(input.agent, agent, effectiveCwd);
 	const shadowedCandidates = candidates.filter((candidate) => !candidate.selected);
 	const definitionDigest = agentDefinitionDigest(agent);
+	const effectiveThinking = resolveEffectiveThinking(model, effectiveThinkingConfig);
 	const contractBase: Omit<SubagentLaunchContract, "digest"> = {
 		version: SUBAGENT_LAUNCH_CONTRACT_VERSION,
 		runId,
@@ -333,7 +339,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 		context: input.context ?? agent.defaultContext ?? "fresh",
 		...(model ? { model } : {}),
 		modelCandidates,
-		...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
+		...(effectiveThinking ? { thinking: effectiveThinking } : {}),
 		systemPromptMode: agent.systemPromptMode,
 		inheritProjectContext: agent.inheritProjectContext,
 		inheritSkills: agent.inheritSkills,
@@ -386,7 +392,7 @@ export async function resolveSubagentLaunchContract(input: SubagentLaunchContrac
 			definitionDigest,
 			...(model ? { model } : {}),
 			modelCandidates,
-			...(resolveEffectiveThinking(model, effectiveThinkingConfig) ? { thinking: resolveEffectiveThinking(model, effectiveThinkingConfig) } : {}),
+			...(effectiveThinking ? { thinking: effectiveThinking } : {}),
 			systemPrompt: effectiveSystemPrompt,
 			systemPromptMode: agent.systemPromptMode,
 			inheritProjectContext: agent.inheritProjectContext,

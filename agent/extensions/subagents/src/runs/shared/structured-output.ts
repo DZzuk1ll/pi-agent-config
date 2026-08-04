@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import * as os from "node:os";
 import * as path from "node:path";
 import { pathToFileURL } from "node:url";
+import { Type, type TObject, type TSchema } from "typebox";
 import { PI_CODING_AGENT_PACKAGE_ROOT_ENV } from "../../shared/utils.ts";
 import type { JsonSchemaObject } from "../../shared/types.ts";
 
@@ -59,13 +60,10 @@ function rewriteLocalJsonPointerRefs(schema: unknown, pointerPrefix: string, inh
 	return rewritten;
 }
 
-export function createStructuredOutputToolParameters(schema: JsonSchemaObject): JsonSchemaObject {
-	return {
-		type: "object",
-		properties: { value: rewriteLocalJsonPointerRefs(schema, "#/properties/value") },
-		required: ["value"],
-		additionalProperties: false,
-	};
+export function createStructuredOutputToolParameters(schema: JsonSchemaObject): TObject<{ value: TSchema }> {
+	const valueSchema = rewriteLocalJsonPointerRefs(schema, "#/properties/value");
+	assertJsonSchemaObject(valueSchema, "structured output value schema");
+	return Type.Object({ value: valueSchema }, { additionalProperties: false });
 }
 
 interface CompiledJsonSchema {

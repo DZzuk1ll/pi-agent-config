@@ -37,6 +37,7 @@
  * event only ends the sleep early. With no bus, `subagent_wait` degrades to pure
  * polling.
  */
+import { omitUndefined, omitUndefinedAs } from "../../../../_shared/runtime/omit-undefined.ts";
 
 import * as fs from "node:fs";
 import type { AgentToolResult } from "../../shared/tool-result.ts";
@@ -61,6 +62,8 @@ import {
 	type SubagentState,
 } from "../../shared/types.ts";
 import { formatDuration } from "../../shared/formatters.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 export { WAIT_TOOL_ENABLED_ENV, resolveWaitToolConfig, type ResolvedWaitToolConfig } from "./wait-config.ts";
 
 /** States that mean a run is still in flight (not yet resolved). */
@@ -204,7 +207,7 @@ function activeDetachedForegroundRuns(params: SubagentWaitParams, deps: Subagent
 	const sessionId = deps.state.currentSessionId;
 	if (!sessionId) return [];
 	return [...deps.state.foregroundRuns.values()].filter((run) =>
-		(run.runId === params.id || run.runId.startsWith(params.id!))
+		(run.runId === params.id || run.runId.startsWith(requirePresent(params.id)))
 		&& run.sessionId === sessionId
 		&& run.children.some((child) => child.status === "detached")
 	);
@@ -255,15 +258,15 @@ function backgroundWorkForSession(deps: SubagentWaitDeps, nowMs: number): Backgr
 function activeRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-	const runs = listAsyncRuns(asyncDirRoot, {
+	const runs = listAsyncRuns(asyncDirRoot, omitUndefined({
 		states: [...ACTIVE_STATES],
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
 		...(params.id ? { runId: params.id } : {}),
-	});
-	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+	}));
+	return params.id ? runs.filter((run) => matchesId(run, requirePresent(params.id))) : runs;
 }
 
 /** Runs (from the initial set) currently flagged needs_attention, for reporting. */
@@ -275,14 +278,14 @@ function attentionRunsForSession(params: SubagentWaitParams, deps: SubagentWaitD
 function allRunsForSession(params: SubagentWaitParams, deps: SubagentWaitDeps): AsyncRunSummary[] {
 	const asyncDirRoot = deps.asyncDirRoot ?? ASYNC_DIR;
 	const resultsDir = deps.resultsDir ?? RESULTS_DIR;
-	const runs = listAsyncRuns(asyncDirRoot, {
+	const runs = listAsyncRuns(asyncDirRoot, omitUndefined({
 		sessionId: deps.state.currentSessionId ?? undefined,
 		resultsDir,
 		kill: deps.kill,
 		now: deps.now,
 		...(params.id ? { runId: params.id } : {}),
-	});
-	return params.id ? runs.filter((run) => matchesId(run, params.id!)) : runs;
+	}));
+	return params.id ? runs.filter((run) => matchesId(run, requirePresent(params.id))) : runs;
 }
 
 function summarizeTerminalRuns(runs: AsyncRunSummary[], providerFinishedCount = 0): string {
@@ -347,7 +350,9 @@ function readTranscriptActivity(transcriptPath: string | undefined): TranscriptA
 			if (!line.trim()) continue;
 			let record: Record<string, unknown>;
 			try {
-				record = JSON.parse(line) as Record<string, unknown>;
+				const parsed: unknown = JSON.parse(line);
+				if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) continue;
+				record = parsed as Record<string, unknown>;
 			} catch {
 				continue; // Concurrent append can leave the final line temporarily incomplete.
 			}
@@ -375,7 +380,7 @@ function readTranscriptActivity(transcriptPath: string | undefined): TranscriptA
 				if (text) recent.push(`${record.recordType}: ${text}`);
 			}
 		}
-		return { currentTool, currentToolArgs, latestAt, recent: recent.slice(-TRANSCRIPT_PREVIEW_LINES) };
+		return omitUndefinedAs<TranscriptActivity>({ currentTool, currentToolArgs, latestAt, recent: recent.slice(-TRANSCRIPT_PREVIEW_LINES) });
 	} catch {
 		return undefined;
 	} finally {
@@ -501,7 +506,7 @@ export async function waitForSubagents(
 			? `No active run matched "${params.id}". Nothing to wait for.`
 			: "No active async runs or registered provider work in this session. Nothing to wait for.");
 	}
-	const waitParams = params.id ? { ...params, id: active[0]!.id } : params;
+	const waitParams = params.id ? { ...params, id: requirePresent(active[0]).id } : params;
 	const initialAsyncIds = new Set(active.map((run) => run.id));
 	const initialProviderIds = new Set(providerActive.map(backgroundWorkIdentity));
 	const initialProviderNames = new Set(providerActive.map((item) => item.provider));

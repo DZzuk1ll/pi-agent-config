@@ -12,7 +12,7 @@ interface ChildWithPipedStdio {
 }
 
 interface ChildWithKill {
-	pid?: number;
+	pid?: number | undefined;
 	kill(signal?: NodeJS.Signals | number): boolean;
 }
 

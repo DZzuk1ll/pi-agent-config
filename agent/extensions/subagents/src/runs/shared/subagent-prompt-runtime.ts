@@ -1,7 +1,6 @@
 import * as fs from "node:fs";
 import * as path from "node:path";
 import type { ExtensionAPI, ToolDefinition } from "@earendil-works/pi-coding-agent";
-import { Type } from "typebox";
 import { registerSubagentTool } from "../../extension/tool-registration.ts";
 import { registerNativeSupervisorClient } from "../../intercom/native-supervisor-channel.ts";
 import { consumeSteerRequestsFromDir, steerAckPathFromDir, writeSteerAckAt, writeSteerCapabilityAt, writeSteerRequestToDir, type SteerRequest } from "../background/control-channel.ts";
@@ -15,7 +14,7 @@ import {
 	type ChildToolDiagnostic,
 } from "./tool-availability.ts";
 import { TOOL_BUDGET_ENV, TOOL_BUDGET_ZERO_AUTH_ENV, decodeToolBudgetEnv, shouldBlockToolForBudget, toolBudgetBlockedMessage, toolBudgetSoftNudge } from "./tool-budget.ts";
-import type { JsonSchemaObject, ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
+import type { ResolvedToolBudget, SubagentState } from "../../shared/types.ts";
 import { resolveCurrentSessionId } from "../../shared/session-identity.ts";
 import { resolveWatchPath } from "../../shared/utils.ts";
 import { registerChildWatchdog } from "../../watchdog/register-child.ts";
@@ -23,6 +22,8 @@ import { SUBAGENT_WATCHDOG_WARNING_TYPE } from "../../watchdog/types.ts";
 import { resolveWaitToolConfig } from "../background/wait-config.ts";
 import { registerWaitTool } from "../background/wait-tool.ts";
 import { drainOutstandingWork } from "../background/auto-drain.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 const SUBAGENT_INHERIT_PROJECT_CONTEXT_ENV = "PI_SUBAGENT_INHERIT_PROJECT_CONTEXT";
 const SUBAGENT_INHERIT_SKILLS_ENV = "PI_SUBAGENT_INHERIT_SKILLS";
@@ -64,6 +65,12 @@ const SUBAGENT_ORCHESTRATION_SKILL_NAME_PATTERN = /<name>\s*pi-subagents\s*<\/na
 const PROJECT_CONTEXT_HEADER = "\n\n# Project Context\n\nProject-specific instructions and guidelines:\n\n";
 const SKILLS_HEADER = "\n\nThe following skills provide specialized instructions for specific tasks.";
 const DATE_HEADER = "\nCurrent date:";
+
+type RuntimeEventRegistrar = (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
+
+function runtimeEventRegistrar(pi: ExtensionAPI): RuntimeEventRegistrar {
+	return pi.on as RuntimeEventRegistrar;
+}
 
 function readBooleanEnv(name: string): boolean | undefined {
 	const value = process.env[name];
@@ -219,9 +226,9 @@ function registerToolBudget(pi: ExtensionAPI, budget: ResolvedToolBudget | undef
 	let toolCount = 0;
 	let softNudged = false;
 	const sendUserMessage = (pi as { sendUserMessage?: (content: string, options: { deliverAs: "steer" }) => unknown }).sendUserMessage;
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: { toolName?: string }) => unknown) => void;
+	const onRuntimeEvent = runtimeEventRegistrar(pi);
 	onRuntimeEvent("tool_call", (event) => {
-		const toolName = typeof event.toolName === "string" ? event.toolName : "tool";
+		const toolName = event && typeof event === "object" && "toolName" in event && typeof event.toolName === "string" ? event.toolName : "tool";
 		toolCount++;
 		if (budget.soft !== undefined && toolCount >= budget.soft && !softNudged) {
 			softNudged = true;
@@ -250,7 +257,7 @@ export function registerSteeringInbox(
 	let disposed = false;
 	let flushing = false;
 	let started = false;
-	let canSteer = typeof sendUserMessage === "function";
+	const canSteer = typeof sendUserMessage === "function";
 	let watcher: fs.FSWatcher | undefined;
 	let interval: NodeJS.Timeout | undefined;
 	const acknowledge = (request: SteerRequest, state: "delivered" | "failed", message: string): void => {
@@ -273,7 +280,7 @@ export function registerSteeringInbox(
 		try {
 			const requests = consumeSteerRequestsFromDir(steerInbox);
 			for (let index = 0; index < requests.length; index++) {
-				const request = requests[index]!;
+				const request = requirePresent(requests[index]);
 				if (!canSteer || typeof sendUserMessage !== "function") {
 					acknowledge(request, "failed", "Child Pi session does not support sendUserMessage steering.");
 					continue;
@@ -333,7 +340,7 @@ export function registerSteeringInbox(
 		return undefined;
 	};
 
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown) => unknown) => void;
+	const onRuntimeEvent = runtimeEventRegistrar(pi);
 	// Register input before the watcher so an accepted extension input cannot race request dispatch.
 	onRuntimeEvent("input", onInput);
 	onRuntimeEvent("session_start", () => start());
@@ -352,7 +359,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	registerToolBudget(pi, decodeToolBudgetEnv(process.env[TOOL_BUDGET_ENV], { allowZero: process.env[TOOL_BUDGET_ZERO_AUTH_ENV] === "1" }));
 	registerChildWatchdog(pi);
 	const waitToolEnabled = resolveWaitToolConfig().enabled;
-	const waitState = {
+	const waitState: SubagentState = {
 		baseCwd: "",
 		currentSessionId: null,
 		asyncJobs: new Map(),
@@ -365,7 +372,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		watcher: null,
 		watcherRestartTimer: null,
 		resultFileCoalescer: { schedule: () => false, clear: () => {} },
-	} as unknown as SubagentState;
+	};
 	if (typeof pi.registerTool === "function") registerWaitTool(pi, waitState, waitToolEnabled);
 	let nativeSupervisorClientRegistered = false;
 	const registerNativeSupervisorClientOnce = (): void => {
@@ -373,7 +380,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 		nativeSupervisorClientRegistered = true;
 		registerNativeSupervisorClient(pi);
 	};
-	const onRuntimeEvent = pi.on as unknown as (event: string, handler: (event: unknown, ctx?: unknown) => unknown) => void;
+	const onRuntimeEvent = runtimeEventRegistrar(pi);
 	onRuntimeEvent("session_start", (_event: unknown, ctx: unknown) => {
 		const sessionManager = (ctx as { sessionManager?: Parameters<typeof resolveCurrentSessionId>[0] } | undefined)?.sessionManager;
 		waitState.currentSessionId = sessionManager ? resolveCurrentSessionId(sessionManager) : null;
@@ -391,7 +398,7 @@ export default function registerSubagentPromptRuntime(pi: ExtensionAPI): void {
 	if (structuredOutputPath && structuredSchemaPath) {
 		const schema = JSON.parse(fs.readFileSync(structuredSchemaPath, "utf-8")) as unknown;
 		assertJsonSchemaObject(schema, STRUCTURED_OUTPUT_SCHEMA_ENV);
-		const parameters = Type.Unsafe<{ value: unknown }>(createStructuredOutputToolParameters(schema));
+		const parameters = createStructuredOutputToolParameters(schema);
 		const tool: ToolDefinition<typeof parameters, { path: string }> = {
 			name: "structured_output",
 			label: "Structured Output",

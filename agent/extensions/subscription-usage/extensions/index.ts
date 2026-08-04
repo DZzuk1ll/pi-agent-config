@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
+import { omitUndefined } from "../../_shared/runtime/omit-undefined.ts";
 
 const STATUS_KEY = "pi-sub";
 const MESSAGE_TYPE = "pi-sub-status";
@@ -80,17 +81,17 @@ type SubscriptionProviderAdapter = {
 };
 
 interface State {
-  model?: ModelLike;
-  adapter?: SubscriptionProviderAdapter;
-  adapterId?: string;
-  snapshot?: SubscriptionUsageSnapshot;
+  model: ModelLike;
+  adapter: SubscriptionProviderAdapter | undefined;
+  adapterId: string | undefined;
+  snapshot: SubscriptionUsageSnapshot | undefined;
   lastRefreshAt: number;
   refreshGeneration: number;
-  inFlight?: Promise<SubscriptionUsageSnapshot>;
-  refreshTimer?: NodeJS.Timeout;
-  debounceTimer?: NodeJS.Timeout;
-  responseStartTime?: number;
-  lastTokPerSec?: number;
+  inFlight: Promise<SubscriptionUsageSnapshot> | undefined;
+  refreshTimer: NodeJS.Timeout | undefined;
+  debounceTimer: NodeJS.Timeout | undefined;
+  responseStartTime: number | undefined;
+  lastTokPerSec: number | undefined;
   cumulativeOutput: number;
   cumulativeDurationMs: number;
   cumulativeCost: number;
@@ -122,12 +123,41 @@ function piAuthPath(): string {
   return path.join(configDir, "auth.json");
 }
 
-function decodeJwtPayload(token: string | undefined): Record<string, any> | undefined {
+function asRecord(value: unknown): Record<string, unknown> | undefined {
+  return value && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : undefined;
+}
+
+function parsePiAuthEntry(value: unknown): PiAuthEntry | undefined {
+  const record = asRecord(value);
+  if (!record) return undefined;
+  const stringFields = ["type", "access", "refresh", "accountId", "key", "email", "label", "name"] as const;
+  if (stringFields.some((field) => record[field] !== undefined && typeof record[field] !== "string")) return undefined;
+  if (record.expires !== undefined && typeof record.expires !== "number") return undefined;
+  const envRecord = record.env === undefined ? undefined : asRecord(record.env);
+  if (record.env !== undefined && (!envRecord || Object.values(envRecord).some((entry) => typeof entry !== "string"))) return undefined;
+  return omitUndefined({
+    type: record.type as string | undefined,
+    access: record.access as string | undefined,
+    refresh: record.refresh as string | undefined,
+    expires: record.expires as number | undefined,
+    accountId: record.accountId as string | undefined,
+    key: record.key as string | undefined,
+    email: record.email as string | undefined,
+    label: record.label as string | undefined,
+    name: record.name as string | undefined,
+    ...(envRecord ? { env: envRecord as Record<string, string> } : {}),
+  });
+}
+
+function decodeJwtPayload(token: string | undefined): Record<string, unknown> | undefined {
   if (!token) return undefined;
   const payload = token.split(".")[1];
   if (!payload) return undefined;
   try {
-    return JSON.parse(Buffer.from(payload, "base64url").toString("utf8")) as Record<string, any>;
+    const parsed: unknown = JSON.parse(Buffer.from(payload, "base64url").toString("utf8"));
+    return asRecord(parsed);
   } catch {
     return undefined;
   }
@@ -135,18 +165,18 @@ function decodeJwtPayload(token: string | undefined): Record<string, any> | unde
 
 function accountFromPiAuth(entry: PiAuthEntry): SubscriptionAccountSnapshot {
   const claims = decodeJwtPayload(entry.access);
-  const profile = claims?.["https://api.openai.com/profile"];
-  const auth = claims?.["https://api.openai.com/auth"];
+  const profile = asRecord(claims?.["https://api.openai.com/profile"]);
+  const auth = asRecord(claims?.["https://api.openai.com/auth"]);
   const email = typeof profile?.email === "string" ? profile.email : undefined;
   const plan = typeof auth?.chatgpt_plan_type === "string" ? planLabel(auth.chatgpt_plan_type) : undefined;
   const accountId = typeof entry.accountId === "string" ? entry.accountId : typeof auth?.chatgpt_account_id === "string" ? auth.chatgpt_account_id : undefined;
-  return {
+  return omitUndefined({
     id: accountId,
     isActive: true,
     accountLabel: email ?? accountId ?? "openai-codex account",
     plan,
     lastActivity: "Now",
-  };
+  });
 }
 
 function firstString(...values: unknown[]): string | undefined {
@@ -175,13 +205,13 @@ function authAccountLabel(providerLabel: string, entry: PiAuthEntry | undefined)
 }
 
 function authAccountSnapshot(providerLabel: string, entry: PiAuthEntry | undefined, defaults: Partial<SubscriptionAccountSnapshot> = {}): SubscriptionAccountSnapshot {
-  return {
+  return omitUndefined({
     id: firstString(entry?.accountId),
     isActive: true,
     accountLabel: authAccountLabel(providerLabel, entry),
     lastActivity: "Now",
     ...defaults,
-  };
+  });
 }
 
 function formatFooterAccount(account: SubscriptionAccountSnapshot | undefined): string | undefined {
@@ -193,7 +223,7 @@ function getCodexAccountId(entry: PiAuthEntry | undefined): string | undefined {
   if (!entry) return undefined;
   if (typeof entry.accountId === "string" && entry.accountId.length > 0) return entry.accountId;
   const claims = decodeJwtPayload(entry.access);
-  const auth = claims?.["https://api.openai.com/auth"];
+  const auth = asRecord(claims?.["https://api.openai.com/auth"]);
   return typeof auth?.chatgpt_account_id === "string" ? auth.chatgpt_account_id : undefined;
 }
 
@@ -245,58 +275,58 @@ function usageWindowFromApi(window: UsageApiWindow | undefined): UsageWindow | u
   const remaining = Math.max(0, 100 - percent);
   const resetLabel = formatReset(window.reset_at);
   const remainingLabel = formatRemainingTime(window.reset_at);
-  return {
+  return omitUndefined({
     percent,
     remaining,
     remainingLabel,
     resetLabel,
-  };
+  });
 }
 
 function mergeUsageIntoAccount(account: SubscriptionAccountSnapshot, usage: UsageApiSnapshot | undefined): SubscriptionAccountSnapshot {
   if (!usage) return account;
-  return {
+  return omitUndefined({
     ...account,
     plan: planLabel(usage.plan_type) ?? account.plan,
     fiveHour: usageWindowFromApi(usage.primary) ?? account.fiveHour,
     weekly: usageWindowFromApi(usage.secondary) ?? account.weekly,
-  };
+  });
 }
 
 function parseUsageResponse(body: unknown): UsageApiSnapshot | undefined {
-  if (!body || typeof body !== "object") return undefined;
-  const root = body as any;
-  const rateLimit = root.rate_limit;
-  if (!rateLimit || typeof rateLimit !== "object") return undefined;
-  const parseWindow = (window: any): UsageApiWindow | undefined => {
-    if (!window || typeof window !== "object" || typeof window.used_percent !== "number") return undefined;
-    return {
+  const root = asRecord(body);
+  const rateLimit = asRecord(root?.rate_limit);
+  if (!root || !rateLimit) return undefined;
+  const parseWindow = (value: unknown): UsageApiWindow | undefined => {
+    const window = asRecord(value);
+    if (!window || typeof window.used_percent !== "number") return undefined;
+    return omitUndefined({
       used_percent: window.used_percent,
       reset_at: typeof window.reset_at === "number" ? window.reset_at : undefined,
-    };
+    });
   };
-  return {
+  return omitUndefined({
     primary: parseWindow(rateLimit.primary_window),
     secondary: parseWindow(rateLimit.secondary_window),
     plan_type: typeof root.plan_type === "string" ? root.plan_type : undefined,
-  };
+  });
 }
 
 async function readPiCodexAuth(): Promise<PiAuthEntry & { accountId: string }> {
-  const entry = readStoredCredential(CODEX_PROVIDER, piAuthPath()) as PiAuthEntry | undefined;
+  const entry = parsePiAuthEntry(readStoredCredential(CODEX_PROVIDER, piAuthPath()));
   const accountId = getCodexAccountId(entry);
   if (!entry?.access || !accountId) throw new Error("Missing openai-codex OAuth entry in Pi auth");
   return { ...entry, accountId };
 }
 
 async function readOpenCodeGoAuth(): Promise<SubscriptionAccountSnapshot> {
-  const entry = readStoredCredential(OPC_PROVIDER, piAuthPath()) as PiAuthEntry | undefined;
+  const entry = parsePiAuthEntry(readStoredCredential(OPC_PROVIDER, piAuthPath()));
   if (!entry?.key && !entry?.accountId) throw new Error("Missing opencode-go API key or accountId in Pi auth");
   return authAccountSnapshot("OpenCode Go", entry, { plan: "Go" });
 }
 
 async function readZaiAuth(providerId: string, label: string): Promise<{ key: string; account: SubscriptionAccountSnapshot }> {
-  const entry = readStoredCredential(providerId, piAuthPath()) as PiAuthEntry | undefined;
+  const entry = parsePiAuthEntry(readStoredCredential(providerId, piAuthPath()));
   if (!entry?.key) throw new Error(`Missing ${providerId} API key in Pi auth`);
   return { key: entry.key, account: authAccountSnapshot(label, entry) };
 }
@@ -306,11 +336,13 @@ function readNineRouterConfig(): { baseUrl: string; apiKey?: string } | null {
   try {
     const exists = (p: string) => { try { return fs.statSync(p).isFile(); } catch { return false; } };
     if (!exists(NINE_ROUTER_CONFIG_PATH)) return null;
-    const data = JSON.parse(fs.readFileSync(NINE_ROUTER_CONFIG_PATH, "utf8")) as Record<string, unknown>;
+    const parsed: unknown = JSON.parse(fs.readFileSync(NINE_ROUTER_CONFIG_PATH, "utf8"));
+    const data = asRecord(parsed);
+    if (!data) return null;
     const baseUrl = process.env.NINE_ROUTER_BASE_URL || (typeof data.baseUrl === "string" ? data.baseUrl : undefined);
     const apiKey = process.env.NINE_ROUTER_API_KEY || (typeof data.apiKey === "string" ? data.apiKey : undefined);
     if (!baseUrl || typeof baseUrl !== "string") return null;
-    return { baseUrl, apiKey };
+    return omitUndefined({ baseUrl, apiKey });
   } catch {
     return null;
   }
@@ -331,7 +363,8 @@ async function fetchUsageFromPiAuth(entry: PiAuthEntry, signal?: AbortSignal): P
     signal: combinedSignal,
   });
   if (!response.ok) throw new Error(`usage request failed with HTTP ${response.status}`);
-  return parseUsageResponse(await response.json());
+  const body: unknown = await response.json();
+  return parseUsageResponse(body);
 }
 
 function redactedError(error: unknown, provider = "Codex"): string {
@@ -432,10 +465,41 @@ interface ZaiUsageApiResponse {
   };
 }
 
-interface ZaiUsageApiError {
-  code: number;
-  msg: string;
-  success?: boolean;
+function parseZaiUsageResponse(value: unknown, source: string): ZaiUsageApiResponse {
+  const root = asRecord(value);
+  if (!root) throw new Error(`${source} returned a non-object response`);
+  const code = typeof root.code === "number" ? root.code : undefined;
+  const message = typeof root.msg === "string" ? root.msg : undefined;
+  const success = typeof root.success === "boolean" ? root.success : undefined;
+  if ((code !== undefined && code >= 400) || success === false || (message && success === undefined)) {
+    throw new Error(`${source} API error: ${message ?? (code === undefined ? "unknown error" : `HTTP status ${code}`)}`);
+  }
+  const rawData = root.data;
+  if (rawData === undefined) return {};
+  const data = asRecord(rawData);
+  if (!data) throw new Error(`${source} usage response data must be an object`);
+  const rawLimits = data.limits;
+  let limits: ZaiLimitEntry[] | undefined;
+  if (rawLimits !== undefined) {
+    if (!Array.isArray(rawLimits)) throw new Error(`${source} usage response limits must be an array`);
+    limits = rawLimits.map((value, index) => {
+      const limit = asRecord(value);
+      if (!limit || typeof limit.type !== "string" || typeof limit.percentage !== "number" || (limit.nextResetTime !== undefined && typeof limit.nextResetTime !== "number")) {
+        throw new Error(`${source} usage response limits[${index}] is invalid`);
+      }
+      return omitUndefined({ type: limit.type, percentage: limit.percentage, nextResetTime: limit.nextResetTime as number | undefined });
+    });
+  }
+  const optionalString = (field: string): string | undefined => {
+    const fieldValue = data[field];
+    if (fieldValue !== undefined && typeof fieldValue !== "string") throw new Error(`${source} usage response data.${field} must be a string`);
+    return fieldValue as string | undefined;
+  };
+  return { data: omitUndefined({ limits, planName: optionalString("planName"), plan: optionalString("plan"), plan_type: optionalString("plan_type"), packageName: optionalString("packageName"), level: optionalString("level") }) };
+}
+
+async function responseJson(response: Response): Promise<unknown> {
+  return response.json();
 }
 
 function zaiLimitToUsageWindow(limit: ZaiLimitEntry): UsageWindow | undefined {
@@ -446,12 +510,12 @@ function zaiLimitToUsageWindow(limit: ZaiLimitEntry): UsageWindow | undefined {
   const resetAtSec = limit.nextResetTime ? limit.nextResetTime / 1000 : undefined;
   const resetLabel = formatReset(resetAtSec);
   const remainingLabel = formatRemainingTime(resetAtSec);
-  return {
+  return omitUndefined({
     percent,
     remaining,
     remainingLabel,
     resetLabel,
-  };
+  });
 }
 
 function zaiPlanLabel(response: ZaiUsageApiResponse): string | undefined {
@@ -480,12 +544,17 @@ function zaiUsageTimeWindow(): string {
 // named scalars in data.totalUsage. Return undefined on any mismatch so the
 // quota table is never affected.
 function parseZaiModelUsage(body: unknown): string | undefined {
-  const tu = (body as any)?.data?.totalUsage;
+  const data = asRecord(asRecord(body)?.data);
+  const tu = asRecord(data?.totalUsage);
+  if (!tu) return undefined;
   const list = tu?.modelSummaryList;
   if (!Array.isArray(list)) return undefined;
   const entries = list
-    .map((m: any) => ({ name: m?.modelName, count: m?.totalTokens }))
-    .filter((e: { name: string; count: number }) => typeof e.name === "string" && e.name && typeof e.count === "number" && e.count > 0)
+	.map((value: unknown) => {
+	  const model = asRecord(value);
+	  return { name: model?.modelName, count: model?.totalTokens };
+	})
+	.filter((entry): entry is { name: string; count: number } => typeof entry.name === "string" && entry.name.length > 0 && typeof entry.count === "number" && entry.count > 0)
     .sort((a, b) => b.count - a.count);
   if (entries.length === 0) return undefined;
   const calls = typeof tu.totalModelCallCount === "number" && tu.totalModelCallCount > 0 ? ` (${tu.totalModelCallCount} calls)` : "";
@@ -493,8 +562,9 @@ function parseZaiModelUsage(body: unknown): string | undefined {
 }
 
 function parseZaiToolUsage(body: unknown): string | undefined {
-  const u = (body as any)?.data?.totalUsage;
-  if (!u || typeof u !== "object") return undefined;
+  const data = asRecord(asRecord(body)?.data);
+  const u = asRecord(data?.totalUsage);
+  if (!u) return undefined;
   // ponytail: fixed label map — Z.ai returns named scalar counts, not a list.
   const labels: Record<string, string> = {
     totalNetworkSearchCount: "search",
@@ -504,7 +574,7 @@ function parseZaiToolUsage(body: unknown): string | undefined {
   };
   const entries = Object.entries(labels)
     .map(([field, label]) => ({ label, count: u[field] }))
-    .filter((e: { label: string; count: number }) => typeof e.count === "number" && e.count > 0);
+    .filter((entry): entry is { label: string; count: number } => typeof entry.count === "number" && entry.count > 0);
   if (entries.length === 0) return undefined;
   return `Tools: ${entries.map((e) => `${e.label} ${e.count}`).join(" · ")}`;
 }
@@ -525,17 +595,8 @@ function zaiUsageAdapter(providerId: string, usageUrl: string, displayName: stri
       };
       const response = await fetch(usageUrl, { headers, signal: combinedSignal });
 
-      const body = await response.json();
-
-      // Z.ai / BigModel return HTTP 200 even on auth errors: {"code":401,"msg":"...","success":false}
-      // Also handle missing success field, empty msg, or presence of code.
-      const apiError = body as ZaiUsageApiError;
-      if (apiError.code >= 400 || (typeof apiError.success === "boolean" && !apiError.success) || (apiError.msg && apiError.msg.length > 0 && apiError.success === undefined)) {
-        const message = apiError.msg || `HTTP status ${apiError.code}`;
-        throw new Error(`${displayName} API error: ${message}`);
-      }
-
-      const parsed = body as ZaiUsageApiResponse;
+      const body: unknown = await response.json();
+      const parsed = parseZaiUsageResponse(body, displayName);
       const limits = parsed.data?.limits ?? [];
       const tokenLimits = limits
         .filter((l) => l.type === "TOKENS_LIMIT")
@@ -562,22 +623,22 @@ function zaiUsageAdapter(providerId: string, usageUrl: string, displayName: stri
       const modelUrl = usageUrl.replace(/\/quota\/limit$/, "/model-usage") + window;
       const toolUrl = usageUrl.replace(/\/quota\/limit$/, "/tool-usage") + window;
       const [modelRes, toolRes] = await Promise.allSettled([
-        fetch(modelUrl, { headers, signal: combinedSignal }).then((r) => r.json()),
-        fetch(toolUrl, { headers, signal: combinedSignal }).then((r) => r.json()),
+		fetch(modelUrl, { headers, signal: combinedSignal }).then(responseJson),
+		fetch(toolUrl, { headers, signal: combinedSignal }).then(responseJson),
       ]);
       const breakdowns = [
         modelRes.status === "fulfilled" ? parseZaiModelUsage(modelRes.value) : undefined,
         toolRes.status === "fulfilled" ? parseZaiToolUsage(toolRes.value) : undefined,
       ].filter((s): s is string => !!s);
 
-      const account: SubscriptionAccountSnapshot = {
+      const account: SubscriptionAccountSnapshot = omitUndefined({
         ...authAccount,
         plan: zaiPlanLabel(parsed) ?? authAccount.plan,
         fiveHour,
         weekly,
         mcpMonthly,
         usageBreakdown: breakdowns.length > 0 ? breakdowns.join("\n") : undefined,
-      };
+      });
 
       return {
         providerDisplayName: displayName,
@@ -788,13 +849,28 @@ function buildDetails(snapshot: SubscriptionUsageSnapshot | undefined, state: St
   }
   // Z.ai extras: MCP/month allowance (from TIME_LIMIT) + per-model/per-tool breakdown.
   const mcpAcct = snapshot.accounts.find((a) => a.mcpMonthly);
-  if (mcpAcct && mcpAcct.mcpMonthly) lines.push("", `MCP/month: ${formatRemaining(mcpAcct.mcpMonthly)}`);
+  if (mcpAcct?.mcpMonthly) lines.push("", `MCP/month: ${formatRemaining(mcpAcct.mcpMonthly)}`);
   for (const a of snapshot.accounts) if (a.usageBreakdown) lines.push("", a.usageBreakdown);
   return lines.join("\n");
 }
 
 export default function (pi: ExtensionAPI) {
-  const state: State = { lastRefreshAt: 0, refreshGeneration: 0, cumulativeOutput: 0, cumulativeDurationMs: 0, cumulativeCost: 0 };
+  const state: State = {
+    model: undefined,
+    adapter: undefined,
+    adapterId: undefined,
+    snapshot: undefined,
+    lastRefreshAt: 0,
+    refreshGeneration: 0,
+    inFlight: undefined,
+    refreshTimer: undefined,
+    debounceTimer: undefined,
+    responseStartTime: undefined,
+    lastTokPerSec: undefined,
+    cumulativeOutput: 0,
+    cumulativeDurationMs: 0,
+    cumulativeCost: 0,
+  };
 
   pi.on("session_start", async (_event, ctx) => {
     updateActiveAdapter(ctx, state, ctx.model);
@@ -812,9 +888,11 @@ export default function (pi: ExtensionAPI) {
 
   pi.on("message_end", async (event, ctx) => {
     if (event.message.role === "assistant") {
-      state.cumulativeCost += (event.message.usage as any)?.cost?.total ?? 0;
+      const usage = asRecord(event.message.usage);
+      const cost = asRecord(usage?.cost);
+      state.cumulativeCost += typeof cost?.total === "number" ? cost.total : 0;
       if (state.responseStartTime) {
-        const output = (event.message.usage as any)?.output ?? 0;
+        const output = typeof usage?.output === "number" ? usage.output : 0;
         const elapsed = Date.now() - state.responseStartTime;
         state.responseStartTime = undefined;
         if (elapsed > 0 && output > 0) {

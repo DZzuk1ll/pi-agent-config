@@ -1,17 +1,16 @@
-import type { GuidanceFields } from "@personal-pi/config";
 import { loadJsonConfigWithLegacyFallback, validateGuidanceFields } from "@personal-pi/config";
+import { Type } from "typebox";
 
-interface TodoConfig {
-	guidance?: GuidanceFields;
-	maxWidgetLines?: number;
-	/**
-	 * Key spec for the overlay collapse/expand shortcut, in the same format as
-	 * pi-coding-agent keybinding ids (`modifier+key`, e.g. `ctrl+shift+t`, `alt+o`).
-	 * Defaults to `"ctrl+shift+t"`. Pass `"off"` to disable the collapse shortcut
-	 * entirely. Validation happens in `resolveCollapseKey`, not at load.
-	 */
-	collapseKey?: string;
-}
+const TodoConfigSchema = Type.Object({
+	guidance: Type.Optional(Type.Object({
+		promptSnippet: Type.Optional(Type.String()),
+		promptGuidelines: Type.Optional(Type.Array(Type.String())),
+	}, { additionalProperties: false })),
+	maxWidgetLines: Type.Optional(Type.Number()),
+	collapseKey: Type.Optional(Type.String()),
+}, { additionalProperties: false });
+
+type TodoConfig = import("typebox").Static<typeof TodoConfigSchema>;
 
 /** Default content-row budget when the config is missing/invalid — the prior
  *  hardcoded value, preserved as the fallback. */
@@ -27,7 +26,7 @@ export const DEFAULT_COLLAPSE_KEY: CollapseKeySpec = "ctrl+shift+t";
 export const COLLAPSE_KEY_OFF: CollapseKeySpec = "off";
 
 export function loadConfig(): TodoConfig {
-	return loadJsonConfigWithLegacyFallback<TodoConfig>("rpiv-todo");
+	return loadJsonConfigWithLegacyFallback("rpiv-todo", TodoConfigSchema) ?? {};
 }
 
 /** Content-row budget for the overlay, read fresh on every call (per-render —

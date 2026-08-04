@@ -41,6 +41,7 @@ import type {
 	SettingsModalOptions,
 	TextModalOptions,
 } from './types.js';
+import { omitUndefined, omitUndefinedAs } from '../../../../runtime/omit-undefined.ts';
 
 type ModalCommandContext = {
 	ui: Pick<ExtensionCommandContext['ui'], 'custom' | 'notify'>;
@@ -136,7 +137,7 @@ export async function show_picker_modal(
 	const default_footer = '↑↓ navigate • enter select • esc cancel';
 	return await show_modal<string | undefined>(
 		ctx,
-		{
+		omitUndefinedAs<ModalOptions>({
 			title: options.title,
 			subtitle: options.subtitle,
 			footer: options.selected_footer
@@ -152,7 +153,7 @@ export async function show_picker_modal(
 				: (options.footer ?? default_footer),
 			overlay_options: options.overlay_options,
 			style: options.style,
-		},
+		}),
 		({ done }, theme, layout) => {
 			const preferred_max_visible =
 				options.max_visible ?? Math.min(options.items.length, 12);
@@ -199,13 +200,13 @@ export async function show_text_modal(
 ): Promise<void> {
 	await show_modal<void>(
 		ctx,
-		{
+		omitUndefinedAs<ModalOptions>({
 			title: options.title,
 			subtitle: options.subtitle,
 			footer: options.footer ?? '↑↓ scroll • esc back',
 			overlay_options: options.overlay_options,
 			style: options.style,
-		},
+		}),
 		({ done }, theme, layout) => {
 			const preferred_max_visible = options.max_visible_lines ?? 18;
 			const body = new TextModalBody(
@@ -252,7 +253,7 @@ export async function show_input_modal(
 ): Promise<string | undefined> {
 	return await show_modal<string | undefined>(
 		ctx,
-		{
+		omitUndefinedAs<ModalOptions>({
 			title: options.title,
 			subtitle: options.subtitle,
 			footer: options.footer,
@@ -263,7 +264,7 @@ export async function show_input_modal(
 				...options.overlay_options,
 			},
 			style: options.style,
-		},
+		}),
 		({ done }, theme) =>
 			new InputModalBody(
 				options,
@@ -278,7 +279,7 @@ export async function show_confirm_modal(
 	ctx: ModalCommandContext,
 	options: ConfirmModalOptions,
 ): Promise<boolean> {
-	const selected = await show_picker_modal(ctx, {
+	const selected = await show_picker_modal(ctx, omitUndefinedAs<PickerModalOptions>({
 		title: options.title,
 		subtitle: options.message,
 		footer: options.footer ?? 'enter selects • esc cancels',
@@ -301,7 +302,7 @@ export async function show_confirm_modal(
 				description: 'Go back without changing anything',
 			},
 		],
-	});
+	}));
 	return selected === 'confirm';
 }
 
@@ -311,7 +312,7 @@ export async function show_settings_modal(
 ): Promise<void> {
 	await show_modal<void>(
 		ctx,
-		{
+		omitUndefinedAs<ModalOptions>({
 			title: options.title,
 			subtitle: options.subtitle,
 			footer:
@@ -319,7 +320,7 @@ export async function show_settings_modal(
 				'↑/↓ navigate • ←/→ change • enter/space next • esc close',
 			overlay_options: options.overlay_options,
 			style: options.style,
-		},
+		}),
 		({ done }, theme, layout) => {
 			const preferred_max_visible =
 				options.max_visible ??
@@ -349,10 +350,10 @@ export async function show_settings_modal(
 						settings_theme,
 						handle_change,
 						handle_cancel,
-						{
+						omitUndefined({
 							enable_search: options.enable_search,
 							detail: options.detail,
-						},
+						}),
 					)
 				: new SettingsList(
 						options.items,
@@ -360,7 +361,7 @@ export async function show_settings_modal(
 						settings_theme,
 						handle_change,
 						handle_cancel,
-						{ enableSearch: options.enable_search },
+						omitUndefined({ enableSearch: options.enable_search }),
 					);
 
 			return {

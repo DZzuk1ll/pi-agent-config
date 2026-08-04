@@ -30,13 +30,15 @@ function readConfig(): FastModeConfig {
 	const configPath = existsSync(CONFIG_PATH) ? CONFIG_PATH : LEGACY_CONFIG_PATH;
 	if (!existsSync(configPath)) return DEFAULT_CONFIG;
 	try {
-		const raw = JSON.parse(readFileSync(configPath, "utf8")) as Partial<FastModeConfig>;
+		const raw: unknown = JSON.parse(readFileSync(configPath, "utf8"));
+		if (typeof raw !== "object" || raw === null || Array.isArray(raw)) return DEFAULT_CONFIG;
+		const record = raw as Record<string, unknown>;
 		return {
-			enabled: typeof raw.enabled === "boolean" ? raw.enabled : DEFAULT_CONFIG.enabled,
-			models: Array.isArray(raw.models) && raw.models.every((model) => typeof model === "string")
-				? raw.models
+			enabled: typeof record.enabled === "boolean" ? record.enabled : DEFAULT_CONFIG.enabled,
+			models: Array.isArray(record.models) && record.models.every((model) => typeof model === "string")
+				? record.models
 				: DEFAULT_CONFIG.models,
-			showStatus: typeof raw.showStatus === "boolean" ? raw.showStatus : DEFAULT_CONFIG.showStatus,
+			showStatus: typeof record.showStatus === "boolean" ? record.showStatus : DEFAULT_CONFIG.showStatus,
 		};
 	} catch {
 		return DEFAULT_CONFIG;

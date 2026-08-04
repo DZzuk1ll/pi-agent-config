@@ -12,6 +12,8 @@ import type { AgentConfig } from "../../agents/agents.ts";
 import type { ResolvedStepBehavior } from "../../shared/settings.ts";
 import { resolveModelCandidate, splitThinkingSuffix } from "../shared/model-fallback.ts";
 import { findModelInfo, getSupportedThinkingLevels, type ModelInfo, type ThinkingLevel } from "../../shared/model-info.ts";
+import { requirePresent } from "../../../../_shared/runtime/require-present.ts";
+
 
 type ClarifyMode = 'single' | 'parallel' | 'chain';
 
@@ -60,7 +62,7 @@ function wrapText(text: string, width: number): { lines: string[]; starts: numbe
 			let pos = 0;
 			let lineWidth = 0;
 			while (pos < segment.length) {
-				const char = String.fromCodePoint(segment.codePointAt(pos)!);
+				const char = String.fromCodePoint(requirePresent(segment.codePointAt(pos)));
 				const charWidth = visibleWidth(char);
 				if (lineWidth > 0 && lineWidth + charWidth > width) {
 					starts.push(offset + lineStart);
@@ -86,7 +88,7 @@ function wrapText(text: string, width: number): { lines: string[]; starts: numbe
 
 function getCursorDisplayPos(cursor: number, starts: number[]): { line: number; col: number } {
 	for (let i = starts.length - 1; i >= 0; i--) {
-		if (cursor >= starts[i]!) return { line: i, col: cursor - starts[i]! };
+		if (cursor >= requirePresent(starts[i])) return { line: i, col: cursor - requirePresent(starts[i]) };
 	}
 	return { line: 0, col: 0 };
 }
@@ -104,15 +106,15 @@ function isWordChar(ch: string): boolean {
 
 function wordBackward(buffer: string, cursor: number): number {
 	let pos = cursor;
-	while (pos > 0 && !isWordChar(buffer[pos - 1]!)) pos--;
-	while (pos > 0 && isWordChar(buffer[pos - 1]!)) pos--;
+	while (pos > 0 && !isWordChar(requirePresent(buffer[pos - 1]))) pos--;
+	while (pos > 0 && isWordChar(requirePresent(buffer[pos - 1]))) pos--;
 	return pos;
 }
 
 function wordForward(buffer: string, cursor: number): number {
 	let pos = cursor;
-	while (pos < buffer.length && isWordChar(buffer[pos]!)) pos++;
-	while (pos < buffer.length && !isWordChar(buffer[pos]!)) pos++;
+	while (pos < buffer.length && isWordChar(requirePresent(buffer[pos]))) pos++;
+	while (pos < buffer.length && !isWordChar(requirePresent(buffer[pos]))) pos++;
 	return pos;
 }
 
@@ -141,14 +143,14 @@ function handleEditorInput(state: TextEditorState, data: string, textWidth: numb
 	if (matchesKey(data, "right")) return state.cursor < state.buffer.length ? { ...state, cursor: state.cursor + 1 } : state;
 	if (matchesKey(data, "up") && cursorPos.line > 0) {
 		const targetLine = cursorPos.line - 1;
-		return { ...state, cursor: starts[targetLine]! + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
+		return { ...state, cursor: requirePresent(starts[targetLine]) + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
 	}
 	if (matchesKey(data, "down") && cursorPos.line < wrapped.length - 1) {
 		const targetLine = cursorPos.line + 1;
-		return { ...state, cursor: starts[targetLine]! + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
+		return { ...state, cursor: requirePresent(starts[targetLine]) + Math.min(cursorPos.col, wrapped[targetLine]?.length ?? 0) };
 	}
-	if (matchesKey(data, "home")) return { ...state, cursor: starts[cursorPos.line]! };
-	if (matchesKey(data, "end")) return { ...state, cursor: starts[cursorPos.line]! + (wrapped[cursorPos.line]?.length ?? 0) };
+	if (matchesKey(data, "home")) return { ...state, cursor: requirePresent(starts[cursorPos.line]) };
+	if (matchesKey(data, "end")) return { ...state, cursor: requirePresent(starts[cursorPos.line]) + (wrapped[cursorPos.line]?.length ?? 0) };
 	if (matchesKey(data, "ctrl+home")) return { ...state, cursor: 0 };
 	if (matchesKey(data, "ctrl+end")) return { ...state, cursor: state.buffer.length };
 	if (matchesKey(data, "alt+backspace")) {
@@ -285,9 +287,9 @@ export class ChainClarifyComponent implements Component {
 		const padLeft = Math.floor(padLen / 2);
 		const padRight = padLen - padLeft;
 		return (
-			this.theme.fg("border", "╭" + "─".repeat(padLeft)) +
+			this.theme.fg("border", `╭${"─".repeat(padLeft)}`) +
 			this.theme.fg("accent", text) +
-			this.theme.fg("border", "─".repeat(padRight) + "╮")
+			this.theme.fg("border", `${"─".repeat(padRight)}╮`)
 		);
 	}
 
@@ -298,9 +300,9 @@ export class ChainClarifyComponent implements Component {
 		const padLeft = Math.floor(padLen / 2);
 		const padRight = padLen - padLeft;
 		return (
-			this.theme.fg("border", "╰" + "─".repeat(padLeft)) +
+			this.theme.fg("border", `╰${"─".repeat(padLeft)}`) +
 			this.theme.fg("dim", text) +
-			this.theme.fg("border", "─".repeat(padRight) + "╯")
+			this.theme.fg("border", `${"─".repeat(padRight)}╯`)
 		);
 	}
 
@@ -334,17 +336,17 @@ export class ChainClarifyComponent implements Component {
 
 		// Header (truncate agent name to prevent overflow)
 		const fieldName = this.editMode === "template" ? "task" : this.editMode;
-		const rawAgentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
+		const rawAgentName = this.agentConfigs[requirePresent(this.editingStep)]?.name ?? "unknown";
 		const maxAgentLen = innerW - 30; // Reserve space for " Editing X (Step/Task N: ) "
 		const agentName = rawAgentName.length > maxAgentLen
-			? rawAgentName.slice(0, maxAgentLen - 1) + "…"
+			? `${rawAgentName.slice(0, maxAgentLen - 1)}…`
 			: rawAgentName;
 		// Use mode-appropriate terminology
 		const stepLabel = this.mode === 'single'
 			? agentName
 			: this.mode === 'parallel'
-				? `Task ${this.editingStep! + 1}: ${agentName}`
-				: `Step ${this.editingStep! + 1}: ${agentName}`;
+				? `Task ${requirePresent(this.editingStep) + 1}: ${agentName}`
+				: `Step ${requirePresent(this.editingStep) + 1}: ${agentName}`;
 		const headerText = ` Editing ${fieldName} (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
@@ -377,7 +379,7 @@ export class ChainClarifyComponent implements Component {
 
 	/** Get effective behavior for a step (with user overrides applied) */
 	private getEffectiveBehavior(stepIndex: number): ResolvedStepBehavior {
-		const base = this.resolvedBehaviors[stepIndex]!;
+		const base = requirePresent(this.resolvedBehaviors[stepIndex]);
 		const override = this.behaviorOverrides.get(stepIndex);
 		if (!override) return base;
 
@@ -387,7 +389,7 @@ export class ChainClarifyComponent implements Component {
 			reads: override.reads !== undefined ? override.reads : base.reads,
 			progress: override.progress !== undefined ? override.progress : base.progress,
 			skills: override.skills !== undefined ? override.skills : base.skills,
-			model: override.model !== undefined ? override.model : base.model,
+			...((override.model ?? base.model) === undefined ? {} : { model: override.model ?? base.model }),
 		};
 	}
 
@@ -582,11 +584,11 @@ export class ChainClarifyComponent implements Component {
 		if (matchesKey(data, "return")) {
 			const selected = this.filteredModels[this.modelSelectedIndex];
 			if (selected) {
-				const { thinkingSuffix } = splitThinkingSuffix(this.getEffectiveModel(this.editingStep!));
+				const { thinkingSuffix } = splitThinkingSuffix(this.getEffectiveModel(requirePresent(this.editingStep)));
 				const requestedLevel = thinkingSuffix.slice(1);
 				const selectedModel = findModelInfo(selected.fullId, this.availableModels, this.preferredProvider);
 				const suffix = getSupportedThinkingLevels(selectedModel).some((level) => level === requestedLevel) ? thinkingSuffix : "";
-				this.updateBehavior(this.editingStep!, "model", `${selected.fullId}${suffix}`);
+				this.updateBehavior(requirePresent(this.editingStep), "model", `${selected.fullId}${suffix}`);
 			}
 			this.exitEditMode();
 			return;
@@ -645,7 +647,8 @@ export class ChainClarifyComponent implements Component {
 		const levels = this.getAvailableThinkingLevels(this.selectedStep);
 		const { thinkingSuffix } = splitThinkingSuffix(this.getEffectiveModel(this.selectedStep));
 		const suffix = thinkingSuffix.slice(1);
-		const levelIdx = levels.findIndex((level) => level === suffix);
+		const stringLevels: readonly string[] = levels;
+		const levelIdx = stringLevels.indexOf(suffix);
 		this.thinkingSelectedIndex = levelIdx >= 0 ? levelIdx : Math.max(0, levels.indexOf("off"));
 
 		this.tui.requestRender();
@@ -657,7 +660,7 @@ export class ChainClarifyComponent implements Component {
 			return;
 		}
 
-		const levels = this.getAvailableThinkingLevels(this.editingStep!);
+		const levels = this.getAvailableThinkingLevels(requirePresent(this.editingStep));
 		if (levels.length === 0) return;
 
 		if (matchesKey(data, "return")) {
@@ -686,7 +689,7 @@ export class ChainClarifyComponent implements Component {
 
 	/** Apply thinking level to the current step's model */
 	private applyThinkingLevel(level: ThinkingLevel): void {
-		const stepIndex = this.editingStep!;
+		const stepIndex = requirePresent(this.editingStep);
 		const currentModel = this.getEffectiveBehavior(stepIndex).model;
 		if (!currentModel) return;
 
@@ -716,7 +719,7 @@ export class ChainClarifyComponent implements Component {
 
 		if (matchesKey(data, "return")) {
 			const selected = [...this.skillSelectedNames];
-			this.updateBehavior(this.editingStep!, "skills", selected);
+			this.updateBehavior(requirePresent(this.editingStep), "skills", selected);
 			this.exitEditMode();
 			return;
 		}
@@ -817,7 +820,7 @@ export class ChainClarifyComponent implements Component {
 	}
 
 	private saveEdit(): void {
-		const stepIndex = this.editingStep!;
+		const stepIndex = requirePresent(this.editingStep);
 
 		if (this.editMode === "template") {
 			// For template, preserve other lines if they existed
@@ -905,12 +908,12 @@ export class ChainClarifyComponent implements Component {
 		const lines: string[] = [];
 
 		// Header (mode-aware terminology)
-		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
+		const agentName = this.agentConfigs[requirePresent(this.editingStep)]?.name ?? "unknown";
 		const stepLabel = this.mode === 'single'
 			? agentName
 			: this.mode === 'parallel'
-				? `Task ${this.editingStep! + 1}: ${agentName}`
-				: `Step ${this.editingStep! + 1}: ${agentName}`;
+				? `Task ${requirePresent(this.editingStep) + 1}: ${agentName}`
+				: `Step ${requirePresent(this.editingStep) + 1}: ${agentName}`;
 		const headerText = ` Select Model (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
@@ -921,7 +924,7 @@ export class ChainClarifyComponent implements Component {
 		lines.push(this.row(` ${searchPrefix}${searchDisplay}`));
 		lines.push(this.row(""));
 
-		const currentModel = this.getEffectiveModel(this.editingStep!);
+		const currentModel = this.getEffectiveModel(requirePresent(this.editingStep));
 		const currentModelBase = splitThinkingSuffix(currentModel).baseModel;
 		const currentLabel = th.fg("dim", "Current: ");
 		lines.push(this.row(` ${currentLabel}${th.fg("warning", currentModel)}`));
@@ -945,7 +948,7 @@ export class ChainClarifyComponent implements Component {
 			}
 
 			for (let i = startIdx; i < endIdx; i++) {
-				const model = this.filteredModels[i]!;
+				const model = requirePresent(this.filteredModels[i]);
 				const isSelected = i === this.modelSelectedIndex;
 				const isCurrent = model.fullId === currentModelBase || model.id === currentModelBase;
 				const prefix = isSelected ? th.fg("accent", "→ ") : "  ";
@@ -979,17 +982,17 @@ export class ChainClarifyComponent implements Component {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
+		const agentName = this.agentConfigs[requirePresent(this.editingStep)]?.name ?? "unknown";
 		const stepLabel = this.mode === 'single'
 			? agentName
 			: this.mode === 'parallel'
-				? `Task ${this.editingStep! + 1}: ${agentName}`
-				: `Step ${this.editingStep! + 1}: ${agentName}`;
+				? `Task ${requirePresent(this.editingStep) + 1}: ${agentName}`
+				: `Step ${requirePresent(this.editingStep) + 1}: ${agentName}`;
 		const headerText = ` Thinking Level (${stepLabel}) `;
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
 
-		const currentModel = this.getEffectiveModel(this.editingStep!);
+		const currentModel = this.getEffectiveModel(requirePresent(this.editingStep));
 		const currentLabel = th.fg("dim", "Model: ");
 		lines.push(this.row(` ${currentLabel}${th.fg("accent", currentModel)}`));
 		lines.push(this.row(""));
@@ -1007,12 +1010,12 @@ export class ChainClarifyComponent implements Component {
 			"max": "Maximum available reasoning",
 		};
 
-		const levels = this.getAvailableThinkingLevels(this.editingStep!);
+		const levels = this.getAvailableThinkingLevels(requirePresent(this.editingStep));
 		if (levels.length === 0) {
 			lines.push(this.row(` ${th.fg("dim", "No supported thinking levels")}`));
 		} else {
 			for (let i = 0; i < levels.length; i++) {
-				const level = levels[i]!;
+				const level = requirePresent(levels[i]);
 				const isSelected = i === this.thinkingSelectedIndex;
 				const prefix = isSelected ? th.fg("accent", "→ ") : "  ";
 				const levelText = isSelected ? th.fg("accent", level) : level;
@@ -1040,12 +1043,12 @@ export class ChainClarifyComponent implements Component {
 		const th = this.theme;
 		const lines: string[] = [];
 
-		const agentName = this.agentConfigs[this.editingStep!]?.name ?? "unknown";
+		const agentName = this.agentConfigs[requirePresent(this.editingStep)]?.name ?? "unknown";
 		const stepLabel = this.mode === 'single'
 			? agentName
 			: this.mode === 'parallel'
-				? `Task ${this.editingStep! + 1}: ${agentName}`
-				: `Step ${this.editingStep! + 1}: ${agentName}`;
+				? `Task ${requirePresent(this.editingStep) + 1}: ${agentName}`
+				: `Step ${requirePresent(this.editingStep) + 1}: ${agentName}`;
 		lines.push(this.renderHeader(` Select Skills (${stepLabel}) `));
 		lines.push(this.row(""));
 
@@ -1073,7 +1076,7 @@ export class ChainClarifyComponent implements Component {
 			}
 
 			for (let i = startIdx; i < endIdx; i++) {
-				const skill = this.filteredSkills[i]!;
+				const skill = requirePresent(this.filteredSkills[i]);
 				const isCursor = i === this.skillCursorIndex;
 				const isSelected = this.skillSelectedNames.has(skill.name);
 
@@ -1143,11 +1146,11 @@ export class ChainClarifyComponent implements Component {
 		lines.push(this.renderHeader(headerText));
 		lines.push(this.row(""));
 
-		const config = this.agentConfigs[0]!;
+		const config = requirePresent(this.agentConfigs[0]);
 		const behavior = this.getEffectiveBehavior(0);
 
 		const stepLabel = config.name;
-		lines.push(this.row(` ${th.fg("accent", "▶ " + stepLabel)}`));
+		lines.push(this.row(` ${th.fg("accent", `▶ ${stepLabel}`)}`));
 
 		const template = (this.templates[0] ?? "").split("\n")[0] ?? "";
 		const taskLabel = th.fg("dim", "task: ");
@@ -1192,7 +1195,7 @@ export class ChainClarifyComponent implements Component {
 		lines.push(this.row(""));
 
 		for (let i = 0; i < this.agentConfigs.length; i++) {
-			const config = this.agentConfigs[i]!;
+			const config = requirePresent(this.agentConfigs[i]);
 			const isSelected = i === this.selectedStep;
 
 			const color = isSelected ? "accent" : "dim";
@@ -1200,7 +1203,7 @@ export class ChainClarifyComponent implements Component {
 			const taskPrefix = `Task ${i + 1}: `;
 			const maxNameLen = innerW - 4 - prefix.length - taskPrefix.length;
 			const agentName = config.name.length > maxNameLen
-				? config.name.slice(0, maxNameLen - 1) + "…"
+				? `${config.name.slice(0, maxNameLen - 1)}…`
 				: config.name;
 			const taskLabel = `${taskPrefix}${agentName}`;
 			lines.push(this.row(` ${th.fg(color, prefix + taskLabel)}`));
@@ -1259,7 +1262,7 @@ export class ChainClarifyComponent implements Component {
 		lines.push(this.row(""));
 
 		for (let i = 0; i < this.agentConfigs.length; i++) {
-			const config = this.agentConfigs[i]!;
+			const config = requirePresent(this.agentConfigs[i]);
 			const isSelected = i === this.selectedStep;
 			const behavior = this.getEffectiveBehavior(i);
 
@@ -1268,7 +1271,7 @@ export class ChainClarifyComponent implements Component {
 			const stepPrefix = `Step ${i + 1}: `;
 			const maxNameLen = innerW - 4 - prefix.length - stepPrefix.length;
 			const agentName = config.name.length > maxNameLen
-				? config.name.slice(0, maxNameLen - 1) + "…"
+				? `${config.name.slice(0, maxNameLen - 1)}…`
 				: config.name;
 			const stepLabel = `${stepPrefix}${agentName}`;
 			lines.push(

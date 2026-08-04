@@ -1,3 +1,5 @@
+import { omitUndefined } from "../../../_shared/runtime/omit-undefined.ts";
+
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh", "max"] as const;
 export type ThinkingLevel = typeof THINKING_LEVELS[number];
 export type ThinkingLevelMap = Partial<Record<ThinkingLevel, string | null>>;
@@ -20,14 +22,14 @@ interface RegistryModelLike {
 }
 
 export function toModelInfo(model: RegistryModelLike): ModelInfo {
-	return {
+	return omitUndefined({
 		provider: model.provider,
 		id: model.id,
 		fullId: `${model.provider}/${model.id}`,
 		api: model.api,
 		reasoning: model.reasoning,
 		thinkingLevelMap: model.thinkingLevelMap,
-	};
+	});
 }
 
 /** Resolve the effective thinking level from a model string (which may contain a known suffix like `:high`)

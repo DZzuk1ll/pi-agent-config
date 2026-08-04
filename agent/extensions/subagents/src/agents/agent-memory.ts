@@ -16,6 +16,8 @@ import * as fs from "node:fs";
 import * as path from "node:path";
 import { getAgentDir, getProjectConfigDir } from "../shared/config-paths.ts";
 import type { AgentConfig, AgentMemoryConfig } from "./agents.ts";
+import { requirePresent } from "../../../_shared/runtime/require-present.ts";
+
 
 export const AGENT_MEMORY_DIR_NAME = "agent-memory";
 export const AGENT_MEMORY_FILE = "MEMORY.md";
@@ -49,16 +51,16 @@ export function parseMemoryFrontmatter(raw: string | undefined): AgentMemoryConf
 	const trimmed = raw.trim();
 	const inlineObject = trimmed.match(/^\{(.*)\}$/s);
 	if (inlineObject) {
-		for (const part of inlineObject[1]!.split(",")) {
+		for (const part of requirePresent(inlineObject[1]).split(",")) {
 			const match = part.trim().match(/^([\w-]+)\s*:\s*(.*)$/);
 			if (!match) continue;
-			entries.set(match[1]!, unquoteFrontmatterValue(match[2]!));
+			entries.set(requirePresent(match[1]), unquoteFrontmatterValue(requirePresent(match[2])));
 		}
 	} else {
 		for (const line of raw.split("\n")) {
 			const match = line.match(/^\s*([\w-]+):\s*(.*)$/);
 			if (!match) continue;
-			entries.set(match[1]!, unquoteFrontmatterValue(match[2]!));
+			entries.set(requirePresent(match[1]), unquoteFrontmatterValue(requirePresent(match[2])));
 		}
 	}
 	const scope = entries.get("scope");
