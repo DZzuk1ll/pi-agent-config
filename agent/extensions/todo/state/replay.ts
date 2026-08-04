@@ -27,7 +27,7 @@ function isSemanticallyValidSnapshot(tasks: readonly Task[], nextId: number): bo
 		if (new Set(dependencies).size !== dependencies.length) return false;
 		for (const id of dependencies) {
 			const dependency = byId.get(id);
-			if (id === task.id || !dependency || dependency.status === "deleted") return false;
+			if (id === task.id || !dependency || (task.status !== "deleted" && dependency.status === "deleted")) return false;
 		}
 	}
 

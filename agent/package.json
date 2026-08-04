@@ -2,6 +2,9 @@
   "name": "personal-pi-agent",
   "private": true,
   "type": "module",
+  "engines": {
+    "node": "^24.15.0 || >=26.0.0"
+  },
   "scripts": {
     "typecheck": "tsc -p tsconfig.json --pretty false",
     "lint": "biome lint extensions tests vitest.config.ts",

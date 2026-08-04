@@ -27,10 +27,11 @@
     "@earendil-works/pi-tui": ">=0.83.0"
   },
   "engines": {
-    "node": ">=24.15.0"
+    "node": "^24.15.0 || >=26.0.0"
   },
   "scripts": {
-	"check": "cd ../.. && npm run check",
+	"typecheck": "tsc -p tsconfig.json --pretty false",
+	"check": "npm run typecheck && cd ../.. && npm run check",
 	"test": "cd ../.. && npm test"
   }
 }

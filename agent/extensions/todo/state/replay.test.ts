@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
-import type { TaskDetails } from "../tool/types.js";
+import type { TaskAction, TaskDetails, TaskMutationParams } from "../tool/types.js";
 import { isTaskDetails, replayFromBranch } from "./replay.js";
+import { applyTaskMutation } from "./state-reducer.js";
+import type { TaskState } from "./state.js";
 
 function details(overrides: Partial<TaskDetails> = {}): TaskDetails {
 	return {
@@ -14,6 +16,12 @@ function details(overrides: Partial<TaskDetails> = {}): TaskDetails {
 
 function entry(snapshot: unknown): unknown {
 	return { type: "message", message: { role: "toolResult", toolName: "todo", details: snapshot } };
+}
+
+function mutate(state: TaskState, action: TaskAction, params: TaskMutationParams): TaskState {
+	const result = applyTaskMutation(state, action, params);
+	expect(result.op.kind).not.toBe("error");
+	return result.state;
 }
 
 describe("todo replay validation", () => {
@@ -51,6 +59,18 @@ describe("todo replay validation", () => {
 		});
 		expect(replayed).toEqual({ tasks: valid.tasks, nextId: 2 });
 		expect(replayed.tasks).not.toBe(valid.tasks);
+	});
+
+	it("accepts a reducer snapshot after deleting a tombstoned task's dependency", () => {
+		let state: TaskState = { tasks: [], nextId: 1 };
+		state = mutate(state, "create", { subject: "Dependency" });
+		state = mutate(state, "create", { subject: "Consumer", blockedBy: [1] });
+		state = mutate(state, "delete", { id: 2 });
+		state = mutate(state, "delete", { id: 1 });
+		const snapshot = details({ action: "delete", params: { id: 1 }, ...state });
+
+		expect(isTaskDetails(snapshot)).toBe(true);
+		expect(replayFromBranch({ sessionManager: { getBranch: () => [entry(snapshot)] } })).toEqual(state);
 	});
 
 	it("accepts legacy valid snapshots with optional fields omitted", () => {
