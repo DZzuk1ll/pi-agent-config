@@ -12,12 +12,12 @@
 - LSP、代码搜索、危险命令确认、通知与历史回退
 - 统一的快捷键和全局 `AGENTS.md`
 - 仓库内直接维护全部 Pi 扩展及 Pi 强耦合辅助库源码
-- 通过一个 `package-lock.json` 固定通用运行依赖
+- 通过一个 `package-lock.json` 固定外部运行和开发依赖
 
 当前验证环境：
 
 - Pi `0.83.0`
-- Node.js `24.15.0+`
+- Node.js `^24.15.0` 或 `>=26.0.0`（不支持 Node.js 25）
 - macOS
 
 ## 快速开始
@@ -60,9 +60,9 @@ cd ~/.pi/agent
 npm ci
 ```
 
-`agent/package.json` 同时是本地 Pi Package 清单和唯一的 npm 依赖清单。`node_modules` 不进入 Git；它只包含通用运行依赖和指向仓库内辅助库源码的本地链接，可以随时通过 `package-lock.json` 重建。
+`agent/package.json` 是本地 Pi Package 的 npm 清单，也是唯一的 npm 依赖清单。`node_modules` 不进入 Git；它包含外部依赖和指向仓库内辅助包源码的本地链接，可以随时通过 `package-lock.json` 重建。
 
-扩展、辅助库和主题分别位于 `agent/extensions/community/`、`agent/lib/community/` 和 `agent/themes/community/`。`agent/settings.json` 加载 agent 根目录 `.`，不会从 npm 下载社区 Pi 扩展。
+Pi 按约定目录自动发现 `agent/extensions/`、`agent/skills/` 和 `agent/themes/` 中的资源。扩展及其辅助包源码均直接纳入仓库，不会从 npm 下载社区 Pi 扩展。
 
 ### 4. 登录并启动
 
@@ -132,23 +132,20 @@ git push
 ├── README.md
 ├── settings.json                  # 紧凑界面与工具展示
 └── agent/
-    ├── AGENTS.md                  # 全局编码指令
-    ├── package.json               # 本地 Pi Package 清单与通用运行依赖
+    ├── AGENTS.md                  # 全局协作指令与交付门禁
+    ├── README.md                  # 本地开发与验证说明
+    ├── package.json               # npm 清单、脚本与本地辅助包链接
     ├── package-lock.json          # 可复现的依赖版本
     ├── settings.json              # Pi、模型与扩展配置
     ├── keybindings.json           # 快捷键
+    ├── agents/                    # 子代理角色定义
+    ├── docs/NOTICE.md             # 第三方源码归属与许可证
     ├── extensions/
-    │   ├── plan-mode/
-    │   │   └── config.json        # Plan mode 配置
-    │   ├── community/             # 纳入维护的社区 Pi 扩展
-    │   └── ...                    # 自有扩展及其配置
-    ├── lib/
-    │   ├── community/             # Pi 强耦合但不注册入口的辅助库
-    │   └── ...                    # 自有共享逻辑
-    ├── themes/community/          # 纳入维护的社区主题
-    ├── third-party/
-    │   ├── upstream.json          # 版本、来源、许可证、本地路径与修改
-    │   └── patches/               # 迁移前补丁，仅作来源记录
+    │   ├── _shared/packages/      # Pi 强耦合辅助包源码
+    │   ├── plan-mode/config.json  # Plan mode 配置
+    │   └── ...                    # 自有及纳入维护的扩展
+    ├── skills/                    # 子代理与工作流技能
+    ├── themes/                    # 纳入维护的主题
     └── tests/                     # 自定义逻辑测试
 ```
 
@@ -170,10 +167,10 @@ git push
 
 Pi 扩展拥有本机代码执行权限。使用前请检查：
 
-- `agent/settings.json` 中启用的扩展
-- `agent/package.json` 中的通用运行依赖和 Pi 资源入口
-- `agent/extensions/community/` 中纳入维护的社区扩展源码
-- `agent/lib/community/` 中纳入维护的 Pi 辅助库
-- `agent/extensions/` 中的自定义扩展
+- `agent/extensions/` 中的全部扩展源码
+- `agent/extensions/_shared/packages/` 中的共享辅助包
+- `agent/package.json` 中的依赖、脚本和本地包链接
+- `agent/skills/` 中可影响代理行为的指令
+- `agent/docs/NOTICE.md` 中的第三方来源与许可证
 
 本配置适合个人使用和学习；在工作设备或敏感仓库中使用前，请根据自己的安全要求进行审查。
