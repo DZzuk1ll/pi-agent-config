@@ -40,11 +40,25 @@ function default_settings(): MyPiSettingsFile {
 	};
 }
 
-export function read_settings(): MyPiSettingsFile {
+function as_record(value: unknown): Record<string, unknown> {
+	return value && typeof value === 'object' && !Array.isArray(value)
+		? value as Record<string, unknown>
+		: {};
+}
+
+function read_settings_record(): Record<string, unknown> {
 	const path = get_settings_path();
-	if (!existsSync(path)) return default_settings();
+	if (!existsSync(path)) return { version: 1 };
+	const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+	if (!parsed || typeof parsed !== 'object' || Array.isArray(parsed)) {
+		throw new Error(`Invalid settings object in '${path}'.`);
+	}
+	return parsed as Record<string, unknown>;
+}
+
+export function read_settings(): MyPiSettingsFile {
 	try {
-		const parsed: unknown = JSON.parse(readFileSync(path, 'utf-8'));
+		const parsed = read_settings_record();
 		const defaulted = Value.Default(MyPiSettingsFileSchema, Value.Clone(parsed));
 		const cleaned = Value.Clean(MyPiSettingsFileSchema, defaulted);
 		return Value.Check(MyPiSettingsFileSchema, cleaned) ? cleaned : default_settings();
@@ -53,16 +67,20 @@ export function read_settings(): MyPiSettingsFile {
 	}
 }
 
-export function write_settings(settings: MyPiSettingsFile): void {
+function write_settings_record(settings: Record<string, unknown>): void {
 	const path = get_settings_path();
 	mkdirSync(dirname(path), { recursive: true, mode: 0o700 });
 	const tmp = `${path}.tmp-${Date.now()}`;
 	writeFileSync(
 		tmp,
-		`${JSON.stringify({ ...settings, version: 1 }, null, '\t')}\n`,
+		`${JSON.stringify(settings, null, '\t')}\n`,
 		{ mode: 0o600 },
 	);
 	renameSync(tmp, path);
+}
+
+export function write_settings(settings: MyPiSettingsFile): void {
+	write_settings_record({ ...settings, version: 1 });
 }
 
 export function extract_input_strings(value: unknown): string[] {
@@ -76,33 +94,39 @@ export function extract_input_strings(value: unknown): string[] {
 }
 
 export function read_package_settings(name: string): unknown {
-	const packages = read_settings().packages ?? {};
-	return packages[name];
+	try {
+		return as_record(read_settings_record().packages)[name];
+	} catch {
+		return undefined;
+	}
 }
 
 export function write_package_settings(
 	name: string,
 	value: unknown,
 ): void {
-	const settings = read_settings();
-	write_settings({
+	const settings = read_settings_record();
+	write_settings_record({
 		...settings,
-		packages: { ...settings.packages, [name]: value },
+		packages: { ...as_record(settings.packages), [name]: value },
 	});
 }
 
 export function read_trust_settings(name: string): unknown {
-	const trust = read_settings().trust ?? {};
-	return trust[name];
+	try {
+		return as_record(read_settings_record().trust)[name];
+	} catch {
+		return undefined;
+	}
 }
 
 export function write_trust_settings(
 	name: string,
 	value: unknown,
 ): void {
-	const settings = read_settings();
-	write_settings({
+	const settings = read_settings_record();
+	write_settings_record({
 		...settings,
-		trust: { ...settings.trust, [name]: value },
+		trust: { ...as_record(settings.trust), [name]: value },
 	});
 }

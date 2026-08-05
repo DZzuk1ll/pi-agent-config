@@ -88,6 +88,36 @@ describe('@personal-pi/settings', () => {
 		expect(read_trust_settings('hooks')).toEqual(['repo']);
 	});
 
+	it('preserves unrecognized settings while updating package and trust sections', () => {
+		const dir = use_temp_agent_dir();
+		writeFileSync(join(dir, 'my-pi-settings.json'), JSON.stringify({
+			version: 1,
+			extensions: { enabled: { malformed: 'yes' } },
+			futureSection: { enabled: true },
+			packages: { existing: { keep: true } },
+			trust: { existing: { keep: true } },
+		}));
+
+		expect(read_package_settings('existing')).toEqual({ keep: true });
+		expect(read_trust_settings('existing')).toEqual({ keep: true });
+		write_package_settings('demo', { enabled: true });
+		write_trust_settings('hooks', ['repo']);
+
+		expect(JSON.parse(readFileSync(get_settings_path(), 'utf-8'))).toEqual({
+			version: 1,
+			extensions: { enabled: { malformed: 'yes' } },
+			futureSection: { enabled: true },
+			packages: {
+				existing: { keep: true },
+				demo: { enabled: true },
+			},
+			trust: {
+				existing: { keep: true },
+				hooks: ['repo'],
+			},
+		});
+	});
+
 	it('rejects malformed settings and fixes the persisted version at 1', () => {
 		const dir = use_temp_agent_dir();
 		writeFileSync(join(dir, 'my-pi-settings.json'), JSON.stringify({ version: 2, packages: [] }));
